@@ -64,7 +64,7 @@
             <span>COT过滤</span>
           </el-menu-item>
           <el-menu-item index="/dataset-processing">
-            <el-icon><Split /></el-icon>
+            <el-icon><Grid /></el-icon>
             <span>数据集处理</span>
           </el-menu-item>
         </el-sub-menu>
@@ -120,7 +120,7 @@ import { getMe } from '../api'
 import {
   EditPen, Share, Checked, Document, Select,
   DataAnalysis, Folder, Setting, ArrowDown, UserFilled,
-  Operation, Filter, Split,
+  Operation, Filter, Grid,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
