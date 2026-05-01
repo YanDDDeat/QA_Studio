@@ -12,16 +12,6 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 
 
-def _enum_values(enum_cls):
-    """Return enum .value strings for SQLAlchemy Enum column definition.
-
-    SQLAlchemy's default Enum() uses .name (uppercase) as DB representation,
-    but our MySQL ENUM columns store .value (lowercase). This callable ensures
-    SQLAlchemy reads/writes using .value, matching the actual DB data.
-    """
-    return [e.value for e in enum_cls]
-
-
 class StageEnum(str, PyEnum):
     """Pipeline stage enumeration"""
     QUESTION_GENERATE = "question_generate"
@@ -109,7 +99,7 @@ class Dataset(Base):
     score = Column(Float, nullable=True)
     passed = Column(String(16), default="是", nullable=False)
     file_id = Column(Integer, ForeignKey("files.id"), nullable=True, index=True)
-    current_stage = Column(Enum(StageEnum, values_callable=_enum_values), default=StageEnum.QUESTION_GENERATE, nullable=True)
+    current_stage = Column(Enum(StageEnum), default=StageEnum.QUESTION_GENERATE, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -125,7 +115,7 @@ class File(Base):
     filename = Column(String(256), nullable=False)
     file_type = Column(String(64), nullable=True)
     file_path = Column(String(512), nullable=False)
-    source_stage = Column(Enum(StageEnum, values_callable=_enum_values), nullable=True)
+    source_stage = Column(Enum(StageEnum), nullable=True)
     text_field = Column(String(128), default="text", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -138,7 +128,7 @@ class Prompt(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    stage = Column(Enum(StageEnum, values_callable=_enum_values), nullable=False)
+    stage = Column(Enum(StageEnum), nullable=False)
     version = Column(Integer, default=1, nullable=False)
     content = Column(Text, nullable=False)
     model = Column(String(128), nullable=True)
@@ -154,7 +144,7 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    stage = Column(Enum(StageEnum, values_callable=_enum_values), nullable=False)
+    stage = Column(Enum(StageEnum), nullable=False)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True)
     file_id = Column(Integer, ForeignKey("files.id"), nullable=True)
     model = Column(String(128), nullable=True)

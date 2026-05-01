@@ -2,8 +2,14 @@
 
 StageEnum is stored as MySQL ENUM type in 3 tables (tasks.stage,
 datasets.current_stage, files.source_stage). Adding new enum values
-requires ALTER TABLE on all 3 columns. This script also seeds a default
-assessment Prompt.
+requires ALTER TABLE on all 3 columns.
+
+IMPORTANT: SQLAlchemy's default Enum(StageEnum) uses .name (uppercase
+like QUESTION_GENERATE) as DB representation, not .value (lowercase
+like question_generate). The MySQL ENUM column definition and stored
+data must use .name to match SQLAlchemy's mapping.
+
+This script also seeds a default assessment Prompt.
 
 Usage:
     cd backend
@@ -20,18 +26,9 @@ from app.database import engine, SessionLocal
 from app.models.models import Prompt, StageEnum, LLMConfig
 
 
-# All StageEnum values (old + new) for MySQL ENUM definition
-ALL_STAGE_VALUES = [
-    "question_generate",
-    "knowledge_generate",
-    "question_validate",
-    "answer_generate",
-    "answer_validate",
-    "data_evaluate",
-    "cot_filter",
-    "dataset_split",
-    "dataset_assessment",
-]
+# All StageEnum .name values (uppercase) for MySQL ENUM definition
+# Must use .name because SQLAlchemy's Enum() stores/reads .name by default
+ALL_STAGE_VALUES = [e.name for e in StageEnum]
 
 
 def alter_enum_columns():
@@ -41,8 +38,8 @@ def alter_enum_columns():
     alter_statements = [
         # tasks.stage: NOT NULL, no default
         f"ALTER TABLE tasks MODIFY COLUMN stage ENUM({enum_str}) NOT NULL",
-        # datasets.current_stage: nullable, default 'question_generate'
-        f"ALTER TABLE datasets MODIFY COLUMN current_stage ENUM({enum_str}) DEFAULT 'question_generate'",
+        # datasets.current_stage: nullable, default QUESTION_GENERATE
+        f"ALTER TABLE datasets MODIFY COLUMN current_stage ENUM({enum_str}) DEFAULT 'QUESTION_GENERATE'",
         # files.source_stage: nullable, no default
         f"ALTER TABLE files MODIFY COLUMN source_stage ENUM({enum_str})",
     ]
@@ -108,6 +105,19 @@ def seed_assessment_prompt():
     """Create a default prompt for the dataset_assessment stage if one doesn't exist."""
     db = SessionLocal()
     try:
+        # Delete any stale assessment prompt from previous migration runs
+        # (Previous migration may have created one with mismatched stage value)
+        stale = db.query(Prompt).filter(
+            Prompt.user_id == None,
+        ).all()
+        for p in stale:
+            # Check by raw SQL since .stage mapping may be broken after ENUM changes
+            raw_stage = str(p.stage) if p.stage else ""
+            if raw_stage.lower() == "dataset_assessment":
+                print(f"[migrate] Deleting stale assessment prompt id={p.id} (stage={raw_stage})")
+                db.delete(p)
+                db.commit()
+
         existing = db.query(Prompt).filter(
             Prompt.stage == StageEnum.DATASET_ASSESSMENT,
             Prompt.user_id == None,
