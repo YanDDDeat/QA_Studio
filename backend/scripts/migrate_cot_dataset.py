@@ -42,6 +42,10 @@ def alter_enum_columns():
         f"ALTER TABLE datasets MODIFY COLUMN current_stage ENUM({enum_str}) DEFAULT 'QUESTION_GENERATE'",
         # files.source_stage: nullable, no default
         f"ALTER TABLE files MODIFY COLUMN source_stage ENUM({enum_str})",
+        # prompts.stage: NOT NULL, no default
+        f"ALTER TABLE prompts MODIFY COLUMN stage ENUM({enum_str}) NOT NULL",
+        # prompts.user_id: allow NULL for global shared prompts
+        "ALTER TABLE prompts MODIFY COLUMN user_id INT NULL",
     ]
 
     with engine.connect() as conn:

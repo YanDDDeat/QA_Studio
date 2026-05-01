@@ -127,7 +127,7 @@ class Prompt(Base):
     __tablename__ = "prompts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # NULL=全局共享
     stage = Column(Enum(StageEnum), nullable=False)
     version = Column(Integer, default=1, nullable=False)
     content = Column(Text, nullable=False)
