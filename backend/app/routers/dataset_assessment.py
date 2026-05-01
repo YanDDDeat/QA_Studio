@@ -1,0 +1,273 @@
+"""Dataset Assessment router - Pipeline post-processing stage
+
+Generate scoring standards (Assessment field) for short-answer QA items via LLM.
+Requires prompt_id and model selection.
+
+Key design:
+- User selects a file, provides output_name, prompt, and LLM config
+- Backend processes short-answer items through LLM with validation/repair
+- Creates output file with Assessment field populated
+"""
+
+import asyncio
+import logging
+import traceback
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
+from typing import Optional
+
+from app.database import get_db, SessionLocal
+from app.models.models import (
+    File, Task, TaskLog, TaskStatusEnum, StageEnum,
+    User, LLMConfig, Prompt,
+)
+from app.routers.auth import get_current_user
+from app.services.assessment_service import run_assessment_job
+
+logger = logging.getLogger("qa_studio.dataset_assessment")
+
+router = APIRouter()
+
+
+class DatasetAssessmentStartRequest(BaseModel):
+    file_id: int = Field(..., description="ID of the JSON file to assess")
+    output_name: str = Field(..., description="Base name for output file")
+    prompt_id: int = Field(..., description="ID of the prompt to use")
+    model: str = Field(..., description="Model name to use for LLM calls")
+    llm_config_id: Optional[int] = Field(None, description="ID of the LLM config to use")
+
+
+class TaskStatusResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    task_id: int
+    status: str
+    progress_current: int
+    progress_total: int
+    generated_count: int = 0
+    file_id: Optional[int] = None
+
+
+def _add_task_log(db: Session, task_id: int, content: str):
+    log = TaskLog(task_id=task_id, log_content=content)
+    db.add(log)
+    db.commit()
+
+
+def _update_progress(db: Session, task_id: int, current: int):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task:
+        task.progress_current = current
+        db.commit()
+
+
+async def _run_assessment_task(
+    task_id: int,
+    file_id: int,
+    output_name: str,
+    prompt_content: str,
+    model: str,
+    user_id: int,
+    username: str,
+    base_url_override: Optional[str] = None,
+    api_key_override: Optional[str] = None,
+):
+    """Background coroutine that runs assessment generation."""
+    db = SessionLocal()
+    try:
+        source_file = db.query(File).filter(File.id == file_id, File.user_id == user_id).first()
+        if not source_file:
+            _add_task_log(db, task_id, "源文件不存在")
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                task.status = TaskStatusEnum.FAILED
+                db.commit()
+            return
+
+        # Read file to get total count for progress tracking
+        import json
+        with open(source_file.file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        total = len(data) if isinstance(data, list) else 1
+
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.progress_total = total
+            db.commit()
+
+        result = await run_assessment_job(
+            db=db,
+            user_id=user_id,
+            source_file=source_file,
+            output_name=output_name,
+            username=username,
+            prompt_content=prompt_content,
+            model=model,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+            task_id=task_id,
+            add_task_log=_add_task_log,
+            update_progress=_update_progress,
+        )
+
+        # Mark task completed
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.status = TaskStatusEnum.COMPLETED
+            db.commit()
+
+    except Exception as e:
+        logger.error("Assessment task %d failed: %s\n%s", task_id, str(e), traceback.format_exc())
+        try:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                task.status = TaskStatusEnum.FAILED
+                db.commit()
+            _add_task_log(db, task_id, f"评分生成失败: {str(e)[:200]}")
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+@router.post("/start")
+async def start_dataset_assessment(
+    data: DatasetAssessmentStartRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Start a dataset assessment task."""
+    # Validate file
+    file_obj = (
+        db.query(File)
+        .filter(File.id == data.file_id, File.user_id == current_user.id)
+        .first()
+    )
+    if file_obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
+
+    # Validate prompt
+    prompt_obj = (
+        db.query(Prompt)
+        .filter(Prompt.id == data.prompt_id, Prompt.user_id == current_user.id)
+        .first()
+    )
+    if prompt_obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="提示词不存在")
+
+    # Validate prompt stage matches
+    if prompt_obj.stage != StageEnum.DATASET_ASSESSMENT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="提示词必须为dataset_assessment阶段",
+        )
+
+    # Resolve LLM config overrides
+    base_url_override = None
+    api_key_override = None
+    effective_llm_config_id = data.llm_config_id or prompt_obj.llm_config_id
+
+    if effective_llm_config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == effective_llm_config_id).first()
+        if llm_config_obj is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM配置不存在")
+        if llm_config_obj.user_id != current_user.id and llm_config_obj.user_id is not None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权使用此LLM配置")
+        base_url_override = llm_config_obj.base_url
+        api_key_override = llm_config_obj.api_key
+
+    # Create Task record
+    task = Task(
+        user_id=current_user.id,
+        stage=StageEnum.DATASET_ASSESSMENT,
+        file_id=data.file_id,
+        model=data.model,
+        prompt_id=data.prompt_id,
+        status=TaskStatusEnum.RUNNING,
+        progress_current=0,
+        progress_total=0,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    # Launch background task
+    asyncio.create_task(
+        _run_assessment_task(
+            task_id=task.id,
+            file_id=data.file_id,
+            output_name=data.output_name,
+            prompt_content=prompt_obj.content,
+            model=data.model,
+            user_id=current_user.id,
+            username=current_user.username,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+        )
+    )
+
+    return {"task_id": task.id, "status": task.status.value}
+
+
+@router.get("/status/{task_id}", response_model=TaskStatusResponse)
+async def get_dataset_assessment_status(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get the status of a dataset assessment task."""
+    task = (
+        db.query(Task)
+        .filter(Task.id == task_id, Task.user_id == current_user.id)
+        .first()
+    )
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+
+    generated_count = 0
+    if task.status.value in ("completed", "failed"):
+        from app.services.assessment_service import is_short_answer_item
+        import json
+        file_obj = db.query(File).filter(File.id == task.file_id).first()
+        if file_obj:
+            try:
+                with open(file_obj.file_path, "r", encoding="utf-8") as f:
+                    items = json.load(f)
+                if isinstance(items, list):
+                    generated_count = sum(1 for item in items if is_short_answer_item(item) and str(item.get("Assessment", "")).strip())
+            except Exception:
+                pass
+
+    return TaskStatusResponse(
+        task_id=task.id,
+        status=task.status.value,
+        progress_current=task.progress_current or 0,
+        progress_total=task.progress_total or 0,
+        generated_count=generated_count,
+        file_id=task.file_id,
+    )
+
+
+@router.get("/source-files")
+async def list_source_files(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List all JSON files available for assessment."""
+    files = (
+        db.query(File)
+        .filter(File.user_id == current_user.id, File.file_type == "json")
+        .order_by(File.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": f.id,
+            "filename": f.filename,
+            "source_stage": f.source_stage.value if f.source_stage else None,
+            "created_at": f.created_at.isoformat() if f.created_at else None,
+        }
+        for f in files
+    ]

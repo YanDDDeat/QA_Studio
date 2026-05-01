@@ -20,6 +20,9 @@ class StageEnum(str, PyEnum):
     ANSWER_GENERATE = "answer_generate"
     ANSWER_VALIDATE = "answer_validate"
     DATA_EVALUATE = "data_evaluate"
+    COT_FILTER = "cot_filter"
+    DATASET_SPLIT = "dataset_split"
+    DATASET_ASSESSMENT = "dataset_assessment"
 
 
 class TaskStatusEnum(str, PyEnum):

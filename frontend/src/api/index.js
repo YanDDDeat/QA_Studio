@@ -217,3 +217,47 @@ export function deleteLLMConfig(id) {
 export function testLLMConfig(id) {
   return api.post(`/llm-configs/${id}/test`)
 }
+
+// COT Filter API
+export function startCotFilter(data) {
+  return api.post('/cot-filter/start', data)
+}
+
+export function getCotFilterStatus(taskId) {
+  return api.get(`/cot-filter/status/${taskId}`)
+}
+
+export function getCotFilterSourceFiles() {
+  return api.get('/cot-filter/source-files')
+}
+
+// Dataset Split API
+export function startDatasetSplit(data) {
+  return api.post('/dataset-split/start', data)
+}
+
+export function getDatasetSplitStatus(taskId) {
+  return api.get(`/dataset-split/status/${taskId}`)
+}
+
+export function getDatasetSplitSourceFiles() {
+  return api.get('/dataset-split/source-files')
+}
+
+// Dataset Assessment API
+export function startDatasetAssessment(data) {
+  return api.post('/dataset-assessment/start', data)
+}
+
+export function getDatasetAssessmentStatus(taskId) {
+  return api.get(`/dataset-assessment/status/${taskId}`)
+}
+
+export function getDatasetAssessmentSourceFiles() {
+  return api.get('/dataset-assessment/source-files')
+}
+
+// Prompts for Assessment stage
+export function getAssessmentPrompts(params) {
+  return api.get('/prompts', { params })
+}

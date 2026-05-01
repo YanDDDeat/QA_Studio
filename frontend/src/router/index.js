@@ -49,6 +49,18 @@ const routes = [
         meta: { title: '数据评估', stage: 'data_evaluate' },
       },
       {
+        path: 'cot-filter',
+        name: 'CotFilter',
+        component: () => import('../views/CotFilter.vue'),
+        meta: { title: 'COT过滤', stage: 'cot_filter' },
+      },
+      {
+        path: 'dataset-processing',
+        name: 'DatasetProcessing',
+        component: () => import('../views/DatasetProcessing.vue'),
+        meta: { title: '数据集处理', stage: 'dataset_processing' },
+      },
+      {
         path: 'data-manage',
         name: 'DataManage',
         component: () => import('../views/DataManage.vue'),

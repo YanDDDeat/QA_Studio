@@ -158,33 +158,33 @@
 从 `D:\SWUST\10_语料数据库构建\new_QA_generate\QA_Gen_Studio` 迁移 COT过滤和数据集处理功能，适配本系统架构风格（Element Plus + FastAPI + MySQL + FileSelector + Task轮询）。
 
 ### 数据模型扩展
-- [ ] `models/models.py` StageEnum 新增 `cot_filter`、`dataset_split`、`dataset_assessment` 三个枚举值
-- [ ] 编写迁移脚本 `scripts/migrate_cot_dataset.py`：更新 StageEnum
+- [x] `models/models.py` StageEnum 新增 `cot_filter`、`dataset_split`、`dataset_assessment` 三个枚举值
+- [x] 编写迁移脚本 `scripts/migrate_cot_dataset.py`：更新 StageEnum + seed assessment Prompt
 
 ### COT过滤功能
-- [ ] 后端：新建 `routers/cot_filter.py`，实现 `POST /api/cot-filter/start`（提交过滤任务）和 `GET /api/cot-filter/source-files`（获取可选文件列表）和 `GET /api/cot-filter/download/{task_id}?type=with_cot|without_cot`（下载结果文件）
-- [ ] 后端：新建 `services/cot_filter_service.py`，核心逻辑：读取JSON文件，按cot字段是否为空分成两组，写入两个新JSON文件，注册到File模型，返回统计信息
-- [ ] 前端API：`api/index.js` 新增 `filterCot`、`getCotFilterSourceFiles`、`downloadCotFilterResult` 函数
-- [ ] 前端页面：新建 `views/CotFilter.vue`，左右两栏布局 — 左侧输入配置（FileSelector + 输出名称 + 开始过滤按钮），右侧结果展示（总记录数/COT不为空/COT为空 + 百分比 + 下载按钮）+ 进度条 + 任务日志
-- [ ] 前端路由：`router/index.js` 新增 `/cot-filter` 路由
-- [ ] 前端导航：`Layout.vue` 侧边栏新增"COT过滤"菜单项（归属"数据后处理"分组）
+- [x] 后端：新建 `routers/cot_filter.py`，实现 `POST /api/cot-filter/start`（提交过滤任务）和 `GET /api/cot-filter/source-files`（获取可选文件列表）
+- [x] 后端：新建 `services/cot_filter_service.py`，核心逻辑：读取JSON文件，按cot字段是否为空分成两组，写入两个新JSON文件，注册到File模型，返回统计信息
+- [x] 前端API：`api/index.js` 新增 `startCotFilter`、`getCotFilterStatus`、`getCotFilterSourceFiles` 函数
+- [x] 前端页面：新建 `views/CotFilter.vue`，左右两栏布局 — 左侧输入配置（FileSelector + 输出名称 + 开始过滤按钮），右侧结果展示（总记录数/COT不为空/COT为空 + 百分比 + 下载按钮）+ 进度条 + 任务日志
+- [x] 前端路由：`router/index.js` 新增 `/cot-filter` 路由
+- [x] 前端导航：`Layout.vue` 侧边栏新增"COT过滤"菜单项（归属"数据后处理"分组）
 
 ### 数据集切分功能
-- [ ] 后端：新建 `routers/dataset_split.py`，实现 `POST /api/dataset-split/start`（提交切分任务）和 `GET /api/dataset-split/source-files`
-- [ ] 后端：新建 `services/split_service.py`，核心逻辑迁移：load_output_items → split_items（difficulty_priority/task_type_random两种策略）→ write_items → 写入Dataset和QA记录数据库
-- [ ] 后端：迁移 `studio_core/select_test_set.py` 中的切分算法（split_items, load_output_items, write_items, summarize_task_counts）
-- [ ] 前端API：`api/index.js` 新增 `startDatasetSplit`、`getDatasetSplitSourceFiles` 函数
-- [ ] 前端页面：在 `DatasetProcessing.vue` 中实现切分区块 — 左侧配置（FileSelector + 测试集数量 + 输出名称 + 切分策略下拉 + 执行按钮），右侧进度/结果（进度条 + 统计：测试集/训练集数量 + 各题型分布 + 日志）
-- [ ] 前端路由：`router/index.js` 新增 `/dataset-processing` 路由
+- [x] 后端：新建 `routers/dataset_split.py`，实现 `POST /api/dataset-split/start`（提交切分任务）和 `GET /api/dataset-split/source-files`
+- [x] 后端：新建 `services/split_service.py`，核心逻辑迁移：split_items（difficulty_priority/task_type_random两种策略）→ 写入两个JSON文件 + 注册到File模型
+- [x] 后端：迁移 `studio_core/select_test_set.py` 中的切分算法（split_items, validate_records, select_test_records_difficulty_priority, select_test_records_task_type_random, summarize_task_counts）
+- [x] 前端API：`api/index.js` 新增 `startDatasetSplit`、`getDatasetSplitStatus`、`getDatasetSplitSourceFiles` 函数
+- [x] 前端页面：在 `DatasetProcessing.vue` 中实现切分区块 — 左侧配置（FileSelector + 测试集数量 + 输出名称 + 切分策略下拉 + 执行按钮），右侧进度/结果（进度条 + 统计：测试集/训练集数量 + 各题型分布 + 日志）
+- [x] 前端路由：`router/index.js` 新增 `/dataset-processing` 路由
 
 ### 评分标准生成功能
-- [ ] 后端：新建 `routers/dataset_assessment.py`，实现 `POST /api/dataset-assessment/start`（提交评分任务）和 `GET /api/dataset-assessment/source-files`
-- [ ] 后端：新建 `services/assessment_service.py`，核心逻辑迁移：加载输入 → 识别简答题 → LLM生成评分标准 → 验证（至少2评分点、总分100、每点需满分标准和失分规则、不允许"酌情给分"）→ 失败时修复重试 → 写回JSON文件
-- [ ] 后端：迁移 `studio_core/fill_qa_assessment.py` 中的评分生成逻辑，适配本系统 llm_service.py 的调用方式
-- [ ] 配置中心：新增 `dataset_assessment` stage 的默认 Prompt（评分标准生成提示词）
-- [ ] 前端API：`api/index.js` 新增 `startDatasetAssessment`、`getDatasetAssessmentSourceFiles` 函数
-- [ ] 前端页面：在 `DatasetProcessing.vue` 中实现评分区块 — 左侧配置（FileSelector + 输出名称 + Prompt选择+Preview + LLM配置 + 模型选择 + 生成按钮），右侧 PromptPreview + 进度/结果（统计：QA条目数/简答题数/已生成评分数/空评分数 + 日志）
-- [ ] 前端导航：`Layout.vue` 侧边栏新增"数据集处理"菜单项（归属"数据后处理"分组）
+- [x] 后端：新建 `routers/dataset_assessment.py`，实现 `POST /api/dataset-assessment/start`（提交评分任务）和 `GET /api/dataset-assessment/source-files`
+- [x] 后端：新建 `services/assessment_service.py`，核心逻辑迁移：加载输入 → 识别简答题 → LLM生成评分标准 → 验证（至少2评分点、总分100、每点需满分标准和失分规则、不允许"酌情给分"）→ 失败时修复重试 → 写回JSON文件 + 注册到File模型
+- [x] 后端：迁移 `studio_core/fill_qa_assessment.py` 中的评分生成逻辑，适配本系统 llm_service.py 的调用方式
+- [x] 配置中心：新增 `dataset_assessment` stage 的默认 Prompt（评分标准生成提示词）— 通过迁移脚本 seed
+- [x] 前端API：`api/index.js` 新增 `startDatasetAssessment`、`getDatasetAssessmentStatus`、`getDatasetAssessmentSourceFiles` 函数
+- [x] 前端页面：在 `DatasetProcessing.vue` 中实现评分区块 — 左侧配置（FileSelector + 输出名称 + Prompt选择 + LLM配置 + 模型选择 + 生成按钮），右侧进度/结果（统计：QA条目数/简答题数/已生成评分数/空评分数 + 日志）
+- [x] 前端导航：`Layout.vue` 侧边栏新增"数据集处理"菜单项（归属"数据后处理"分组）
 
 ### 整体验证
 - [ ] COT过滤：上传JSON → 过滤 → 查看统计 → 下载两个结果文件

@@ -23,6 +23,9 @@ from app.routers import (
     config_center,
     file_manage,
     llm_config,
+    cot_filter,
+    dataset_split,
+    dataset_assessment,
 )
 from app.database import engine, Base, SessionLocal
 from app.models import User, Dataset, File, Prompt, Task, TaskLog, LLMConfig
@@ -113,6 +116,9 @@ app.include_router(data_manage.router, prefix="/api/data-manage", tags=["数据�
 app.include_router(config_center.router, prefix="/api/config-center", tags=["配置中心"])
 app.include_router(file_manage.router, prefix="/api/file-manage", tags=["文件管理"])
 app.include_router(llm_config.router, prefix="/api/llm-configs", tags=["LLM配置"])
+app.include_router(cot_filter.router, prefix="/api/cot-filter", tags=["COT过滤"])
+app.include_router(dataset_split.router, prefix="/api/dataset-split", tags=["数据集切分"])
+app.include_router(dataset_assessment.router, prefix="/api/dataset-assessment", tags=["评分标准生成"])
 
 
 @app.get("/")

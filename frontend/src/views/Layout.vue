@@ -54,6 +54,21 @@
           </el-menu-item>
         </el-sub-menu>
 
+        <el-sub-menu index="group-postprocess">
+          <template #title>
+            <el-icon><Operation /></el-icon>
+            <span>数据后处理</span>
+          </template>
+          <el-menu-item index="/cot-filter">
+            <el-icon><Filter /></el-icon>
+            <span>COT过滤</span>
+          </el-menu-item>
+          <el-menu-item index="/dataset-processing">
+            <el-icon><Split /></el-icon>
+            <span>数据集处理</span>
+          </el-menu-item>
+        </el-sub-menu>
+
         <el-sub-menu index="group-admin">
           <template #title>
             <el-icon><Setting /></el-icon>
@@ -105,6 +120,7 @@ import { getMe } from '../api'
 import {
   EditPen, Share, Checked, Document, Select,
   DataAnalysis, Folder, Setting, ArrowDown, UserFilled,
+  Operation, Filter, Split,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
