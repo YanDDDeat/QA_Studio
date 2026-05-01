@@ -1,8 +1,9 @@
 """Add new StageEnum values for COT filter, dataset split, and assessment.
 
-Since StageEnum is stored as VARCHAR in MySQL, no schema change is needed —
-just adding the new enum values in models.py. This script only verifies the
-DB is ready and creates a default assessment Prompt if one doesn't exist.
+StageEnum is stored as MySQL ENUM type in 3 tables (tasks.stage,
+datasets.current_stage, files.source_stage). Adding new enum values
+requires ALTER TABLE on all 3 columns. This script also seeds a default
+assessment Prompt.
 
 Usage:
     cd backend
@@ -14,8 +15,47 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.database import SessionLocal
+from sqlalchemy import text
+from app.database import engine, SessionLocal
 from app.models.models import Prompt, StageEnum, LLMConfig
+
+
+# All StageEnum values (old + new) for MySQL ENUM definition
+ALL_STAGE_VALUES = [
+    "question_generate",
+    "knowledge_generate",
+    "question_validate",
+    "answer_generate",
+    "answer_validate",
+    "data_evaluate",
+    "cot_filter",
+    "dataset_split",
+    "dataset_assessment",
+]
+
+
+def alter_enum_columns():
+    """ALTER 3 MySQL ENUM columns to include the new StageEnum values."""
+    enum_str = "'" + "', '".join(ALL_STAGE_VALUES) + "'"
+
+    alter_statements = [
+        # tasks.stage: NOT NULL, no default
+        f"ALTER TABLE tasks MODIFY COLUMN stage ENUM({enum_str}) NOT NULL",
+        # datasets.current_stage: nullable, default 'question_generate'
+        f"ALTER TABLE datasets MODIFY COLUMN current_stage ENUM({enum_str}) DEFAULT 'question_generate'",
+        # files.source_stage: nullable, no default
+        f"ALTER TABLE files MODIFY COLUMN source_stage ENUM({enum_str})",
+    ]
+
+    with engine.connect() as conn:
+        for sql in alter_statements:
+            table = sql.split("ALTER TABLE ")[1].split(" ")[0]
+            print(f"[migrate] {sql[:80]}...")
+            conn.execute(text(sql))
+            conn.commit()
+            print(f"[migrate]   OK - {table}")
+
+    print("[migrate] All ENUM columns updated with 3 new values.")
 
 
 # Default assessment prompt (from QA_Gen_Studio's 简答题评分提示词.md)
@@ -102,9 +142,11 @@ def seed_assessment_prompt():
 
 def main():
     print("[migrate] Starting COT/Dataset StageEnum migration...")
-    print("[migrate] StageEnum values are defined in code (VARCHAR storage), no DB schema change needed.")
-    print("[migrate] New values: cot_filter, dataset_split, dataset_assessment")
 
+    # Step 1: ALTER ENUM columns to add new values
+    alter_enum_columns()
+
+    # Step 2: Seed default assessment prompt
     seed_assessment_prompt()
 
     print("[migrate] Migration complete.")
