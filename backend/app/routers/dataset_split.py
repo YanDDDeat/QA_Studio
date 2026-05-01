@@ -93,7 +93,7 @@ async def _run_dataset_split_task(
                 db.commit()
             return
 
-        _add_task_log(db, task_id, f"切分完成: 测试集 {result['test_count']} 条, 训练集 {result['train_count']} 条, 跳过非QA {result['skipped_non_qa']} 条")
+        _add_task_log(db, task_id, f"切分完成: 测试集 {result['test_count']} 条, 训练集 {result['train_count']} 条, 跳过非QA {result['skipped_non_qa']} 条 | 测试集题型: {result['test_task_counts']} | 训练集题型: {result['train_task_counts']}")
 
         # Mark task completed
         task = db.query(Task).filter(Task.id == task_id).first()

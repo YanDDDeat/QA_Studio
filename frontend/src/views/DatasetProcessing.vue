@@ -301,17 +301,23 @@ async function pollSplitStatus() {
 async function loadSplitResult() {
   try {
     const logsRes = await getTaskLogs(splitTaskId.value)
-    const logItems = Array.isArray(logsRes) ? logItems : []
+    const logItems = Array.isArray(logsRes) ? logsRes : []
     const resultLog = logItems.find(l => l.log_content && l.log_content.includes('切分完成'))
     if (resultLog) {
-      const match = resultLog.log_content.match(/测试集 (\d+) 条, 训练集 (\d+) 条, 跳过非QA (\d+) 条/)
-      if (match) {
-        splitResult.value = { test_count: parseInt(match[1]), train_count: parseInt(match[2]), skipped_non_qa: parseInt(match[3]), test_task_counts: '', train_task_counts: '' }
+      // Parse: "切分完成: 测试集 X 条, 训练集 Y 条, 跳过非QA Z 条 | 测试集题型: 单选=3, ... | 训练集题型: ..."
+      const mainMatch = resultLog.log_content.match(/测试集 (\d+) 条, 训练集 (\d+) 条, 跳过非QA (\d+) 条/)
+      const testTaskMatch = resultLog.log_content.match(/测试集题型: ([^|]+)/)
+      const trainTaskMatch = resultLog.log_content.match(/训练集题型: ([^\n|]+)/)
+      if (mainMatch) {
+        splitResult.value = {
+          test_count: parseInt(mainMatch[1]),
+          train_count: parseInt(mainMatch[2]),
+          skipped_non_qa: parseInt(mainMatch[3]),
+          test_task_counts: testTaskMatch ? testTaskMatch[1].trim() : '',
+          train_task_counts: trainTaskMatch ? trainTaskMatch[1].trim() : '',
+        }
       }
     }
-    // Also load latest files for task counts
-    const filesRes = await getManagedFiles({ source_stage: 'dataset_split' })
-    const splitFiles = (filesRes.items || []).filter(f => f.filename && f.filename.includes('_test'))
   } catch (err) { console.error('Load split result error:', err) }
 }
 
