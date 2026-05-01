@@ -57,6 +57,19 @@ STAGE_DISPLAY_NAMES = {
     "answer_generate": "答案生成",
     "answer_validate": "答案校验",
     "data_evaluate": "数据评估",
+    "dataset_assessment": "评分标准生成",
+}
+
+# Stages that require a prompt (shown in config center prompt tab)
+# cot_filter and dataset_split are pure local processing — no LLM, no prompt needed
+PROMPT_REQUIRED_STAGES = {
+    "question_generate",
+    "knowledge_generate",
+    "question_validate",
+    "answer_generate",
+    "answer_validate",
+    "data_evaluate",
+    "dataset_assessment",
 }
 
 # ---------- API endpoints ----------
@@ -64,10 +77,11 @@ STAGE_DISPLAY_NAMES = {
 
 @router.get("/stages", response_model=List[StageInfo])
 async def list_stages():
-    """Return the list of pipeline stages with Chinese display names."""
+    """Return the list of pipeline stages that require prompts."""
     return [
         StageInfo(value=s.value, label=STAGE_DISPLAY_NAMES.get(s.value, s.value))
         for s in StageEnum
+        if s.value in PROMPT_REQUIRED_STAGES
     ]
 
 
