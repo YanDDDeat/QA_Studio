@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "domain": "Updated Domain Again",
+    "category": "knowledge QA",
+    "task_type": "question answering",
+    "input": "What is machine learning?",
+    "output": "Updated answer about ML",
+    "cot": "Step 1: Define ML. Step 2: Explain subfields.",
+    "corpus_cate": 1,
+    "scene": null,
+    "Assessment": "",
+    "source": "Test Source",
+    "source_id": "src_001",
+    "source_type": "literature",
+    "originContent": null,
+    "knowledge": null,
+    "difficulty": null,
+    "relevance": null,
+    "clarity": null,
+    "reasoning": null,
+    "terminology": null,
+    "score": null,
+    "passed": "yes",
+    "current_stage": "question_generate",
+    "created_at": "2026-04-28 12:23:07.968926",
+    "updated_at": "2026-04-28 12:25:20.655618"
+  }
+]

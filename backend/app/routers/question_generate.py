@@ -1,0 +1,696 @@
+"""Question Generate router - Pipeline Stage 1
+
+Processes uploaded JSON files through LLM prompts to generate
+question-answer pairs. Each text record in the JSON is sent to
+the LLM, which returns a list of question objects that are
+stored as individual Dataset records.
+
+Key design:
+- Background task execution (asyncio.create_task)
+- Frontend polls /status/{task_id} for progress
+- Per-record LLM calls with structured JSON parsing
+- Autoincrement IDs for Dataset records (globally unique numeric)
+- User-scoped data isolation on all endpoints
+- Retry from the last successfully processed record
+"""
+
+import asyncio
+import json
+import logging
+import os
+import traceback
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
+from typing import Optional
+
+from app.database import get_db, SessionLocal
+from app.models.models import (
+    Dataset, File, Prompt, Task, TaskLog, TaskStatusEnum,
+    StageEnum, SourceTypeEnum, User, LLMConfig,
+)
+from app.routers.auth import get_current_user
+from app.services.llm_service import call_llm_json, LLMCallError
+from app.services.file_service import create_output_file, write_datasets_to_file
+
+logger = logging.getLogger("qa_studio.question_generate")
+
+router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request / response schemas
+# ---------------------------------------------------------------------------
+
+
+class QuestionGenerateStartRequest(BaseModel):
+    file_id: int = Field(..., description="ID of the uploaded JSON file")
+    category: str = Field(..., description="Category: 知识问答 or 逻辑生成")
+    source_type: str = Field(..., description="Source type: 图书, 专利, 文献, 其他")
+    source: Optional[str] = Field(None, description="Source name (optional)")
+    source_id: Optional[str] = Field(None, description="Source ID (optional)")
+    prompt_id: int = Field(..., description="ID of the prompt to use")
+    model: str = Field(..., description="Model name to use for LLM calls")
+    llm_config_id: Optional[int] = Field(None, description="ID of the LLM config to use")
+    output_filename: str = Field(..., description="User-specified base name for the output file")
+
+
+class TaskStatusResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    task_id: int
+    status: str
+    progress_current: int
+    progress_total: int
+    generated_count: int = 0
+    file_id: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Valid enum values
+# ---------------------------------------------------------------------------
+
+VALID_CATEGORIES = ["知识问答", "逻辑生成"]
+VALID_SOURCE_TYPES = [s.value for s in SourceTypeEnum]
+
+
+# ---------------------------------------------------------------------------
+# Background task runner
+# ---------------------------------------------------------------------------
+
+
+async def _run_question_generate_task(
+    task_id: int,
+    file_path: str,
+    text_field: str,
+    prompt_content: str,
+    model: str,
+    category: str,
+    source_type: str,
+    source_override: Optional[str],
+    source_id_override: Optional[str],
+    filename: str,
+    user_id: int,
+    source_file_id: int,
+    output_filename: str,
+    username: str,
+    start_index: int = 0,
+    base_url_override: Optional[str] = None,
+    api_key_override: Optional[str] = None,
+):
+    """Background coroutine that processes each text record through the LLM.
+
+    Args:
+        task_id: The Task record ID for progress tracking.
+        file_path: Path to the JSON file on disk.
+        text_field: The JSON field that contains text content.
+        prompt_content: The prompt template to send with each text.
+        model: LLM model name.
+        category: User-selected category (知识问答 or 逻辑生成).
+        source_type: User-selected source type.
+        source_override: User-provided source name (highest priority).
+        source_id_override: User-provided source ID (highest priority).
+        filename: Original filename (fallback for source).
+        user_id: Owner of all created Dataset records.
+        source_file_id: ID of the source File record (for creating output file).
+        start_index: Index to resume from (for retry).
+    """
+    db = SessionLocal()
+    try:
+        # Read and parse the JSON file
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if not isinstance(data, list):
+            data = [data]
+
+        total = len(data)
+
+        # Update task with total count if starting fresh
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task and start_index == 0:
+            task.progress_total = total
+            db.commit()
+
+        generated_count = 0
+
+        for idx in range(start_index, total):
+            record = data[idx]
+
+            # Extract text content using the text_field
+            text_content = ""
+            if isinstance(record, dict):
+                text_content = record.get(text_field, "")
+                if not text_content:
+                    # Try common alternative field names
+                    for alt in ["text", "content", "body", "paragraph"]:
+                        alt_val = record.get(alt, "")
+                        if alt_val:
+                            text_content = alt_val
+                            break
+            else:
+                text_content = str(record)
+
+            if not text_content:
+                logger.warning(
+                    "Task %d: record %d has no text content, skipping",
+                    task_id, idx,
+                )
+                _add_task_log(db, task_id, f"记录 {idx + 1}: 无文本内容，跳过")
+                _update_progress(db, task_id, idx + 1)
+                continue
+
+            # Determine source with priority chain:
+            # user input > JSON field > filename
+            effective_source = source_override
+            if not effective_source and isinstance(record, dict):
+                effective_source = record.get("source", "")
+            if not effective_source:
+                # Strip extension from filename
+                effective_source = os.path.splitext(filename)[0]
+
+            # Determine source_id with priority chain:
+            # user input > JSON field
+            effective_source_id = source_id_override
+            if not effective_source_id and isinstance(record, dict):
+                effective_source_id = record.get("source_id", "")
+
+            # Call LLM with the prompt + text content
+            try:
+                llm_prompt = f"{prompt_content}\n\n{text_content}"
+                llm_result = await call_llm_json(
+                    prompt=llm_prompt,
+                    model=model,
+                    temperature=0.3,
+                    base_url_override=base_url_override,
+                    api_key_override=api_key_override,
+                )
+            except LLMCallError as e:
+                logger.error(
+                    "Task %d: LLM call failed for record %d: %s",
+                    task_id, idx, str(e),
+                )
+                _add_task_log(
+                    db, task_id,
+                    f"记录 {idx + 1}: LLM调用失败 - {str(e)[:200]}",
+                )
+                _update_progress(db, task_id, idx + 1)
+                # Mark task as failed
+                task = db.query(Task).filter(Task.id == task_id).first()
+                if task:
+                    task.status = TaskStatusEnum.FAILED
+                    db.commit()
+                return  # Stop processing on LLM failure
+
+            # Parse the LLM response as a list of question objects
+            questions = []
+            if isinstance(llm_result, list):
+                questions = llm_result
+            elif isinstance(llm_result, dict):
+                # The LLM may wrap the list in an object
+                for key in ["questions", "data", "items", "results", "qa_pairs", "list"]:
+                    if key in llm_result and isinstance(llm_result[key], list):
+                        questions = llm_result[key]
+                        break
+                if not questions:
+                    # Single question object returned directly
+                    questions = [llm_result]
+
+            if not questions:
+                logger.warning(
+                    "Task %d: no questions generated for record %d",
+                    task_id, idx,
+                )
+                _add_task_log(
+                    db, task_id,
+                    f"记录 {idx + 1}: 未生成问题",
+                )
+                _update_progress(db, task_id, idx + 1)
+                continue
+
+            # Create Dataset records for each question
+            for q in questions:
+                if not isinstance(q, dict):
+                    continue
+
+                dataset = Dataset(
+                    user_id=user_id,
+                    input=q.get("input", q.get("question", "")),
+                    output=q.get("output", q.get("answer", "")),
+                    cot=q.get("cot", q.get("reasoning", "")),
+                    category=category,
+                    task_type=q.get("task_type", q.get("type", "")),
+                    domain=q.get("domain", ""),
+                    difficulty=q.get("difficulty", ""),
+                    corpus_cate=1,
+                    source=effective_source,
+                    source_id=effective_source_id,
+                    source_type=source_type,
+                    originContent=text_content,
+                    Assessment="",
+                    current_stage=StageEnum.QUESTION_GENERATE,
+                )
+                db.add(dataset)
+                generated_count += 1
+
+            db.commit()
+
+            _add_task_log(
+                db, task_id,
+                f"记录 {idx + 1}: 生成 {len(questions)} 个问题",
+            )
+            _update_progress(db, task_id, idx + 1)
+
+        # All records processed - create output file and write datasets to disk
+        task = db.query(Task).filter(Task.id == task_id).first()
+
+        # Create a new output file and link all generated datasets to it
+        source_file = db.query(File).filter(File.id == source_file_id).first()
+        if source_file and task:
+            output_file = create_output_file(
+                db=db,
+                user_id=user_id,
+                source_file=source_file,
+                output_filename=output_filename,
+                username=username,
+            )
+
+            # Link all Dataset records created during this task to the output file
+            datasets = (
+                db.query(Dataset)
+                .filter(
+                    Dataset.user_id == user_id,
+                    Dataset.current_stage == StageEnum.QUESTION_GENERATE,
+                    Dataset.created_at >= task.created_at,
+                    Dataset.file_id == None,
+                )
+                .all()
+            )
+            for ds in datasets:
+                ds.file_id = output_file.id
+            db.commit()
+
+            # Write all datasets for this output file to disk as JSON
+            write_datasets_to_file(db=db, file_id=output_file.id)
+
+            _add_task_log(
+                db, task_id,
+                f"输出文件已生成: {output_file.filename}",
+            )
+            logger.info(
+                "Task %d: created output file %s (file_id=%d) with %d datasets",
+                task_id, output_file.filename, output_file.id, len(datasets),
+            )
+
+        # Mark task as completed
+        if task:
+            task.status = TaskStatusEnum.COMPLETED
+            if output_file:
+                task.file_id = output_file.id
+            db.commit()
+
+        logger.info(
+            "Task %d completed: processed %d records, generated %d questions",
+            task_id, total, generated_count,
+        )
+
+    except Exception as e:
+        logger.error(
+            "Task %d unexpected error: %s\n%s",
+            task_id, str(e), traceback.format_exc(),
+        )
+        # Mark task as failed
+        try:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                task.status = TaskStatusEnum.FAILED
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+def _add_task_log(db: Session, task_id: int, content: str):
+    """Add a TaskLog entry for the given task."""
+    log = TaskLog(task_id=task_id, log_content=content)
+    db.add(log)
+    db.commit()
+
+
+def _update_progress(db: Session, task_id: int, current: int):
+    """Update the progress_current field on the Task record."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task:
+        task.progress_current = current
+        db.commit()
+
+
+# ---------------------------------------------------------------------------
+# API endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/start")
+async def start_question_generate(
+    data: QuestionGenerateStartRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Start a question generation task.
+
+    Validates inputs, creates a Task record, and launches a background
+    coroutine that processes each text record through the LLM.
+    Returns the task_id immediately so the frontend can poll for progress.
+    """
+    # Validate category
+    if data.category not in VALID_CATEGORIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid category: {data.category}. Must be one of {VALID_CATEGORIES}",
+        )
+
+    # Validate source_type
+    if data.source_type not in VALID_SOURCE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid source_type: {data.source_type}. Must be one of {VALID_SOURCE_TYPES}",
+        )
+
+    # Validate file exists and belongs to user
+    file_obj = (
+        db.query(File)
+        .filter(File.id == data.file_id, File.user_id == current_user.id)
+        .first()
+    )
+    if file_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+
+    if not os.path.exists(file_obj.file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on disk",
+        )
+
+    # Validate prompt exists and belongs to user
+    prompt_obj = (
+        db.query(Prompt)
+        .filter(Prompt.id == data.prompt_id, Prompt.user_id == current_user.id)
+        .first()
+    )
+    if prompt_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prompt not found",
+        )
+
+    # Validate prompt stage matches
+    if prompt_obj.stage != StageEnum.QUESTION_GENERATE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Prompt must be for the question_generate stage",
+        )
+
+    # Resolve LLM config overrides
+    base_url_override = None
+    api_key_override = None
+
+    # Priority: explicit llm_config_id > prompt's llm_config_id > settings default
+    effective_llm_config_id = data.llm_config_id or prompt_obj.llm_config_id
+
+    if effective_llm_config_id:
+        llm_config_obj = (
+            db.query(LLMConfig)
+            .filter(LLMConfig.id == effective_llm_config_id)
+            .first()
+        )
+        if llm_config_obj is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="LLM配置不存在",
+            )
+        # Check visibility: user must own it or it must be global
+        if llm_config_obj.user_id != current_user.id and llm_config_obj.user_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权使用此LLM配置",
+            )
+        base_url_override = llm_config_obj.base_url
+        api_key_override = llm_config_obj.api_key
+    try:
+        with open(file_obj.file_path, "r", encoding="utf-8") as f:
+            json_data = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to parse JSON file: {str(e)}",
+        )
+
+    if isinstance(json_data, list):
+        total_records = len(json_data)
+    else:
+        total_records = 1
+
+    if total_records == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="JSON file contains no records",
+        )
+
+    # Create Task record
+    task = Task(
+        user_id=current_user.id,
+        stage=StageEnum.QUESTION_GENERATE,
+        file_id=data.file_id,
+        model=data.model,
+        prompt_id=data.prompt_id,
+        status=TaskStatusEnum.RUNNING,
+        progress_current=0,
+        progress_total=total_records,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    # Launch background task
+    asyncio.create_task(
+        _run_question_generate_task(
+            task_id=task.id,
+            file_path=file_obj.file_path,
+            text_field=file_obj.text_field,
+            prompt_content=prompt_obj.content,
+            model=data.model,
+            category=data.category,
+            source_type=data.source_type,
+            source_override=data.source,
+            source_id_override=data.source_id,
+            filename=file_obj.filename,
+            user_id=current_user.id,
+            source_file_id=file_obj.id,
+            output_filename=data.output_filename,
+            username=current_user.username,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+        )
+    )
+
+    return {
+        "task_id": task.id,
+        "status": task.status.value,
+        "progress_current": task.progress_current,
+        "progress_total": task.progress_total,
+    }
+
+
+@router.get("/status/{task_id}", response_model=TaskStatusResponse)
+async def get_question_generate_status(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get the status and progress of a question generation task.
+
+    Also counts how many Dataset records were generated for this task
+    by checking records created after the task started.
+    """
+    task = (
+        db.query(Task)
+        .filter(Task.id == task_id, Task.user_id == current_user.id)
+        .first()
+    )
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    # Count generated Dataset records for this user with question_generate stage
+    # created after this task started
+    generated_count = (
+        db.query(Dataset)
+        .filter(
+            Dataset.user_id == current_user.id,
+            Dataset.current_stage == StageEnum.QUESTION_GENERATE,
+            Dataset.created_at >= task.created_at,
+        )
+        .count()
+    )
+
+    return TaskStatusResponse(
+        task_id=task.id,
+        status=task.status.value,
+        progress_current=task.progress_current or 0,
+        progress_total=task.progress_total or 0,
+        generated_count=generated_count,
+        file_id=task.file_id,
+    )
+
+
+@router.post("/retry/{task_id}")
+async def retry_question_generate(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retry a failed question generation task.
+
+    Resumes from the last successfully processed record index.
+    Resets the task status to running and restarts the background coroutine.
+    """
+    task = (
+        db.query(Task)
+        .filter(Task.id == task_id, Task.user_id == current_user.id)
+        .first()
+    )
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    if task.status not in (TaskStatusEnum.FAILED, TaskStatusEnum.COMPLETED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only failed or completed tasks can be retried",
+        )
+
+    # Get the file and prompt for this task
+    file_obj = (
+        db.query(File)
+        .filter(File.id == task.file_id, File.user_id == current_user.id)
+        .first()
+    )
+    if file_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Original file not found",
+        )
+
+    prompt_obj = (
+        db.query(Prompt)
+        .filter(Prompt.id == task.prompt_id, Prompt.user_id == current_user.id)
+        .first()
+    )
+    if prompt_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Original prompt not found",
+        )
+
+    # Determine start_index from progress_current (last processed record)
+    start_index = task.progress_current or 0
+
+    # Determine category/source info from existing Dataset records
+    # created during this task's first run
+    category = _get_task_field(db, task, "category", "知识问答")
+    source_type = _get_task_field(db, task, "source_type", "图书")
+    source_override = _get_task_field(db, task, "source", None)
+    source_id_override = _get_task_field(db, task, "source_id", None)
+
+    # Reset task status to running
+    task.status = TaskStatusEnum.RUNNING
+    db.commit()
+
+    # Launch background task from where it stopped
+    asyncio.create_task(
+        _run_question_generate_task(
+            task_id=task.id,
+            file_path=file_obj.file_path,
+            text_field=file_obj.text_field,
+            prompt_content=prompt_obj.content,
+            model=task.model,
+            category=category,
+            source_type=source_type,
+            source_override=source_override,
+            source_id_override=source_id_override,
+            filename=file_obj.filename,
+            user_id=current_user.id,
+            source_file_id=file_obj.id,
+            output_filename=os.path.splitext(file_obj.filename)[0],
+            username=current_user.username,
+            start_index=start_index,
+        )
+    )
+
+    return {
+        "task_id": task.id,
+        "status": task.status.value,
+        "progress_current": task.progress_current,
+        "progress_total": task.progress_total,
+        "message": f"Retrying from record {start_index + 1}",
+    }
+
+
+def _get_task_field(db: Session, task: Task, field_name: str, default_value):
+    """Retrieve a field from a Dataset record created by this task."""
+    dataset = (
+        db.query(Dataset)
+        .filter(
+            Dataset.user_id == task.user_id,
+            Dataset.current_stage == StageEnum.QUESTION_GENERATE,
+            Dataset.created_at >= task.created_at,
+        )
+        .first()
+    )
+    if dataset and hasattr(dataset, field_name):
+        value = getattr(dataset, field_name)
+        if value:
+            return value
+    return default_value
+
+
+@router.get("/source-files")
+async def list_source_files(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List all JSON files available for the current user.
+
+    Returns ALL JSON files belonging to the current user, regardless of
+    source_stage or pipeline stage. This allows users to select any file
+    at any stage (e.g., directly upload a file with questions and jump to
+    answer generation). Filtering happens at execution time.
+    """
+    files = (
+        db.query(File)
+        .filter(
+            File.user_id == current_user.id,
+            File.file_type == "json",
+        )
+        .order_by(File.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": f.id,
+            "filename": f.filename,
+            "text_field": f.text_field,
+            "source_stage": f.source_stage.value if f.source_stage else None,
+            "created_at": f.created_at.isoformat() if f.created_at else None,
+        }
+        for f in files
+    ]
