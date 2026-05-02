@@ -83,8 +83,6 @@
             stripe
             border
             size="small"
-            highlight-current-row
-            @current-change="handleRecordSelect"
             style="width: 100%"
           >
             <el-table-column prop="id" label="ID" width="50" />
@@ -93,6 +91,11 @@
             <el-table-column prop="domain" label="领域" width="80" show-overflow-tooltip />
             <el-table-column prop="difficulty" label="难度" width="70" />
             <el-table-column prop="source" label="来源" width="100" show-overflow-tooltip />
+            <el-table-column label="操作" width="70" fixed="right">
+              <template #default="{ row }">
+                <el-button type="primary" link size="small" @click="handleRecordSelect(row)">查看</el-button>
+              </template>
+            </el-table-column>
           </el-table>
 
           <div class="preview-pagination">
