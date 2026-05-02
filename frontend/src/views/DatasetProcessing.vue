@@ -293,6 +293,7 @@ async function pollSplitStatus() {
     if (res.status === 'completed' || res.status === 'failed') {
       stopSplitPolling()
       splitTaskRunning.value = false
+      await fetchSplitLogs()
       if (res.status === 'completed') await loadSplitResult()
     }
   } catch (err) { console.error('Poll split error:', err) }
@@ -385,6 +386,7 @@ async function pollAssessStatus() {
     if (res.status === 'completed' || res.status === 'failed') {
       stopAssessPolling()
       assessTaskRunning.value = false
+      await fetchAssessLogs()
       if (res.status === 'completed') await loadAssessResult()
     }
   } catch (err) { console.error('Poll assess error:', err) }

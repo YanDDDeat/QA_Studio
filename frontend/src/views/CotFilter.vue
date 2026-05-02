@@ -206,10 +206,8 @@ async function pollStatus() {
     if (res.status === 'completed' || res.status === 'failed') {
       stopPolling()
       taskRunning.value = false
-      if (res.status === 'completed') {
-        await fetchLogs()
-        await loadFilterResult()
-      }
+      await fetchLogs()
+      if (res.status === 'completed') await loadFilterResult()
     }
   } catch (err) {
     console.error('Poll status error:', err)
