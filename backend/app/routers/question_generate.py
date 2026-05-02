@@ -33,6 +33,7 @@ from app.models.models import (
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import create_output_file, write_datasets_to_file
+from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.question_generate")
 
@@ -441,25 +442,16 @@ async def start_question_generate(
             )
         base_url_override = llm_config_obj.base_url
         api_key_override = llm_config_obj.api_key
-    try:
-        with open(file_obj.file_path, "r", encoding="utf-8") as f:
-            json_data = json.load(f)
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+    is_valid, validation_msg, validation_stats = validate_file_fields(
+        file_obj.file_path, "question_generate", text_field=file_obj.text_field
+    )
+    if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to parse JSON file: {str(e)}",
+            detail=validation_msg,
         )
 
-    if isinstance(json_data, list):
-        total_records = len(json_data)
-    else:
-        total_records = 1
-
-    if total_records == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="JSON file contains no records",
-        )
+    total_records = validation_stats.get("total", 0)
 
     # Create Task record
     task = Task(

@@ -25,6 +25,7 @@ from app.models.models import (
 )
 from app.routers.auth import get_current_user
 from app.services.assessment_service import run_assessment_job
+from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.dataset_assessment")
 
@@ -147,6 +148,16 @@ async def start_dataset_assessment(
     )
     if file_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
+
+    # Validate file has required fields for this stage
+    is_valid, validation_msg, validation_stats = validate_file_fields(
+        file_obj.file_path, "dataset_assessment"
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=validation_msg,
+        )
 
     # Validate prompt
     prompt_obj = (

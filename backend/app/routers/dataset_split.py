@@ -22,6 +22,7 @@ from app.database import get_db, SessionLocal
 from app.models.models import File, Task, TaskLog, TaskStatusEnum, StageEnum, User
 from app.routers.auth import get_current_user
 from app.services.split_service import run_dataset_split, SPLIT_STRATEGIES
+from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.dataset_split")
 
@@ -132,6 +133,16 @@ async def start_dataset_split(
     )
     if file_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
+
+    # Validate file has required fields for this stage
+    is_valid, validation_msg, validation_stats = validate_file_fields(
+        file_obj.file_path, "dataset_split"
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=validation_msg,
+        )
 
     # Validate split strategy
     if data.split_strategy not in SPLIT_STRATEGIES:

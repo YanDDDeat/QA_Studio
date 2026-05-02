@@ -31,6 +31,7 @@ from app.models.models import (
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import write_datasets_to_file
+from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.answer_generate")
 
@@ -273,6 +274,16 @@ async def start_answer_generate(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="文件不存在",
+        )
+
+    # Validate file has required fields for this stage
+    is_valid, validation_msg, validation_stats = validate_file_fields(
+        file_obj.file_path, "answer_generate"
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=validation_msg,
         )
 
     # Validate file has qualifying datasets (question_validate stage, passed="是")
