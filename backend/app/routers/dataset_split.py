@@ -31,7 +31,7 @@ router = APIRouter()
 
 class DatasetSplitStartRequest(BaseModel):
     file_id: int = Field(..., description="ID of the JSON file to split")
-    test_count: int = Field(..., description="Number of items for the test set", ge=5)
+    test_count: int = Field(..., description="Number of items for the test set", ge=1)
     output_name: str = Field(..., description="Base name for output files")
     split_strategy: str = Field("difficulty_priority", description="Split strategy: difficulty_priority or task_type_random")
 

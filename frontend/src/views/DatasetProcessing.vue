@@ -22,7 +22,7 @@
             <el-form-item label="测试集数量">
               <el-input-number
                 v-model="splitForm.test_count"
-                :min="5"
+                :min="1"
                 :max="1000"
                 :step="1"
                 controls-position="right"
@@ -181,7 +181,7 @@ const splitLogLoading = ref(false)
 let splitPollTimer = null
 let splitLogTimer = null
 
-const canStartSplit = computed(() => splitForm.value.file_id && splitForm.value.output_name && splitForm.value.test_count >= 5 && !splitTaskRunning.value)
+const canStartSplit = computed(() => splitForm.value.file_id && splitForm.value.output_name && splitForm.value.test_count >= 1 && !splitTaskRunning.value)
 
 const splitProgressPercent = computed(() => {
   if (!splitTaskInfo.value || splitTaskInfo.value.progress_total === 0) return 0
