@@ -1,13 +1,12 @@
 """Dataset Split service for QA Studio.
 
-Migrate and adapt split logic from QA_Gen_Studio's select_test_set.py.
 Split QA records into train/test sets using two strategies:
 - difficulty_priority: harder questions prioritized for test set
 - task_type_random: proportional random sampling by task type
 
 Key design:
 - Reads input JSON file from disk
-- Filters valid QA items, validates task types
+- Filters valid QA items, works with whatever task types exist in data
 - Splits into test/train based on chosen strategy
 - Writes two output JSON files and registers in File table
 """
@@ -18,7 +17,7 @@ import logging
 import re
 from random import Random
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -26,7 +25,7 @@ from app.models.models import File, StageEnum
 
 logger = logging.getLogger("qa_studio.split_service")
 
-REQUIRED_TASK_TYPES = ["单选", "多选", "判断", "填空", "简答"]
+KNOWN_TASK_TYPES = ["单选", "多选", "判断", "填空", "简答"]
 SPLIT_STRATEGIES = ["difficulty_priority", "task_type_random"]
 DIFFICULTY_PRIORITY = {"较难": 0, "中等": 1, "基础": 2}
 UNKNOWN_DIFFICULTY_PRIORITY = 99
@@ -38,10 +37,9 @@ def normalize_space(text: str) -> str:
 
 def normalize_task_type(raw: str) -> str:
     val = normalize_space(raw)
-    for t in REQUIRED_TASK_TYPES:
+    for t in KNOWN_TASK_TYPES:
         if val == t:
             return t
-    # Common aliases
     alias_map = {"单选题": "单选", "多选题": "多选", "判断题": "判断", "填空题": "填空", "简答题": "简答"}
     return alias_map.get(val, val)
 
@@ -72,10 +70,21 @@ def build_record(index: int, item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def build_grouped_records(records: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+def discover_task_types(records: List[Dict[str, Any]]) -> List[str]:
+    """Return sorted list of task types actually present in the data."""
+    present: Set[str] = set()
+    for record in records:
+        present.add(record["task_type"])
+    # Sort: known types first in their defined order, then unknown types alphabetically
+    known = [t for t in KNOWN_TASK_TYPES if t in present]
+    unknown = sorted(t for t in present if t not in KNOWN_TASK_TYPES)
+    return known + unknown
+
+
+def build_grouped_records(records: List[Dict[str, Any]], task_types: List[str]) -> Dict[str, List[Dict[str, Any]]]:
     return {
         task_type: [record for record in records if record["task_type"] == task_type]
-        for task_type in REQUIRED_TASK_TYPES
+        for task_type in task_types
     }
 
 
@@ -84,57 +93,69 @@ def record_sort_key(record: Dict[str, Any]) -> Tuple[int, int]:
 
 
 def summarize_task_counts(items: List[Dict[str, Any]]) -> str:
-    parts = []
-    for task_type in REQUIRED_TASK_TYPES:
-        count = sum(1 for item in items if normalize_task_type(item.get("task_type", "")) == task_type)
-        parts.append(f"{task_type}={count}")
-    return ", ".join(parts)
+    counts: Dict[str, int] = {}
+    for item in items:
+        tt = normalize_task_type(item.get("task_type", ""))
+        counts[tt] = counts.get(tt, 0) + 1
+    # Sort: known types first, then others
+    known = [f"{t}={counts[t]}" for t in KNOWN_TASK_TYPES if t in counts]
+    unknown = [f"{t}={counts[t]}" for t in sorted(counts) if t not in KNOWN_TASK_TYPES]
+    return ", ".join(known + unknown)
 
 
-def validate_records(records: List[Dict[str, Any]], test_count: int) -> None:
-    if test_count < len(REQUIRED_TASK_TYPES):
-        raise ValueError(f"测试集数量必须 >= {len(REQUIRED_TASK_TYPES)} 以覆盖所有题型")
+def validate_records(records: List[Dict[str, Any]], test_count: int) -> List[str]:
+    """Validate records and return the list of present task types.
+    Raises ValueError only for truly impossible conditions.
+    """
+    if not records:
+        raise ValueError("没有有效的QA记录")
 
-    unsupported = [record for record in records if record["task_type"] not in REQUIRED_TASK_TYPES]
-    if unsupported:
-        raise ValueError(f"存在不支持的任务类型: {unsupported[0]['task_type']}")
+    task_types = discover_task_types(records)
 
-    task_counts = {task_type: 0 for task_type in REQUIRED_TASK_TYPES}
-    for record in records:
-        task_counts[record["task_type"]] += 1
+    if test_count > len(records):
+        raise ValueError(f"测试集数量({test_count})超过总记录数({len(records)})")
 
-    missing = [task_type for task_type, count in task_counts.items() if count == 0]
-    if missing:
-        raise ValueError(f"缺少以下题型: {', '.join(missing)}")
+    # Each present task type must leave at least 1 record for train
+    grouped = build_grouped_records(records, task_types)
+    max_test = sum(len(group) - 1 for group in grouped.values() if len(group) > 1)
+    # Groups with only 1 record can contribute 0 to test (must stay in train)
+    single_groups = [tt for tt in task_types if len(grouped[tt]) == 1]
+    if single_groups and test_count >= len(records) - len(single_groups):
+        # All non-single records would go to test, leaving only 1-per-type in train
+        pass  # This is actually fine as long as test_count <= max_test
 
-    insufficient = [f"{task_type}={count}" for task_type, count in task_counts.items() if count < 2]
-    if insufficient:
-        raise ValueError(f"每种题型至少需要2条记录: {', '.join(insufficient)}")
-
-    max_test_count = sum(count - 1 for count in task_counts.values())
+    max_test_count = len(records) - len(task_types)  # at least 1 per type stays in train
     if test_count > max_test_count:
-        raise ValueError(f"测试集数量过大，最多可选 {max_test_count} 条")
+        raise ValueError(
+            f"测试集数量过大，最多可选 {max_test_count} 条 (需为每种题型保留至少1条训练数据)"
+        )
+
+    return task_types
 
 
-def select_test_records_difficulty_priority(records: List[Dict[str, Any]], test_count: int) -> List[Dict[str, Any]]:
-    grouped = build_grouped_records(records)
+def select_test_records_difficulty_priority(
+    records: List[Dict[str, Any]], test_count: int, task_types: List[str]
+) -> List[Dict[str, Any]]:
+    grouped = build_grouped_records(records, task_types)
     grouped = {
         task_type: sorted(grouped[task_type], key=record_sort_key)
-        for task_type in REQUIRED_TASK_TYPES
+        for task_type in task_types
     }
 
     selected: List[Dict[str, Any]] = []
-    selected_counts = {task_type: 0 for task_type in REQUIRED_TASK_TYPES}
+    selected_counts = {task_type: 0 for task_type in task_types}
 
-    # Guarantee at least one per task type
-    for task_type in REQUIRED_TASK_TYPES:
+    # Guarantee at least one per task type (if test_count allows)
+    for task_type in task_types:
+        if len(selected) >= test_count:
+            break
         record = grouped[task_type][0]
         selected.append(record)
         selected_counts[task_type] += 1
 
     # Fill remaining by difficulty priority
     remaining_candidates: List[Dict[str, Any]] = []
-    for task_type in REQUIRED_TASK_TYPES:
+    for task_type in task_types:
         remaining_candidates.extend(grouped[task_type][1:])
 
     for record in sorted(remaining_candidates, key=record_sort_key):
@@ -142,6 +163,7 @@ def select_test_records_difficulty_priority(records: List[Dict[str, Any]], test_
             break
         task_type = record["task_type"]
         total_in_group = len(grouped[task_type])
+        # Leave at least 1 in train for this task type
         if selected_counts[task_type] >= total_in_group - 1:
             continue
         selected.append(record)
@@ -152,27 +174,26 @@ def select_test_records_difficulty_priority(records: List[Dict[str, Any]], test_
     return sorted(selected, key=lambda record: record["index"])
 
 
-def allocate_random_task_type_counts(grouped: Dict[str, List[Dict[str, Any]]], test_count: int) -> Dict[str, int]:
-    total_records = sum(len(grouped[task_type]) for task_type in REQUIRED_TASK_TYPES)
-    target_counts = {task_type: 1 for task_type in REQUIRED_TASK_TYPES}
+def allocate_random_task_type_counts(
+    grouped: Dict[str, List[Dict[str, Any]]], test_count: int, task_types: List[str]
+) -> Dict[str, int]:
+    total_records = sum(len(grouped[task_type]) for task_type in task_types)
+    target_counts: Dict[str, int] = {}
     fractional_parts: List[Tuple[float, str]] = []
 
-    for task_type in REQUIRED_TASK_TYPES:
+    for task_type in task_types:
         group_size = len(grouped[task_type])
         proportional_target = (test_count * group_size) / total_records
-        capped_target = min(group_size - 1, proportional_target)
-        floor_target = max(1, int(capped_target))
+        capped_target = min(group_size - 1, proportional_target) if group_size > 1 else 0
+        floor_target = max(0, int(capped_target))
         target_counts[task_type] = floor_target
         fractional_parts.append((capped_target - floor_target, task_type))
 
     remaining = test_count - sum(target_counts.values())
     while remaining > 0:
         assigned = False
-        for _, task_type in sorted(
-            fractional_parts,
-            key=lambda item: (-item[0], REQUIRED_TASK_TYPES.index(item[1])),
-        ):
-            max_allowed = len(grouped[task_type]) - 1
+        for _, task_type in sorted(fractional_parts, key=lambda item: (-item[0], task_types.index(item[1]) if item[1] in task_types else 999)):
+            max_allowed = len(grouped[task_type]) - 1 if len(grouped[task_type]) > 1 else 0
             if target_counts[task_type] >= max_allowed:
                 continue
             target_counts[task_type] += 1
@@ -186,21 +207,27 @@ def allocate_random_task_type_counts(grouped: Dict[str, List[Dict[str, Any]]], t
     return target_counts
 
 
-def select_test_records_task_type_random(records: List[Dict[str, Any]], test_count: int) -> List[Dict[str, Any]]:
-    grouped = build_grouped_records(records)
-    selected_counts = allocate_random_task_type_counts(grouped, test_count)
+def select_test_records_task_type_random(
+    records: List[Dict[str, Any]], test_count: int, task_types: List[str]
+) -> List[Dict[str, Any]]:
+    grouped = build_grouped_records(records, task_types)
+    selected_counts = allocate_random_task_type_counts(grouped, test_count, task_types)
     rng = Random()
     selected: List[Dict[str, Any]] = []
-    for task_type in REQUIRED_TASK_TYPES:
-        selected.extend(rng.sample(grouped[task_type], selected_counts[task_type]))
+    for task_type in task_types:
+        count = selected_counts[task_type]
+        if count > 0:
+            selected.extend(rng.sample(grouped[task_type], count))
     return sorted(selected, key=lambda record: record["index"])
 
 
-def select_test_records(records: List[Dict[str, Any]], test_count: int, split_strategy: str = "difficulty_priority") -> List[Dict[str, Any]]:
+def select_test_records(
+    records: List[Dict[str, Any]], test_count: int, split_strategy: str, task_types: List[str]
+) -> List[Dict[str, Any]]:
     if split_strategy == "difficulty_priority":
-        return select_test_records_difficulty_priority(records, test_count)
+        return select_test_records_difficulty_priority(records, test_count, task_types)
     if split_strategy == "task_type_random":
-        return select_test_records_task_type_random(records, test_count)
+        return select_test_records_task_type_random(records, test_count, task_types)
     raise ValueError(f"Unsupported split strategy: {split_strategy}")
 
 
@@ -221,8 +248,8 @@ def split_items(
     if not qa_records:
         raise ValueError("输入文件中没有有效的QA记录")
 
-    validate_records(qa_records, test_count)
-    test_records = select_test_records(qa_records, test_count, split_strategy)
+    task_types = validate_records(qa_records, test_count)
+    test_records = select_test_records(qa_records, test_count, split_strategy, task_types)
     test_indices = {record["index"] for record in test_records}
     train_records = [record for record in qa_records if record["index"] not in test_indices]
 
@@ -240,21 +267,7 @@ def run_dataset_split(
     test_count: int,
     split_strategy: str,
 ) -> dict:
-    """Run dataset split on a JSON file and create train/test output files.
-
-    Args:
-        db: Active SQLAlchemy session.
-        user_id: The user who owns the output files.
-        source_file: The source File record to split.
-        output_name: User-specified base name for output files.
-        username: Username for unique filename suffix.
-        test_count: Number of items to place in the test set.
-        split_strategy: 'difficulty_priority' or 'task_type_random'.
-
-    Returns:
-        Dict with statistics and output file info.
-    """
-    # Read source file
+    """Run dataset split on a JSON file and create train/test output files."""
     with open(source_file.file_path, "r", encoding="utf-8") as f:
         raw_items = json.load(f)
 
@@ -264,10 +277,8 @@ def run_dataset_split(
     if not raw_items:
         raise ValueError(f"No input items found in file {source_file.filename}")
 
-    # Split
     test_items, train_items, skipped_non_qa = split_items(raw_items, test_count, split_strategy)
 
-    # Build output filenames
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     suffix_name = username or str(user_id)
     upload_dir = os.path.join("uploads", str(user_id))
@@ -279,14 +290,12 @@ def run_dataset_split(
     train_filename = f"{output_name}_{suffix_name}_{timestamp}_train.json"
     train_path = os.path.join(upload_dir, train_filename)
 
-    # Write output files
     with open(test_path, "w", encoding="utf-8") as f:
         json.dump(test_items, f, ensure_ascii=False, indent=2)
 
     with open(train_path, "w", encoding="utf-8") as f:
         json.dump(train_items, f, ensure_ascii=False, indent=2)
 
-    # Register output files in DB
     test_file_record = File(
         user_id=user_id,
         filename=test_filename,
