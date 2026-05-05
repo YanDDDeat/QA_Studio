@@ -497,9 +497,7 @@ async function autoSelectFile(targetId) {
 <style scoped>
 @import 'katex/dist/katex.min.css';
 
-.page-container {
-  max-width: 1200px;
-}
+.page-container {}
 .page-container h2 {
   margin-bottom: 8px;
 }

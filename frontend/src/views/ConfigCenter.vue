@@ -741,9 +741,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.page-container {
-  max-width: 1200px;
-}
+.page-container {}
 .page-container h2 {
   margin-bottom: 16px;
 }

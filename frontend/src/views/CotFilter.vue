@@ -65,6 +65,29 @@
       </div>
     </el-card>
 
+    <!-- Source file preview -->
+    <el-card v-if="form.file_id" class="source-preview-card">
+      <template #header>
+        <span class="card-title">源文件预览 - {{ sourceFileName }}</span>
+      </template>
+      <div class="results-body">
+        <div class="results-toolbar">
+          <el-button type="primary" size="small" :loading="sourceLoading" @click="loadSourcePreview">加载预览</el-button>
+          <span v-if="sourceTotal > 0" class="results-count">共 {{ sourceTotal }} 条</span>
+        </div>
+        <el-table v-if="sourceData.length > 0" :data="sourceData" v-loading="sourceLoading" stripe border size="small" style="width: 100%">
+          <el-table-column prop="id" label="ID" width="50" />
+          <el-table-column prop="input" label="问题" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="task_type" label="题型" width="100" />
+          <el-table-column prop="domain" label="领域" width="100" show-overflow-tooltip />
+        </el-table>
+        <div v-if="sourceData.length === 0 && !sourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
+        <div v-if="sourceTotal > 0" class="results-pagination">
+          <el-pagination v-model:current-page="sourcePage" :page-size="10" :total="sourceTotal" layout="total, prev, pager, next" @current-change="handleSourcePageChange" />
+        </div>
+      </div>
+    </el-card>
+
     <!-- Progress section -->
     <el-card v-if="taskInfo" class="progress-card">
       <template #header>
@@ -130,6 +153,7 @@ import {
   resumeTask,
 } from '../api'
 import FileSelector from '../components/FileSelector.vue'
+import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
 
 const form = ref({
@@ -160,6 +184,20 @@ watch(() => form.value.file_id, (newFileId) => {
     form.value.output_name = buildDefaultOutputFilename(file.filename, 'cot_filter', username.value)
   }
 })
+
+// ----- Source file preview -----
+const {
+  sourceData,
+  sourceTotal,
+  sourceLoading,
+  sourcePage,
+  sourceFileName,
+  loadSourcePreview,
+  handleSourcePageChange,
+} = useSourcePreview(
+  computed(() => form.value.file_id),
+  fileOptions
+)
 
 const progressPercent = computed(() => {
   if (!taskInfo.value || taskInfo.value.progress_total === 0) return 0
@@ -371,10 +409,11 @@ onUnmounted(() => stopPolling())
 </script>
 
 <style scoped>
-.page-container { max-width: 1200px }
+.page-container {}
 .page-container h2 { margin-bottom: 16px }
 .page-intro { color: #909399; font-size: 14px; margin-bottom: 16px }
 .form-card { margin-bottom: 20px }
+.source-preview-card { margin-bottom: 20px }
 .card-title { font-size: 16px; font-weight: 600 }
 .config-layout { display: flex; gap: 24px }
 .config-form { flex: 3; min-width: 0 }

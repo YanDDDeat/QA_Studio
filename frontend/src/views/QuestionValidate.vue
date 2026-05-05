@@ -79,6 +79,29 @@
       </div>
     </el-card>
 
+    <!-- Source file preview -->
+    <el-card v-if="form.file_id" class="source-preview-card">
+      <template #header>
+        <span class="card-title">源文件预览 - {{ sourceFileName }}</span>
+      </template>
+      <div class="results-body">
+        <div class="results-toolbar">
+          <el-button type="primary" size="small" :loading="sourceLoading" @click="loadSourcePreview">加载预览</el-button>
+          <span v-if="sourceTotal > 0" class="results-count">共 {{ sourceTotal }} 条</span>
+        </div>
+        <el-table v-if="sourceData.length > 0" :data="sourceData" v-loading="sourceLoading" stripe border size="small" style="width: 100%">
+          <el-table-column prop="id" label="ID" width="50" />
+          <el-table-column prop="input" label="问题" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="task_type" label="题型" width="100" />
+          <el-table-column prop="domain" label="领域" width="100" show-overflow-tooltip />
+        </el-table>
+        <div v-if="sourceData.length === 0 && !sourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
+        <div v-if="sourceTotal > 0" class="results-pagination">
+          <el-pagination v-model:current-page="sourcePage" :page-size="10" :total="sourceTotal" layout="total, prev, pager, next" @current-change="handleSourcePageChange" />
+        </div>
+      </div>
+    </el-card>
+
     <!-- Progress section -->
     <el-card v-if="taskInfo" class="progress-card">
       <template #header>
@@ -207,14 +230,14 @@
     <el-dialog v-model="detailVisible" title="记录详情" width="700px" :append-to-body="true">
       <template v-if="detailRecord">
         <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="id">{{ detailRecord.id || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="passed">{{ detailRecord.passed || '-' }}</el-descriptions-item>
+          <el-descriptions-item v-for="key in metaFields" :key="key" :label="FIELD_LABELS[key] || key">
+            {{ detailRecord[key] != null ? detailRecord[key] : '-' }}
+          </el-descriptions-item>
         </el-descriptions>
-
         <div class="detail-text-fields">
-          <div class="text-field-block" v-if="detailRecord.input">
-            <div class="field-label">问题 (Input)</div>
-            <div class="field-content" v-html="renderContent(detailRecord.input)"></div>
+          <div v-for="key in longTextFields" :key="key" class="text-field-block" v-if="detailRecord[key]">
+            <div class="field-label">{{ FIELD_LABELS[key] || key }}</div>
+            <div class="field-content" v-html="renderContent(detailRecord[key])"></div>
           </div>
         </div>
       </template>
@@ -242,7 +265,9 @@ import { usePromptDrawer } from '../composables/usePromptDrawer'
 import FileSelector from '../components/FileSelector.vue'
 import PromptPreview from '../components/PromptPreview.vue'
 import { useStageResults } from '../composables/useStageResults'
+import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
+import { FIELD_LABELS, LONG_TEXT_FIELDS, META_FIELDS } from '../utils/fieldLabels'
 
 // ----- Form state -----
 const router = useRouter()
@@ -314,6 +339,30 @@ const {
   undefined,
   taskInfo
 )
+
+// ----- Source file preview -----
+const {
+  sourceData,
+  sourceTotal,
+  sourceLoading,
+  sourcePage,
+  sourceFileName,
+  loadSourcePreview,
+  handleSourcePageChange,
+} = useSourcePreview(
+  computed(() => form.value.file_id),
+  fileOptions
+)
+
+// ----- Detail dialog computed fields -----
+const metaFields = computed(() => {
+  if (!detailRecord.value) return []
+  return META_FIELDS.filter(k => detailRecord.value[k] != null)
+})
+const longTextFields = computed(() => {
+  if (!detailRecord.value) return []
+  return LONG_TEXT_FIELDS.filter(k => detailRecord.value[k])
+})
 
 // ----- More Task state -----
 const taskId = ref(null)
@@ -606,14 +655,15 @@ onUnmounted(() => {
 
 <style scoped>
 @import 'katex/dist/katex.min.css';
-.page-container {
-  max-width: 1200px;
-}
+.page-container {}
 .page-container h2 {
   margin-bottom: 16px;
 }
 
 .form-card {
+  margin-bottom: 20px;
+}
+.source-preview-card {
   margin-bottom: 20px;
 }
 .card-title {

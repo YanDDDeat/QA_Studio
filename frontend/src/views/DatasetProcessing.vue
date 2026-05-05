@@ -65,6 +65,29 @@
       </div>
     </el-card>
 
+    <!-- Split source preview -->
+    <el-card v-if="splitForm.file_id" class="source-preview-card">
+      <template #header>
+        <span class="card-title">源文件预览 - {{ splitSourceFileName }}</span>
+      </template>
+      <div class="results-body">
+        <div class="results-toolbar">
+          <el-button type="primary" size="small" :loading="splitSourceLoading" @click="loadSplitSourcePreview">加载预览</el-button>
+          <span v-if="splitSourceTotal > 0" class="results-count">共 {{ splitSourceTotal }} 条</span>
+        </div>
+        <el-table v-if="splitSourceData.length > 0" :data="splitSourceData" v-loading="splitSourceLoading" stripe border size="small" style="width: 100%">
+          <el-table-column prop="id" label="ID" width="50" />
+          <el-table-column prop="input" label="问题" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="task_type" label="题型" width="100" />
+          <el-table-column prop="domain" label="领域" width="100" show-overflow-tooltip />
+        </el-table>
+        <div v-if="splitSourceData.length === 0 && !splitSourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
+        <div v-if="splitSourceTotal > 0" class="results-pagination">
+          <el-pagination v-model:current-page="splitSourcePage" :page-size="10" :total="splitSourceTotal" layout="total, prev, pager, next" @current-change="handleSplitSourcePageChange" />
+        </div>
+      </div>
+    </el-card>
+
     <!-- Split logs -->
     <el-card v-if="splitTaskInfo" class="log-card">
       <template #header><span class="card-title">切分日志</span></template>
@@ -146,6 +169,29 @@
       <div v-if="!assessTaskInfo && !assessResult" class="result-empty" style="margin-top: 12px">生成完成后将在此显示统计结果</div>
     </el-card>
 
+    <!-- Assessment source preview -->
+    <el-card v-if="assessForm.file_id" class="source-preview-card">
+      <template #header>
+        <span class="card-title">源文件预览 - {{ assessSourceFileName }}</span>
+      </template>
+      <div class="results-body">
+        <div class="results-toolbar">
+          <el-button type="primary" size="small" :loading="assessSourceLoading" @click="loadAssessSourcePreview">加载预览</el-button>
+          <span v-if="assessSourceTotal > 0" class="results-count">共 {{ assessSourceTotal }} 条</span>
+        </div>
+        <el-table v-if="assessSourceData.length > 0" :data="assessSourceData" v-loading="assessSourceLoading" stripe border size="small" style="width: 100%">
+          <el-table-column prop="id" label="ID" width="50" />
+          <el-table-column prop="input" label="问题" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="task_type" label="题型" width="100" />
+          <el-table-column prop="domain" label="领域" width="100" show-overflow-tooltip />
+        </el-table>
+        <div v-if="assessSourceData.length === 0 && !assessSourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
+        <div v-if="assessSourceTotal > 0" class="results-pagination">
+          <el-pagination v-model:current-page="assessSourcePage" :page-size="10" :total="assessSourceTotal" layout="total, prev, pager, next" @current-change="handleAssessSourcePageChange" />
+        </div>
+      </div>
+    </el-card>
+
     <!-- Assessment logs -->
     <el-card v-if="assessTaskInfo" class="log-card">
       <template #header><span class="card-title">评分日志</span></template>
@@ -173,6 +219,7 @@ import {
 import FileSelector from '../components/FileSelector.vue'
 import PromptPreview from '../components/PromptPreview.vue'
 import { usePromptDrawer } from '../composables/usePromptDrawer'
+import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
 
 // ---- Split state ----
@@ -200,6 +247,20 @@ watch(() => splitForm.value.file_id, (newFileId) => {
     splitForm.value.output_name = buildDefaultOutputFilename(file.filename, 'dataset_split', username.value)
   }
 })
+
+// ----- Split source preview -----
+const {
+  sourceData: splitSourceData,
+  sourceTotal: splitSourceTotal,
+  sourceLoading: splitSourceLoading,
+  sourcePage: splitSourcePage,
+  sourceFileName: splitSourceFileName,
+  loadSourcePreview: loadSplitSourcePreview,
+  handleSourcePageChange: handleSplitSourcePageChange,
+} = useSourcePreview(
+  computed(() => splitForm.value.file_id),
+  splitFileOptions
+)
 
 const splitProgressPercent = computed(() => {
   if (!splitTaskInfo.value || splitTaskInfo.value.progress_total === 0) return 0
@@ -267,6 +328,20 @@ watch(() => assessForm.value.file_id, (newFileId) => {
     assessForm.value.output_name = buildDefaultOutputFilename(file.filename, 'dataset_assessment', username.value)
   }
 })
+
+// ----- Assessment source preview -----
+const {
+  sourceData: assessSourceData,
+  sourceTotal: assessSourceTotal,
+  sourceLoading: assessSourceLoading,
+  sourcePage: assessSourcePage,
+  sourceFileName: assessSourceFileName,
+  loadSourcePreview: loadAssessSourcePreview,
+  handleSourcePageChange: handleAssessSourcePageChange,
+} = useSourcePreview(
+  computed(() => assessForm.value.file_id),
+  assessFileOptions
+)
 
 const assessProgressPercent = computed(() => {
   if (!assessTaskInfo.value || assessTaskInfo.value.progress_total === 0) return 0
@@ -569,9 +644,10 @@ onUnmounted(() => { stopSplitPolling(); stopAssessPolling() })
 </script>
 
 <style scoped>
-.page-container { max-width: 1200px }
+.page-container {}
 .page-container h2 { margin-bottom: 16px }
 .section-card { margin-bottom: 20px }
+.source-preview-card { margin-bottom: 20px }
 .card-title { font-size: 16px; font-weight: 600 }
 .config-layout { display: flex; gap: 24px }
 .config-form { flex: 3; min-width: 0 }
@@ -593,4 +669,9 @@ onUnmounted(() => { stopSplitPolling(); stopAssessPolling() })
 .log-item:last-child { border-bottom: none }
 .log-time { color: #909399; font-size: 12px; white-space: nowrap; min-width: 140px }
 .log-content { color: #303133; font-size: 13px; word-break: break-all }
+.results-body { padding-top: 4px }
+.results-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px }
+.results-count { color: #909399; font-size: 13px }
+.results-empty { text-align: center; color: #909399; padding: 20px }
+.results-pagination { display: flex; justify-content: flex-end; margin-top: 12px }
 </style>
