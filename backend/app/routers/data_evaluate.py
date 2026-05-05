@@ -5,13 +5,14 @@ stage (passed="是") through LLM prompts. Each record is sent to the LLM,
 which returns dimension scores (relevance, clarity, reasoning, terminology)
 and an overall score.
 
-Key design:
+Key design (no-overwrite pattern):
 - User selects a JSON file (file_id), not individual Dataset records
 - Background task queries DB for Dataset records linked to that file
   at the answer_validate stage with passed="是"
-- After completion, results are written back to the same JSON file
+- Source Dataset records and disk files are NEVER modified
+- Evaluated records: cloned to a new output File with source_stage=DATA_EVALUATE
 - /report/{task_id} endpoint returns average scores across all dimensions
-- Retry re-processes remaining unprocessed records
+- Retry re-processes remaining unprocessed records from the original source file
 """
 
 import asyncio
@@ -26,13 +27,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
+from sqlalchemy import or_
 from app.models.models import (
     Dataset, File, Prompt, Task, TaskLog, TaskStatusEnum,
     StageEnum, User, LLMConfig,
 )
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
-from app.services.file_service import write_datasets_to_file
+from app.services.file_service import (
+    create_output_file, clone_datasets_to_new_file,
+    write_datasets_to_file,
+)
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.data_evaluate")
@@ -50,6 +55,7 @@ class DataEvaluateStartRequest(BaseModel):
     prompt_id: int = Field(..., description="ID of the prompt to use")
     model: str = Field(..., description="Model name to use for LLM calls")
     llm_config_id: Optional[int] = Field(None, description="ID of the LLM config to use")
+    output_filename: Optional[str] = Field(None, description="可选输出文件名 base，留空则按源文件派生")
 
 
 class TaskStatusResponse(BaseModel):
@@ -147,28 +153,19 @@ async def _run_data_evaluate_task(
     prompt_content: str,
     model: str,
     user_id: int,
+    username: str,
+    output_filename: Optional[str] = None,
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
+    start_index: int = 0,
 ):
-    """Background coroutine that evaluates each qualifying dataset record
-    through the LLM.
+    """Background coroutine: 评估源 Dataset → 克隆到新输出文件并写入评分。
 
-    Queries all Dataset records linked to file_id at the answer_validate
-    stage with passed="是", calls LLM for each, updates records with
-    scores, and writes results back to the JSON file on disk.
-
-    Args:
-        task_id: The Task record ID for progress tracking.
-        file_id: The File record ID whose datasets should be evaluated.
-        prompt_content: The prompt template to send with each record.
-        model: LLM model name.
-        user_id: Owner of all Dataset records.
+    原 file_id 下的 Dataset 与磁盘文件保持不变。
     """
     db = SessionLocal()
     try:
-        # Fetch all Dataset records linked to this file at answer_validate
-        # stage that have passed="是"
-        datasets = (
+        source_datasets = (
             db.query(Dataset)
             .filter(
                 Dataset.file_id == file_id,
@@ -180,11 +177,10 @@ async def _run_data_evaluate_task(
             .all()
         )
 
-        total = len(datasets)
+        total = len(source_datasets)
 
-        # Update task with total count
         task = db.query(Task).filter(Task.id == task_id).first()
-        if task:
+        if task and start_index == 0:
             task.progress_total = total
             db.commit()
 
@@ -197,12 +193,12 @@ async def _run_data_evaluate_task(
             return
 
         evaluated_count = 0
+        # Store evaluation results keyed by source dataset.id
+        results_by_id: dict[int, dict] = {}
 
-        for idx in range(total):
-            dataset = datasets[idx]
+        for idx in range(start_index, total):
+            dataset = source_datasets[idx]
 
-            # Build the prompt content with record fields
-            # Include input, output, and cot (the question, answer and reasoning)
             record_content = f"问题(input): {dataset.input or ''}"
             if dataset.output:
                 record_content += f"\n答案(output): {dataset.output or ''}"
@@ -217,6 +213,12 @@ async def _run_data_evaluate_task(
                 record_content += f"\n知识体系(knowledge): {knowledge_str}"
 
             llm_prompt = f"{prompt_content}\n\n{record_content}"
+
+            # 检查任务是否被暂停
+            task_check = db.query(Task).filter(Task.id == task_id).first()
+            if task_check and task_check.status == TaskStatusEnum.PAUSED:
+                _add_task_log(db, task_id, f"任务已暂停 (已处理 {idx}/{total} 条)")
+                return
 
             # Call LLM with the prompt + record content
             try:
@@ -243,8 +245,6 @@ async def _run_data_evaluate_task(
                     db.commit()
                 return
 
-            # Parse LLM response: should contain relevance, clarity,
-            # reasoning, terminology, score
             try:
                 relevance = _parse_int_score(llm_result, "relevance")
                 clarity = _parse_int_score(llm_result, "clarity")
@@ -263,31 +263,79 @@ async def _run_data_evaluate_task(
                 _update_progress(db, task_id, idx + 1)
                 continue
 
-            # Update the dataset record with scores
-            dataset.relevance = relevance
-            dataset.clarity = clarity
-            dataset.reasoning = reasoning
-            dataset.terminology = terminology
-            dataset.score = score
-            dataset.current_stage = StageEnum.DATA_EVALUATE
-            db.commit()
-
+            results_by_id[dataset.id] = {
+                "relevance": relevance,
+                "clarity": clarity,
+                "reasoning": reasoning,
+                "terminology": terminology,
+                "score": score,
+            }
             evaluated_count += 1
             _add_task_log(
                 db, task_id,
                 f"记录 {idx + 1}: 评估完成 - 综合评分 {score}",
             )
-
             _update_progress(db, task_id, idx + 1)
 
-        # All records processed - write back to the JSON file on disk
-        write_datasets_to_file(db=db, file_id=file_id)
-        _add_task_log(db, task_id, f"结果已写回文件 (file_id={file_id})")
+        source_file = db.query(File).filter(File.id == file_id).first()
+        output_file = None
 
-        # Mark task as completed
+        if results_by_id:
+            successful_ids = list(results_by_id.keys())
+            output_file = create_output_file(
+                db=db,
+                user_id=user_id,
+                source_file=source_file,
+                stage=StageEnum.DATA_EVALUATE,
+                output_filename=output_filename,
+                username=username,
+            )
+            cloned = clone_datasets_to_new_file(
+                db=db,
+                source_file_id=file_id,
+                new_file_id=output_file.id,
+                user_id=user_id,
+                source_stage_filter=StageEnum.ANSWER_VALIDATE,
+                new_stage=StageEnum.DATA_EVALUATE,
+                passed_filter="是",
+                dataset_ids=successful_ids,
+            )
+            for record in cloned:
+                r = results_by_id.get(record.id)
+                if r:
+                    # The cloned record has a new id, so we need to look up by original
+                    pass
+            # Map source dataset id → cloned record
+            cloned_by_source: dict[int, Dataset] = {}
+            for src_ds in source_datasets:
+                if src_ds.id in results_by_id:
+                    # Find the corresponding clone
+                    pass
+
+            # Apply scores to clones. Since clones have new IDs, iterate and match by content.
+            # Actually, clone_datasets_to_new_file returns clones in the same order as source,
+            # so we can zip with the source_dataset ids.
+            source_id_order = [ds.id for ds in source_datasets if ds.id in results_by_id]
+            for i, record in enumerate(cloned):
+                src_id = source_id_order[i]
+                r = results_by_id[src_id]
+                record.relevance = r["relevance"]
+                record.clarity = r["clarity"]
+                record.reasoning = r["reasoning"]
+                record.terminology = r["terminology"]
+                record.score = r["score"]
+            db.commit()
+
+            write_datasets_to_file(db=db, file_id=output_file.id)
+            _add_task_log(db, task_id, f"评估文件已生成: {output_file.filename}")
+        else:
+            _add_task_log(db, task_id, "本次任务无成功评估记录，不创建输出文件")
+
         task = db.query(Task).filter(Task.id == task_id).first()
         if task:
             task.status = TaskStatusEnum.COMPLETED
+            if output_file:
+                task.file_id = output_file.id
             db.commit()
 
         logger.info(
@@ -382,10 +430,10 @@ async def start_data_evaluate(
             detail="该文件中没有answer_validate阶段(已通过)的记录",
         )
 
-    # Validate prompt exists and belongs to user
+    # Validate prompt exists and belongs to user (or is global)
     prompt_obj = (
         db.query(Prompt)
-        .filter(Prompt.id == data.prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == data.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt_obj is None:
@@ -451,6 +499,8 @@ async def start_data_evaluate(
             prompt_content=prompt_obj.content,
             model=data.model,
             user_id=current_user.id,
+            username=current_user.username,
+            output_filename=data.output_filename,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
         )
@@ -485,26 +535,23 @@ async def get_data_evaluate_status(
             detail="任务不存在",
         )
 
-    # Count evaluated Dataset records for this file, updated after task started
-    evaluated_records = (
-        db.query(Dataset)
-        .filter(
-            Dataset.user_id == current_user.id,
-            Dataset.current_stage == StageEnum.DATA_EVALUATE,
-            Dataset.file_id == task.file_id,
-            Dataset.updated_at >= task.created_at,
-        )
-        .all()
-    )
-
-    evaluated_count = len(evaluated_records)
-
-    # Compute average score
+    evaluated_count = 0
     avg_score = None
-    if evaluated_count > 0:
-        scores = [d.score for d in evaluated_records if d.score is not None]
-        if scores:
-            avg_score = round(sum(scores) / len(scores), 2)
+
+    if task.file_id:
+        evaluated_records = (
+            db.query(Dataset)
+            .filter(
+                Dataset.file_id == task.file_id,
+                Dataset.user_id == current_user.id,
+            )
+            .all()
+        )
+        evaluated_count = len(evaluated_records)
+        if evaluated_count > 0:
+            scores = [d.score for d in evaluated_records if d.score is not None]
+            if scores:
+                avg_score = round(sum(scores) / len(scores), 2)
 
     return TaskStatusResponse(
         task_id=task.id,
@@ -519,25 +566,21 @@ async def get_data_evaluate_status(
 
 @router.get("/source-files")
 async def list_source_files(
+    show_all: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all JSON files available for the current user.
+    """List JSON files for data_evaluate.
 
-    Returns ALL JSON files belonging to the current user, regardless of
-    pipeline stage. This allows users to select any file at any stage.
-    Filtering happens at execution time — the background task only
-    processes records at the correct previous stage.
+    默认只返回 source_stage=answer_validate 的文件；show_all=True 时返回所有 JSON。
     """
-    files = (
-        db.query(File)
-        .filter(
-            File.user_id == current_user.id,
-            File.file_type == "json",
-        )
-        .order_by(File.created_at.desc())
-        .all()
+    query = db.query(File).filter(
+        File.user_id == current_user.id,
+        File.file_type == "json",
     )
+    if not show_all:
+        query = query.filter(File.source_stage == StageEnum.ANSWER_VALIDATE)
+    files = query.order_by(File.created_at.desc()).all()
 
     return [
         {
@@ -572,21 +615,19 @@ async def get_evaluation_report(
             detail="任务不存在",
         )
 
-    # Get all evaluated Dataset records for this file, updated after task started
-    evaluated_records = (
-        db.query(Dataset)
-        .filter(
-            Dataset.user_id == current_user.id,
-            Dataset.current_stage == StageEnum.DATA_EVALUATE,
-            Dataset.file_id == task.file_id,
-            Dataset.updated_at >= task.created_at,
+    evaluated_records = []
+    if task.file_id:
+        evaluated_records = (
+            db.query(Dataset)
+            .filter(
+                Dataset.file_id == task.file_id,
+                Dataset.user_id == current_user.id,
+            )
+            .all()
         )
-        .all()
-    )
 
     total_records = len(evaluated_records)
 
-    # Compute averages for each dimension
     avg_relevance = None
     avg_clarity = None
     avg_reasoning = None
@@ -633,8 +674,8 @@ async def retry_data_evaluate(
     """Retry a failed or completed data evaluation task.
 
     Re-queries remaining qualifying datasets (those still at
-    answer_validate stage with passed="是" for the file) and
-    processes them.
+    answer_validate stage with passed="是" for the original source file)
+    and processes them.
     """
     task = (
         db.query(Task)
@@ -668,7 +709,7 @@ async def retry_data_evaluate(
     # Get the prompt for this task
     prompt_obj = (
         db.query(Prompt)
-        .filter(Prompt.id == task.prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == task.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt_obj is None:
@@ -703,6 +744,7 @@ async def retry_data_evaluate(
             prompt_content=prompt_obj.content,
             model=task.model,
             user_id=current_user.id,
+            username=current_user.username,
         )
     )
 
@@ -713,3 +755,54 @@ async def retry_data_evaluate(
         "progress_total": task.progress_total,
         "message": f"重试: {remaining_count} 条待处理记录",
     }
+
+# ---------------------------------------------------------------------------
+# Resume handler (called by tasks.py /resume endpoint)
+# ---------------------------------------------------------------------------
+
+
+def resume_data_evaluate_task(task: Task, db: Session):
+    """Resume a paused data_evaluate task from progress_current."""
+    file_obj = (
+        db.query(File)
+        .filter(File.id == task.file_id, File.user_id == task.user_id)
+        .first()
+    )
+    if file_obj is None:
+        raise ValueError("Original file not found")
+
+    prompt_obj = (
+        db.query(Prompt)
+        .filter(Prompt.id == task.prompt_id, or_(Prompt.user_id == task.user_id, Prompt.user_id.is_(None)))
+        .first()
+    )
+    if prompt_obj is None:
+        raise ValueError("Original prompt not found")
+
+    start_index = task.progress_current or 0
+    user_obj = db.query(User).filter(User.id == task.user_id).first()
+    username = user_obj.username if user_obj else str(task.user_id)
+
+    base_url_override = None
+    api_key_override = None
+    if prompt_obj.llm_config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == prompt_obj.llm_config_id).first()
+        if llm_config_obj:
+            base_url_override = llm_config_obj.base_url
+            api_key_override = llm_config_obj.api_key
+
+    task.status = TaskStatusEnum.RUNNING
+    db.commit()
+
+    asyncio.create_task(
+        _run_data_evaluate_task(
+            task_id=task.id,
+            file_id=file_obj.id,
+            prompt_content=prompt_obj.content,
+            model=task.model,
+            user_id=task.user_id,
+            start_index=start_index,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+        )
+    )

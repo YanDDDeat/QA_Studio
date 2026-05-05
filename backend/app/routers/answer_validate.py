@@ -4,18 +4,14 @@ Validates all Dataset records in a JSON file from the answer_generate
 stage through LLM prompts. Each record is sent to the LLM, which returns
 a PASS/FAIL verdict with a reason.
 
-Key design:
+Key design (no-overwrite pattern):
 - User selects a JSON file (file_id), not individual Dataset records
 - Background task queries DB for Dataset records linked to that file
   at the answer_generate stage
-- PASS records: set passed="是", current_stage="answer_validate"
-  (no validation_result/reason kept on the Dataset record)
-- FAIL records: set passed="否", file_id=None (removed from main file),
-  then collected for a consolidated fail file
-- After all processing: write_datasets_to_file() overwrites the main
-  file (only PASS + skipped records remain), create_fail_file() creates
-  a consolidated fail file for all FAIL records
-- Retry re-processes remaining unprocessed records
+- Source Dataset records and disk files are NEVER modified
+- PASS records: cloned to a new output File with source_stage=ANSWER_VALIDATE
+- FAIL records: collected into a separate consolidated fail file
+- Retry re-processes remaining unprocessed records from the original source file
 """
 
 import asyncio
@@ -29,6 +25,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.database import get_db, SessionLocal
+from sqlalchemy import or_
 from app.models.models import (
     Dataset, File, Prompt, Task, TaskLog, TaskStatusEnum,
     StageEnum, User, LLMConfig,
@@ -36,6 +33,7 @@ from app.models.models import (
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import (
+    create_output_file, clone_datasets_to_new_file,
     write_datasets_to_file, create_fail_file, serialize_dataset_to_dict,
 )
 from app.services.validation_service import validate_file_fields
@@ -55,6 +53,7 @@ class AnswerValidateStartRequest(BaseModel):
     prompt_id: int = Field(..., description="ID of the prompt to use")
     model: str = Field(..., description="Model name to use for LLM calls")
     llm_config_id: Optional[int] = Field(None, description="ID of the LLM config to use")
+    output_filename: Optional[str] = Field(None, description="可选输出文件名 base，留空则按源文件派生")
 
 
 class TaskStatusResponse(BaseModel):
@@ -80,34 +79,19 @@ async def _run_answer_validate_task(
     prompt_content: str,
     model: str,
     user_id: int,
+    username: str,
+    output_filename: Optional[str] = None,
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
+    start_index: int = 0,
 ):
-    """Background coroutine that validates each qualifying dataset record
-    through the LLM.
+    """Background coroutine: 校验源 Dataset → PASS 克隆到新输出文件 + FAIL 单独成 fail file。
 
-    Queries all Dataset records linked to file_id at the answer_generate
-    stage, calls LLM for each, and handles PASS/FAIL results.
-
-    For FAIL records:
-    - Set passed="否" and file_id=None (removes from main file)
-    - Collect serialized record dict + validation_result + reason
-
-    After all processing:
-    - write_datasets_to_file() overwrites main file (only PASS + skipped)
-    - create_fail_file() creates consolidated fail file for all FAILs
-
-    Args:
-        task_id: The Task record ID for progress tracking.
-        file_id: The File record ID whose datasets should be validated.
-        prompt_content: The prompt template to send with each record.
-        model: LLM model name.
-        user_id: Owner of all Dataset records.
+    原 file_id 下的 Dataset 与磁盘文件保持不变。
     """
     db = SessionLocal()
     try:
-        # Fetch all Dataset records linked to this file at answer_generate stage
-        datasets = (
+        source_datasets = (
             db.query(Dataset)
             .filter(
                 Dataset.file_id == file_id,
@@ -118,11 +102,10 @@ async def _run_answer_validate_task(
             .all()
         )
 
-        total = len(datasets)
+        total = len(source_datasets)
 
-        # Update task with total count
         task = db.query(Task).filter(Task.id == task_id).first()
-        if task:
+        if task and start_index == 0:
             task.progress_total = total
             db.commit()
 
@@ -134,15 +117,14 @@ async def _run_answer_validate_task(
                 db.commit()
             return
 
+        pass_ids: list[int] = []
+        fail_records: list[dict] = []
         pass_count = 0
         fail_count = 0
-        fail_records = []
 
-        for idx in range(total):
-            dataset = datasets[idx]
+        for idx in range(start_index, total):
+            dataset = source_datasets[idx]
 
-            # Build the prompt content with record fields
-            # Include input, output, and cot (the answer and reasoning)
             record_content = f"问题(input): {dataset.input or ''}"
             if dataset.output:
                 record_content += f"\n答案(output): {dataset.output or ''}"
@@ -158,7 +140,12 @@ async def _run_answer_validate_task(
 
             llm_prompt = f"{prompt_content}\n\n{record_content}"
 
-            # Call LLM with the prompt + record content
+            # 检查任务是否被暂停
+            task_check = db.query(Task).filter(Task.id == task_id).first()
+            if task_check and task_check.status == TaskStatusEnum.PAUSED:
+                _add_task_log(db, task_id, f"任务已暂停 (已处理 {idx}/{total} 条)")
+                return
+
             try:
                 llm_result = await call_llm_json(
                     prompt=llm_prompt,
@@ -183,75 +170,73 @@ async def _run_answer_validate_task(
                     db.commit()
                 return
 
-            # Parse LLM response: { "validation_result": "PASS/FAIL", "reason": "..." }
             validation_result = llm_result.get("validation_result", "")
             reason = llm_result.get("reason", "")
-
-            # Normalize validation_result (handle case variations)
             validation_result_upper = str(validation_result).upper().strip()
 
             if validation_result_upper == "PASS":
-                # PASS: update dataset, do NOT keep validation_result/reason
-                dataset.passed = "是"
-                dataset.current_stage = StageEnum.ANSWER_VALIDATE
-                db.commit()
-
+                pass_ids.append(dataset.id)
                 pass_count += 1
-                _add_task_log(
-                    db, task_id,
-                    f"记录 {idx + 1}: 校验通过",
-                )
+                _add_task_log(db, task_id, f"记录 {idx + 1}: 校验通过")
             else:
-                # FAIL: mark as failed, remove from main file, collect for fail file
-                dataset.passed = "否"
-                dataset.file_id = None  # Remove from main file
-                db.commit()
-
-                fail_count += 1
-
-                # Build the fail record dict: serialize dataset fields + validation info
                 fail_dict = serialize_dataset_to_dict(dataset)
+                fail_dict["passed"] = "否"
                 fail_dict["validation_result"] = validation_result
                 fail_dict["reason"] = reason
                 fail_records.append(fail_dict)
-
-                _add_task_log(
-                    db, task_id,
-                    f"记录 {idx + 1}: 校验失败 - {reason[:100]}",
-                )
+                fail_count += 1
+                _add_task_log(db, task_id, f"记录 {idx + 1}: 校验失败 - {reason[:100]}")
 
             _update_progress(db, task_id, idx + 1)
 
-        # All records processed - write back to file and create fail file
-        # write_datasets_to_file() will only write datasets with file_id == file_id
-        # (FAIL datasets have file_id = None, so they are excluded)
-        write_datasets_to_file(db=db, file_id=file_id)
-        _add_task_log(db, task_id, f"通过记录已写回文件 (file_id={file_id})")
+        source_file = db.query(File).filter(File.id == file_id).first()
+        output_file = None
 
-        # Create consolidated fail file if there are any FAIL records
-        if fail_records:
-            source_file = db.query(File).filter(File.id == file_id).first()
-            if source_file:
-                fail_file = create_fail_file(
-                    db=db,
-                    user_id=user_id,
-                    source_file=source_file,
-                    stage=StageEnum.ANSWER_VALIDATE,
-                    fail_records=fail_records,
-                )
-                _add_task_log(
-                    db, task_id,
-                    f"失败记录文件已生成: {fail_file.filename} (共 {len(fail_records)} 条)",
-                )
-                logger.info(
-                    "Task %d: created fail file %s with %d records",
-                    task_id, fail_file.filename, len(fail_records),
-                )
+        if pass_ids:
+            output_file = create_output_file(
+                db=db,
+                user_id=user_id,
+                source_file=source_file,
+                stage=StageEnum.ANSWER_VALIDATE,
+                output_filename=output_filename,
+                username=username,
+            )
+            cloned = clone_datasets_to_new_file(
+                db=db,
+                source_file_id=file_id,
+                new_file_id=output_file.id,
+                user_id=user_id,
+                source_stage_filter=StageEnum.ANSWER_GENERATE,
+                new_stage=StageEnum.ANSWER_VALIDATE,
+                dataset_ids=pass_ids,
+            )
+            for record in cloned:
+                record.passed = "是"
+            db.commit()
 
-        # Mark task as completed
+            write_datasets_to_file(db=db, file_id=output_file.id)
+            _add_task_log(db, task_id, f"通过文件已生成: {output_file.filename}")
+        else:
+            _add_task_log(db, task_id, "本次任务无通过记录，不创建主输出文件")
+
+        if fail_records and source_file:
+            fail_file = create_fail_file(
+                db=db,
+                user_id=user_id,
+                source_file=source_file,
+                stage=StageEnum.ANSWER_VALIDATE,
+                fail_records=fail_records,
+            )
+            _add_task_log(
+                db, task_id,
+                f"失败记录文件已生成: {fail_file.filename} (共 {len(fail_records)} 条)",
+            )
+
         task = db.query(Task).filter(Task.id == task_id).first()
         if task:
             task.status = TaskStatusEnum.COMPLETED
+            if output_file:
+                task.file_id = output_file.id
             db.commit()
 
         logger.info(
@@ -345,10 +330,10 @@ async def start_answer_validate(
             detail="该文件中没有answer_generate阶段的记录",
         )
 
-    # Validate prompt exists and belongs to user
+    # Validate prompt exists and belongs to user (or is global)
     prompt_obj = (
         db.query(Prompt)
-        .filter(Prompt.id == data.prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == data.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt_obj is None:
@@ -414,6 +399,8 @@ async def start_answer_validate(
             prompt_content=prompt_obj.content,
             model=data.model,
             user_id=current_user.id,
+            username=current_user.username,
+            output_filename=data.output_filename,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
         )
@@ -480,25 +467,21 @@ async def get_answer_validate_status(
 
 @router.get("/source-files")
 async def list_source_files(
+    show_all: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all JSON files available for the current user.
+    """List JSON files for answer_validate.
 
-    Returns ALL JSON files belonging to the current user, regardless of
-    pipeline stage. This allows users to select any file at any stage.
-    Filtering happens at execution time — the background task only
-    processes records at the correct previous stage.
+    默认只返回 source_stage=answer_generate 的文件；show_all=True 时返回所有 JSON。
     """
-    files = (
-        db.query(File)
-        .filter(
-            File.user_id == current_user.id,
-            File.file_type == "json",
-        )
-        .order_by(File.created_at.desc())
-        .all()
+    query = db.query(File).filter(
+        File.user_id == current_user.id,
+        File.file_type == "json",
     )
+    if not show_all:
+        query = query.filter(File.source_stage == StageEnum.ANSWER_GENERATE)
+    files = query.order_by(File.created_at.desc()).all()
 
     return [
         {
@@ -520,7 +503,7 @@ async def retry_answer_validate(
     """Retry a failed or completed answer validation task.
 
     Re-queries remaining qualifying datasets (those still at
-    answer_generate stage for the file) and processes them.
+    answer_generate stage for the original source file) and processes them.
     """
     task = (
         db.query(Task)
@@ -554,7 +537,7 @@ async def retry_answer_validate(
     # Get the prompt for this task
     prompt_obj = (
         db.query(Prompt)
-        .filter(Prompt.id == task.prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == task.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt_obj is None:
@@ -588,6 +571,7 @@ async def retry_answer_validate(
             prompt_content=prompt_obj.content,
             model=task.model,
             user_id=current_user.id,
+            username=current_user.username,
         )
     )
 
@@ -598,3 +582,54 @@ async def retry_answer_validate(
         "progress_total": task.progress_total,
         "message": f"重试: {remaining_count} 条待处理记录",
     }
+
+# ---------------------------------------------------------------------------
+# Resume handler (called by tasks.py /resume endpoint)
+# ---------------------------------------------------------------------------
+
+
+def resume_answer_validate_task(task: Task, db: Session):
+    """Resume a paused answer_validate task from progress_current."""
+    file_obj = (
+        db.query(File)
+        .filter(File.id == task.file_id, File.user_id == task.user_id)
+        .first()
+    )
+    if file_obj is None:
+        raise ValueError("Original file not found")
+
+    prompt_obj = (
+        db.query(Prompt)
+        .filter(Prompt.id == task.prompt_id, or_(Prompt.user_id == task.user_id, Prompt.user_id.is_(None)))
+        .first()
+    )
+    if prompt_obj is None:
+        raise ValueError("Original prompt not found")
+
+    start_index = task.progress_current or 0
+    user_obj = db.query(User).filter(User.id == task.user_id).first()
+    username = user_obj.username if user_obj else str(task.user_id)
+
+    base_url_override = None
+    api_key_override = None
+    if prompt_obj.llm_config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == prompt_obj.llm_config_id).first()
+        if llm_config_obj:
+            base_url_override = llm_config_obj.base_url
+            api_key_override = llm_config_obj.api_key
+
+    task.status = TaskStatusEnum.RUNNING
+    db.commit()
+
+    asyncio.create_task(
+        _run_answer_validate_task(
+            task_id=task.id,
+            file_id=file_obj.id,
+            prompt_content=prompt_obj.content,
+            model=task.model,
+            user_id=task.user_id,
+            start_index=start_index,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+        )
+    )

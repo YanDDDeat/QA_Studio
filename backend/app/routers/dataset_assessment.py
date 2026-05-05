@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.database import get_db, SessionLocal
+from sqlalchemy import or_
 from app.models.models import (
     File, Task, TaskLog, TaskStatusEnum, StageEnum,
     User, LLMConfig, Prompt,
@@ -159,10 +160,10 @@ async def start_dataset_assessment(
             detail=validation_msg,
         )
 
-    # Validate prompt
+    # Validate prompt (belongs to user or is global)
     prompt_obj = (
         db.query(Prompt)
-        .filter(Prompt.id == data.prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == data.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt_obj is None:
@@ -263,16 +264,21 @@ async def get_dataset_assessment_status(
 
 @router.get("/source-files")
 async def list_source_files(
+    show_all: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all JSON files available for assessment."""
-    files = (
-        db.query(File)
-        .filter(File.user_id == current_user.id, File.file_type == "json")
-        .order_by(File.created_at.desc())
-        .all()
+    """List JSON files for assessment.
+
+    默认只返回 source_stage=dataset_split 的文件；show_all=True 时返回所有 JSON。
+    """
+    query = db.query(File).filter(
+        File.user_id == current_user.id,
+        File.file_type == "json",
     )
+    if not show_all:
+        query = query.filter(File.source_stage == StageEnum.DATASET_SPLIT)
+    files = query.order_by(File.created_at.desc()).all()
     return [
         {
             "id": f.id,
@@ -282,3 +288,53 @@ async def list_source_files(
         }
         for f in files
     ]
+# ---------------------------------------------------------------------------
+# Resume handler (called by tasks.py /resume endpoint)
+# ---------------------------------------------------------------------------
+
+
+def resume_dataset_assessment_task(task: Task, db: Session):
+    """Resume a paused dataset_assessment task from progress_current."""
+    file_obj = (
+        db.query(File)
+        .filter(File.id == task.file_id, File.user_id == task.user_id)
+        .first()
+    )
+    if file_obj is None:
+        raise ValueError("Original file not found")
+
+    prompt_obj = (
+        db.query(Prompt)
+        .filter(Prompt.id == task.prompt_id, or_(Prompt.user_id == task.user_id, Prompt.user_id.is_(None)))
+        .first()
+    )
+    if prompt_obj is None:
+        raise ValueError("Original prompt not found")
+
+    user_obj = db.query(User).filter(User.id == task.user_id).first()
+    username = user_obj.username if user_obj else str(task.user_id)
+
+    base_url_override = None
+    api_key_override = None
+    if prompt_obj.llm_config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == prompt_obj.llm_config_id).first()
+        if llm_config_obj:
+            base_url_override = llm_config_obj.base_url
+            api_key_override = llm_config_obj.api_key
+
+    task.status = TaskStatusEnum.RUNNING
+    db.commit()
+
+    asyncio.create_task(
+        _run_assessment_task(
+            task_id=task.id,
+            file_id=file_obj.id,
+            output_name=file_obj.filename,
+            prompt_content=prompt_obj.content,
+            model=task.model,
+            user_id=task.user_id,
+            username=username,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+        )
+    )

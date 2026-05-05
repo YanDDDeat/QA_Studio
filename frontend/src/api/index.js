@@ -59,6 +59,14 @@ export function getTaskList(params) {
   return api.get('/task-logs/tasks', { params })
 }
 
+export function stopTask(taskId) {
+  return api.post(`/tasks/${taskId}/stop`)
+}
+
+export function resumeTask(taskId) {
+  return api.post(`/tasks/${taskId}/resume`)
+}
+
 // Stage APIs
 export function startQuestionGenerate(data) {
   return api.post('/question-generate/start', data)
@@ -93,28 +101,28 @@ export function retryStage(stage, taskId) {
 }
 
 // Source Files API (per-stage)
-export function getQuestionGenerateSourceFiles() {
-  return api.get('/question-generate/source-files')
+export function getQuestionGenerateSourceFiles(params) {
+  return api.get('/question-generate/source-files', { params })
 }
 
-export function getKnowledgeGenerateSourceFiles() {
-  return api.get('/knowledge-generate/source-files')
+export function getKnowledgeGenerateSourceFiles(params) {
+  return api.get('/knowledge-generate/source-files', { params })
 }
 
-export function getQuestionValidateSourceFiles() {
-  return api.get('/question-validate/source-files')
+export function getQuestionValidateSourceFiles(params) {
+  return api.get('/question-validate/source-files', { params })
 }
 
-export function getAnswerGenerateSourceFiles() {
-  return api.get('/answer-generate/source-files')
+export function getAnswerGenerateSourceFiles(params) {
+  return api.get('/answer-generate/source-files', { params })
 }
 
-export function getAnswerValidateSourceFiles() {
-  return api.get('/answer-validate/source-files')
+export function getAnswerValidateSourceFiles(params) {
+  return api.get('/answer-validate/source-files', { params })
 }
 
-export function getDataEvaluateSourceFiles() {
-  return api.get('/data-evaluate/source-files')
+export function getDataEvaluateSourceFiles(params) {
+  return api.get('/data-evaluate/source-files', { params })
 }
 
 export function getDataEvaluateReport(taskId) {
@@ -227,8 +235,8 @@ export function getCotFilterStatus(taskId) {
   return api.get(`/cot-filter/status/${taskId}`)
 }
 
-export function getCotFilterSourceFiles() {
-  return api.get('/cot-filter/source-files')
+export function getCotFilterSourceFiles(params) {
+  return api.get('/cot-filter/source-files', { params })
 }
 
 // Dataset Split API
@@ -240,8 +248,8 @@ export function getDatasetSplitStatus(taskId) {
   return api.get(`/dataset-split/status/${taskId}`)
 }
 
-export function getDatasetSplitSourceFiles() {
-  return api.get('/dataset-split/source-files')
+export function getDatasetSplitSourceFiles(params) {
+  return api.get('/dataset-split/source-files', { params })
 }
 
 // Dataset Assessment API
@@ -253,8 +261,8 @@ export function getDatasetAssessmentStatus(taskId) {
   return api.get(`/dataset-assessment/status/${taskId}`)
 }
 
-export function getDatasetAssessmentSourceFiles() {
-  return api.get('/dataset-assessment/source-files')
+export function getDatasetAssessmentSourceFiles(params) {
+  return api.get('/dataset-assessment/source-files', { params })
 }
 
 // Prompts for Assessment stage

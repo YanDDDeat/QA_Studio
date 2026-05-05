@@ -1,4 +1,4 @@
-"""Tasks router - CRUD with user data isolation"""
+"""Tasks router - CRUD + stop/resume with user data isolation"""
 
 from typing import List, Optional
 from datetime import datetime
@@ -12,6 +12,35 @@ from app.models.models import Task, TaskStatusEnum, StageEnum, User
 from app.routers.auth import get_current_user
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Stage → resume handler dispatch table
+# ---------------------------------------------------------------------------
+
+STAGE_TO_RESUMER = {}
+
+
+def _ensure_resumers_loaded():
+    """Lazy-import resume handlers to avoid circular imports."""
+    if STAGE_TO_RESUMER:
+        return
+    from app.routers.question_generate import resume_question_generate_task
+    from app.routers.knowledge_generate import resume_knowledge_generate_task
+    from app.routers.question_validate import resume_question_validate_task
+    from app.routers.answer_generate import resume_answer_generate_task
+    from app.routers.answer_validate import resume_answer_validate_task
+    from app.routers.data_evaluate import resume_data_evaluate_task
+    from app.routers.dataset_assessment import resume_dataset_assessment_task
+
+    STAGE_TO_RESUMER.update({
+        StageEnum.QUESTION_GENERATE: resume_question_generate_task,
+        StageEnum.KNOWLEDGE_GENERATE: resume_knowledge_generate_task,
+        StageEnum.QUESTION_VALIDATE: resume_question_validate_task,
+        StageEnum.ANSWER_GENERATE: resume_answer_generate_task,
+        StageEnum.ANSWER_VALIDATE: resume_answer_validate_task,
+        StageEnum.DATA_EVALUATE: resume_data_evaluate_task,
+        StageEnum.DATASET_ASSESSMENT: resume_dataset_assessment_task,
+    })
 
 
 # ---------- Pydantic schemas ----------
@@ -183,3 +212,83 @@ async def delete_task(
         )
     db.delete(task)
     db.commit()
+
+
+# ---------- Stop / Resume endpoints ----------
+
+
+@router.post("/{task_id}/stop")
+async def stop_task(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """软停止正在运行的任务：处理完当前条后退出，已处理进度保留。"""
+    task = (
+        db.query(Task)
+        .filter(Task.id == task_id, Task.user_id == current_user.id)
+        .first()
+    )
+    if task is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="任务不存在",
+        )
+
+    if task.status != TaskStatusEnum.RUNNING:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="只能停止正在运行中的任务",
+        )
+
+    task.status = TaskStatusEnum.PAUSED
+    task.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {
+        "task_id": task.id,
+        "status": task.status.value,
+        "message": "任务已标记为暂停，将在当前记录处理完成后停止",
+    }
+
+
+@router.post("/{task_id}/resume")
+async def resume_task(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """恢复已暂停的任务，从 progress_current 续跑。"""
+    task = (
+        db.query(Task)
+        .filter(Task.id == task_id, Task.user_id == current_user.id)
+        .first()
+    )
+    if task is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="任务不存在",
+        )
+
+    if task.status != TaskStatusEnum.PAUSED:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="只能恢复已暂停的任务",
+        )
+
+    _ensure_resumers_loaded()
+    handler = STAGE_TO_RESUMER.get(task.stage)
+    if handler is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"阶段 {task.stage.value} 不支持暂停/恢复",
+        )
+
+    # 委托给对应阶段的 resume 函数（负责读取参数 + 创建后台协程）
+    handler(task, db)
+
+    return {
+        "task_id": task.id,
+        "status": "running",
+        "message": f"任务已恢复，从第 {task.progress_current or 0} 条继续",
+    }

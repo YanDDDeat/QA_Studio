@@ -24,13 +24,16 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.database import get_db, SessionLocal
+from sqlalchemy import or_
 from app.models.models import (
     Dataset, File, Prompt, Task, TaskLog, TaskStatusEnum,
     StageEnum, User, LLMConfig,
 )
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
-from app.services.file_service import write_datasets_to_file
+from app.services.file_service import (
+    create_output_file, clone_datasets_to_new_file, write_datasets_to_file,
+)
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.knowledge_generate")
@@ -48,6 +51,7 @@ class KnowledgeGenerateStartRequest(BaseModel):
     prompt_id: int = Field(..., description="ID of the prompt to use")
     model: str = Field(..., description="Model name to use for LLM calls")
     llm_config_id: Optional[int] = Field(None, description="ID of the LLM config to use")
+    output_filename: Optional[str] = Field(None, description="可选输出文件名 base，留空则按源文件派生")
 
 
 class TaskStatusResponse(BaseModel):
@@ -72,27 +76,19 @@ async def _run_knowledge_generate_task(
     prompt_content: str,
     model: str,
     user_id: int,
+    username: str,
+    output_filename: Optional[str] = None,
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
+    start_index: int = 0,
 ):
-    """Background coroutine that processes each qualifying dataset record
-    through the LLM to generate knowledge and scene fields.
+    """Background coroutine: 读源 Dataset → LLM 生成 knowledge/scene → 克隆到新输出文件。
 
-    Queries all Dataset records linked to file_id at the question_generate
-    stage, calls LLM for each, updates records, and writes results back
-    to the JSON file on disk.
-
-    Args:
-        task_id: The Task record ID for progress tracking.
-        file_id: The File record ID whose datasets should be processed.
-        prompt_content: The prompt template to send with each record.
-        model: LLM model name.
-        user_id: Owner of all Dataset records (for verification).
+    原 file_id 下的 Dataset 与磁盘文件保持不变，新文件带 source_stage=KNOWLEDGE_GENERATE。
     """
     db = SessionLocal()
     try:
-        # Fetch all Dataset records linked to this file at question_generate stage
-        datasets = (
+        source_datasets = (
             db.query(Dataset)
             .filter(
                 Dataset.file_id == file_id,
@@ -103,11 +99,10 @@ async def _run_knowledge_generate_task(
             .all()
         )
 
-        total = len(datasets)
+        total = len(source_datasets)
 
-        # Update task with total count
         task = db.query(Task).filter(Task.id == task_id).first()
-        if task:
+        if task and start_index == 0:
             task.progress_total = total
             db.commit()
 
@@ -119,23 +114,28 @@ async def _run_knowledge_generate_task(
                 db.commit()
             return
 
-        generated_count = 0
+        # 阶段产物缓存：dataset.id -> {"knowledge": dict, "scene": str}
+        results_by_id: dict[int, dict] = {}
+        successful_ids: list[int] = []
 
-        for idx in range(total):
-            dataset = datasets[idx]
-
-            # Get the input text from the dataset record
+        for idx in range(start_index, total):
+            dataset = source_datasets[idx]
             input_text = dataset.input or ""
             if not input_text:
                 logger.warning(
-                    "Task %d: dataset record %d has no input text, skipping",
+                    "Task %d: dataset %d has no input text, skipping",
                     task_id, dataset.id,
                 )
                 _add_task_log(db, task_id, f"记录 {idx + 1}: 数据集ID {dataset.id} 无问题文本，跳过")
                 _update_progress(db, task_id, idx + 1)
                 continue
 
-            # Call LLM with the prompt + input text
+            # 检查任务是否被暂停
+            task_check = db.query(Task).filter(Task.id == task_id).first()
+            if task_check and task_check.status == TaskStatusEnum.PAUSED:
+                _add_task_log(db, task_id, f"任务已暂停 (已处理 {idx}/{total} 条)")
+                return
+
             try:
                 llm_prompt = f"{prompt_content}\n\n{input_text}"
                 llm_result = await call_llm_json(
@@ -161,18 +161,13 @@ async def _run_knowledge_generate_task(
                     db.commit()
                 return
 
-            # The LLM returns a single JSON object for knowledge
-            # Store it in knowledge field and set scene = knowledge
             if isinstance(llm_result, dict):
-                dataset.knowledge = llm_result
-                # scene = knowledge: store the same value as knowledge
-                # scene is now a Text column, so we can store the full content
                 knowledge_str = json.dumps(llm_result, ensure_ascii=False)
-                dataset.scene = knowledge_str
-
-                dataset.current_stage = StageEnum.KNOWLEDGE_GENERATE
-                db.commit()
-                generated_count += 1
+                results_by_id[dataset.id] = {
+                    "knowledge": llm_result,
+                    "scene": knowledge_str,
+                }
+                successful_ids.append(dataset.id)
 
                 _add_task_log(
                     db, task_id,
@@ -190,19 +185,56 @@ async def _run_knowledge_generate_task(
 
             _update_progress(db, task_id, idx + 1)
 
-        # All records processed - write back to the JSON file on disk
-        write_datasets_to_file(db=db, file_id=file_id)
-        _add_task_log(db, task_id, f"结果已写回文件 (file_id={file_id})")
+        if not successful_ids:
+            _add_task_log(db, task_id, "本次任务未生成任何有效记录，未创建输出文件")
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                task.status = TaskStatusEnum.COMPLETED
+                db.commit()
+            return
 
-        # Mark task as completed
+        source_file = db.query(File).filter(File.id == file_id).first()
+        output_file = create_output_file(
+            db=db,
+            user_id=user_id,
+            source_file=source_file,
+            stage=StageEnum.KNOWLEDGE_GENERATE,
+            output_filename=output_filename,
+            username=username,
+        )
+
+        cloned = clone_datasets_to_new_file(
+            db=db,
+            source_file_id=file_id,
+            new_file_id=output_file.id,
+            user_id=user_id,
+            source_stage_filter=StageEnum.QUESTION_GENERATE,
+            new_stage=StageEnum.KNOWLEDGE_GENERATE,
+            dataset_ids=successful_ids,
+        )
+
+        # 通过原 dataset.id 映射回 LLM 结果
+        # 克隆顺序与源 successful_ids 同序（按 id 升序），故按 successful_ids 对齐
+        sorted_source_ids = sorted(successful_ids)
+        for new_ds, src_id in zip(cloned, sorted_source_ids):
+            payload = results_by_id.get(src_id)
+            if payload:
+                new_ds.knowledge = payload["knowledge"]
+                new_ds.scene = payload["scene"]
+        db.commit()
+
+        write_datasets_to_file(db=db, file_id=output_file.id)
+        _add_task_log(db, task_id, f"输出文件已生成: {output_file.filename} (file_id={output_file.id})")
+
         task = db.query(Task).filter(Task.id == task_id).first()
         if task:
             task.status = TaskStatusEnum.COMPLETED
+            task.file_id = output_file.id
             db.commit()
 
         logger.info(
-            "Task %d completed: processed %d records, generated %d knowledge entries",
-            task_id, total, generated_count,
+            "Task %d completed: processed %d records, generated %d knowledge entries -> file_id=%d",
+            task_id, total, len(successful_ids), output_file.id,
         )
 
     except Exception as e:
@@ -291,10 +323,10 @@ async def start_knowledge_generate(
             detail="该文件中没有question_generate阶段的记录",
         )
 
-    # Validate prompt exists and belongs to user
+    # Validate prompt exists and belongs to user (or is global)
     prompt_obj = (
         db.query(Prompt)
-        .filter(Prompt.id == data.prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == data.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt_obj is None:
@@ -360,6 +392,8 @@ async def start_knowledge_generate(
             prompt_content=prompt_obj.content,
             model=data.model,
             user_id=current_user.id,
+            username=current_user.username,
+            output_filename=data.output_filename,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
         )
@@ -391,16 +425,15 @@ async def get_knowledge_generate_status(
             detail="任务不存在",
         )
 
-    # Count generated Dataset records at knowledge_generate stage for this file
+    # 任务完成后 task.file_id 指向新输出文件；以新文件下的克隆记录数为生成数。
     generated_count = (
         db.query(Dataset)
         .filter(
             Dataset.user_id == current_user.id,
             Dataset.current_stage == StageEnum.KNOWLEDGE_GENERATE,
             Dataset.file_id == task.file_id,
-            Dataset.updated_at >= task.created_at,
         )
-        .count()
+        .count() if task.file_id else 0
     )
 
     return TaskStatusResponse(
@@ -415,25 +448,21 @@ async def get_knowledge_generate_status(
 
 @router.get("/source-files")
 async def list_source_files(
+    show_all: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all JSON files available for the current user.
+    """List JSON files for knowledge_generate.
 
-    Returns ALL JSON files belonging to the current user, regardless of
-    pipeline stage. This allows users to select any file at any stage.
-    Filtering happens at execution time — the background task only
-    processes records at the correct previous stage.
+    默认只返回 source_stage=question_generate 的文件；show_all=True 时返回所有 JSON。
     """
-    files = (
-        db.query(File)
-        .filter(
-            File.user_id == current_user.id,
-            File.file_type == "json",
-        )
-        .order_by(File.created_at.desc())
-        .all()
+    query = db.query(File).filter(
+        File.user_id == current_user.id,
+        File.file_type == "json",
     )
+    if not show_all:
+        query = query.filter(File.source_stage == StageEnum.QUESTION_GENERATE)
+    files = query.order_by(File.created_at.desc()).all()
 
     return [
         {
@@ -489,7 +518,7 @@ async def retry_knowledge_generate(
     # Get the prompt for this task
     prompt_obj = (
         db.query(Prompt)
-        .filter(Prompt.id == task.prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == task.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt_obj is None:
@@ -523,6 +552,7 @@ async def retry_knowledge_generate(
             prompt_content=prompt_obj.content,
             model=task.model,
             user_id=current_user.id,
+            username=current_user.username,
         )
     )
 
@@ -533,3 +563,56 @@ async def retry_knowledge_generate(
         "progress_total": task.progress_total,
         "message": f"重试: {remaining_count} 条待处理记录",
     }
+
+
+# ---------------------------------------------------------------------------
+# Resume handler (called by tasks.py /resume endpoint)
+# ---------------------------------------------------------------------------
+
+
+def resume_knowledge_generate_task(task: Task, db: Session):
+    """Resume a paused knowledge_generate task from progress_current."""
+    file_obj = (
+        db.query(File)
+        .filter(File.id == task.file_id, File.user_id == task.user_id)
+        .first()
+    )
+    if file_obj is None:
+        raise ValueError("Original file not found")
+
+    prompt_obj = (
+        db.query(Prompt)
+        .filter(Prompt.id == task.prompt_id, or_(Prompt.user_id == task.user_id, Prompt.user_id.is_(None)))
+        .first()
+    )
+    if prompt_obj is None:
+        raise ValueError("Original prompt not found")
+
+    start_index = task.progress_current or 0
+    user_obj = db.query(User).filter(User.id == task.user_id).first()
+    username = user_obj.username if user_obj else str(task.user_id)
+
+    base_url_override = None
+    api_key_override = None
+    if prompt_obj.llm_config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == prompt_obj.llm_config_id).first()
+        if llm_config_obj:
+            base_url_override = llm_config_obj.base_url
+            api_key_override = llm_config_obj.api_key
+
+    task.status = TaskStatusEnum.RUNNING
+    db.commit()
+
+    asyncio.create_task(
+        _run_knowledge_generate_task(
+            task_id=task.id,
+            file_id=file_obj.id,
+            prompt_content=prompt_obj.content,
+            model=task.model,
+            user_id=task.user_id,
+            username=username,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+            start_index=start_index,
+        )
+    )

@@ -29,6 +29,7 @@ class TaskStatusEnum(str, PyEnum):
     """Task status enumeration"""
     PENDING = "pending"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
 

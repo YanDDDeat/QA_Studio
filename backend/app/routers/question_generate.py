@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.database import get_db, SessionLocal
+from sqlalchemy import or_
 from app.models.models import (
     Dataset, File, Prompt, Task, TaskLog, TaskStatusEnum,
     StageEnum, SourceTypeEnum, User, LLMConfig,
@@ -177,6 +178,12 @@ async def _run_question_generate_task(
             if not effective_source_id and isinstance(record, dict):
                 effective_source_id = record.get("source_id", "")
 
+            # 检查任务是否被暂停
+            task_check = db.query(Task).filter(Task.id == task_id).first()
+            if task_check and task_check.status == TaskStatusEnum.PAUSED:
+                _add_task_log(db, task_id, f"任务已暂停 (已处理 {idx}/{total} 条)")
+                return
+
             # Call LLM with the prompt + text content
             try:
                 llm_prompt = f"{prompt_content}\n\n{text_content}"
@@ -273,6 +280,7 @@ async def _run_question_generate_task(
                 db=db,
                 user_id=user_id,
                 source_file=source_file,
+                stage=StageEnum.QUESTION_GENERATE,
                 output_filename=output_filename,
                 username=username,
             )
@@ -397,10 +405,10 @@ async def start_question_generate(
             detail="File not found on disk",
         )
 
-    # Validate prompt exists and belongs to user
+    # Validate prompt exists and belongs to user (or is global)
     prompt_obj = (
         db.query(Prompt)
-        .filter(Prompt.id == data.prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == data.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt_obj is None:
@@ -584,7 +592,7 @@ async def retry_question_generate(
 
     prompt_obj = (
         db.query(Prompt)
-        .filter(Prompt.id == task.prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == task.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt_obj is None:
@@ -657,15 +665,13 @@ def _get_task_field(db: Session, task: Task, field_name: str, default_value):
 
 @router.get("/source-files")
 async def list_source_files(
+    show_all: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all JSON files available for the current user.
+    """List all JSON files available for question_generate.
 
-    Returns ALL JSON files belonging to the current user, regardless of
-    source_stage or pipeline stage. This allows users to select any file
-    at any stage (e.g., directly upload a file with questions and jump to
-    answer generation). Filtering happens at execution time.
+    问题生成阶段不做按上一阶段过滤（因为它是入口阶段），show_all 仅为接口一致性保留。
     """
     files = (
         db.query(File)
@@ -686,3 +692,69 @@ async def list_source_files(
         }
         for f in files
     ]
+
+
+# ---------------------------------------------------------------------------
+# Resume handler (called by tasks.py /resume endpoint)
+# ---------------------------------------------------------------------------
+
+
+def resume_question_generate_task(task: Task, db: Session):
+    """Resume a paused question_generate task from progress_current."""
+    file_obj = (
+        db.query(File)
+        .filter(File.id == task.file_id, File.user_id == task.user_id)
+        .first()
+    )
+    if file_obj is None:
+        raise ValueError("Original file not found")
+
+    prompt_obj = (
+        db.query(Prompt)
+        .filter(Prompt.id == task.prompt_id, or_(Prompt.user_id == task.user_id, Prompt.user_id.is_(None)))
+        .first()
+    )
+    if prompt_obj is None:
+        raise ValueError("Original prompt not found")
+
+    start_index = task.progress_current or 0
+    category = _get_task_field(db, task, "category", "知识问答")
+    source_type = _get_task_field(db, task, "source_type", "图书")
+    source_override = _get_task_field(db, task, "source", None)
+    source_id_override = _get_task_field(db, task, "source_id", None)
+
+    user_obj = db.query(User).filter(User.id == task.user_id).first()
+    username = user_obj.username if user_obj else str(task.user_id)
+
+    base_url_override = None
+    api_key_override = None
+    if prompt_obj.llm_config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == prompt_obj.llm_config_id).first()
+        if llm_config_obj:
+            base_url_override = llm_config_obj.base_url
+            api_key_override = llm_config_obj.api_key
+
+    task.status = TaskStatusEnum.RUNNING
+    db.commit()
+
+    asyncio.create_task(
+        _run_question_generate_task(
+            task_id=task.id,
+            file_path=file_obj.file_path,
+            text_field=file_obj.text_field,
+            prompt_content=prompt_obj.content,
+            model=task.model,
+            category=category,
+            source_type=source_type,
+            source_override=source_override,
+            source_id_override=source_id_override,
+            filename=file_obj.filename,
+            user_id=task.user_id,
+            source_file_id=file_obj.id,
+            output_filename=os.path.splitext(file_obj.filename)[0],
+            username=username,
+            start_index=start_index,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+        )
+    )
