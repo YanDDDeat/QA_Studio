@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.models import File, Task, TaskStatusEnum, StageEnum, User
 from app.routers.auth import get_current_user
+from app.services.md_parser import _split_by_section, _split_by_paragraph
 
 router = APIRouter()
 
@@ -264,6 +265,124 @@ async def upload_managed_files(
         "uploaded": results,
         "errors": errors,
     }
+
+
+SOURCE_TYPE_CHOICES = ['文献', '图书', '其他']
+
+
+@router.post("/upload-md")
+async def upload_md_files(
+    files: List[UploadFile] = FastAPIFile(...),
+    source_type: str = Form(...),
+    split_mode: str = Form('full'),
+    min_title_level: int = Form(1),
+    max_title_level: int = Form(6),
+    min_chars: int = Form(100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upload MD files, convert to JSON, save only the JSON output (MD not saved).
+
+    source_type: '文献' | '图书' | '其他'
+    split_mode: 'full' (整篇不切分) | 'section' (按章节) | 'paragraph' (按段落)
+    """
+    if source_type not in SOURCE_TYPE_CHOICES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"source_type must be one of {SOURCE_TYPE_CHOICES}",
+        )
+    if split_mode not in ('full', 'section', 'paragraph'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="split_mode must be one of: full, section, paragraph",
+        )
+
+    upload_dir = os.path.join("uploads", str(current_user.id))
+    os.makedirs(upload_dir, exist_ok=True)
+
+    results = []
+    errors = []
+
+    for file in files:
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext != ".md":
+            errors.append({"filename": file.filename, "error": "Only .md files are accepted"})
+            continue
+
+        content_bytes = await file.read()
+        try:
+            content = content_bytes.decode("utf-8")
+        except UnicodeDecodeError as e:
+            errors.append({"filename": file.filename, "error": f"Encoding error: {str(e)}"})
+            continue
+
+        stem = os.path.splitext(file.filename)[0]
+
+        # Build chunks based on split_mode
+        if split_mode == 'full':
+            chunks = [{"text": content, "source": stem, "source_id": stem}]
+        else:
+            try:
+                if split_mode == 'section':
+                    raw_chunks = _split_by_section(
+                        content, file.filename,
+                        min_title_level=min_title_level,
+                        max_title_level=max_title_level,
+                    )
+                else:  # paragraph
+                    raw_chunks = _split_by_paragraph(
+                        content, file.filename,
+                        min_chars=min_chars,
+                    )
+            except Exception as e:
+                errors.append({"filename": file.filename, "error": f"Parse error: {str(e)}"})
+                continue
+
+            chunks = [
+                {"text": c["text"], "source": f"{stem}_{idx+1}", "source_id": f"{stem}_{idx+1}"}
+                for idx, c in enumerate(raw_chunks)
+            ]
+
+        if not chunks:
+            errors.append({"filename": file.filename, "error": "No content extracted"})
+            continue
+
+        # Build final JSON records
+        json_records = [
+            {"text": c["text"], "source": c["source"], "source_type": source_type, "source_id": c["source_id"]}
+            for c in chunks
+        ]
+
+        # Save JSON file
+        json_filename = f"{stem}.json"
+        json_path = os.path.join(upload_dir, json_filename)
+        if os.path.exists(json_path):
+            base = stem
+            counter = 1
+            while os.path.exists(os.path.join(upload_dir, f"{base}_{counter}.json")):
+                counter += 1
+            json_filename = f"{base}_{counter}.json"
+            json_path = os.path.join(upload_dir, json_filename)
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(json_records, f, ensure_ascii=False, indent=2)
+
+        # Create DB record
+        file_record = File(
+            user_id=current_user.id,
+            filename=json_filename,
+            file_type="json",
+            file_path=json_path,
+            source_stage=None,
+            text_field="text",
+        )
+        db.add(file_record)
+        db.commit()
+        db.refresh(file_record)
+
+        results.append(_serialize_file(file_record))
+
+    return {"uploaded": results, "errors": errors}
 
 
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)

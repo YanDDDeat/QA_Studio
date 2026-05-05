@@ -37,7 +37,7 @@
       <el-upload
         :auto-upload="false"
         :limit="1"
-        accept=".json"
+        accept=".json,.md"
         :on-change="handleFileChange"
         :on-remove="handleFileRemove"
         :on-exceed="handleExceed"
@@ -48,36 +48,72 @@
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽文件到此处或 <em>点击上传</em></div>
         <template #tip>
-          <div class="el-upload__tip">仅支持 .json 格式文件</div>
+          <div class="el-upload__tip">支持 .json 和 .md 格式文件</div>
         </template>
       </el-upload>
-      <el-form label-width="90px" size="small" class="upload-form">
+
+      <!-- JSON upload options -->
+      <el-form v-if="!currentFileIsMd" label-width="90px" size="small" class="upload-form">
         <el-form-item label="文本字段名">
-          <el-input
-            v-model="uploadForm.text_field"
-            placeholder="JSON中包含文本内容的字段名"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-button
-            type="primary"
-            :loading="uploadLoading"
-            :disabled="uploadFileList.length === 0 || disabled"
-            @click="submitUpload"
-          >
-            上传
-          </el-button>
+          <el-input v-model="uploadForm.text_field" placeholder="JSON中包含文本内容的字段名" />
         </el-form-item>
       </el-form>
+
+      <!-- MD conversion options -->
+      <div v-if="currentFileIsMd" class="md-options">
+        <el-form label-width="90px" size="small">
+          <el-form-item label="来源类型">
+            <el-select v-model="mdForm.source_type" style="width: 100%">
+              <el-option label="文献" value="文献" />
+              <el-option label="图书" value="图书" />
+              <el-option label="其他" value="其他" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="转换策略">
+            <el-radio-group v-model="mdForm.split_mode">
+              <el-radio value="full">整篇不切分</el-radio>
+              <el-radio value="section">按章节切分</el-radio>
+              <el-radio value="paragraph">按段落切分</el-radio>
+            </el-radio-group>
+          </el-form-item>
+
+          <template v-if="mdForm.split_mode === 'section'">
+            <el-form-item label="标题层级">
+              <span style="margin-right: 4px">最小</span>
+              <el-input-number v-model="mdForm.min_title_level" :min="1" :max="6" size="small" style="width: 80px" />
+              <span style="margin: 0 8px">至 最大</span>
+              <el-input-number v-model="mdForm.max_title_level" :min="1" :max="6" size="small" style="width: 80px" />
+            </el-form-item>
+          </template>
+
+          <template v-if="mdForm.split_mode === 'paragraph'">
+            <el-form-item label="最小字符数">
+              <el-input-number v-model="mdForm.min_chars" :min="10" :max="10000" size="small" style="width: 160px" />
+            </el-form-item>
+          </template>
+        </el-form>
+      </div>
+
+      <div class="upload-actions">
+        <el-button
+          type="primary"
+          :loading="uploadLoading"
+          :disabled="uploadFileList.length === 0 || disabled"
+          @click="submitUpload"
+        >
+          上传
+        </el-button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { uploadManagedFile } from '../api'
+import { uploadManagedFile, uploadMdFile } from '../api'
 
 const props = defineProps({
   modelValue: { type: [Number, null], default: null },
@@ -97,6 +133,20 @@ const showAllFiles = ref(false)
 const internalFileOptions = ref([])
 const fetchLoading = ref(false)
 
+const mdForm = ref({
+  source_type: '图书',
+  split_mode: 'full',
+  min_title_level: 1,
+  max_title_level: 6,
+  min_chars: 100,
+})
+
+const currentFileIsMd = computed(() => {
+  if (uploadFileList.value.length === 0) return false
+  const name = uploadFileList.value[0]?.name || ''
+  return name.toLowerCase().endsWith('.md')
+})
+
 onMounted(() => {
   if (props.fetchFn) {
     loadFiles()
@@ -112,12 +162,6 @@ watch(() => props.fileOptions, (val) => {
 watch(showAllFiles, () => {
   if (props.fetchFn) {
     loadFiles()
-  }
-})
-
-watch(() => props.modelValue, (val) => {
-  if (val && mode.value === 'upload') {
-    // Don't switch — user just uploaded, keep upload view briefly
   }
 })
 
@@ -155,11 +199,22 @@ async function submitUpload() {
 
   uploadLoading.value = true
   const formData = new FormData()
-  formData.append('text_field', uploadForm.value.text_field)
   formData.append('files', uploadFileList.value[0].raw)
 
   try {
-    const res = await uploadManagedFile(formData)
+    let res
+    if (currentFileIsMd.value) {
+      formData.append('source_type', mdForm.value.source_type)
+      formData.append('split_mode', mdForm.value.split_mode)
+      formData.append('min_title_level', mdForm.value.min_title_level)
+      formData.append('max_title_level', mdForm.value.max_title_level)
+      formData.append('min_chars', mdForm.value.min_chars)
+      res = await uploadMdFile(formData)
+    } else {
+      formData.append('text_field', uploadForm.value.text_field)
+      res = await uploadManagedFile(formData)
+    }
+
     const uploaded = res.uploaded || []
     const errors = res.errors || []
 
@@ -170,7 +225,7 @@ async function submitUpload() {
       mode.value = 'existing'
       uploadFileList.value = []
       uploadForm.value = { text_field: 'text' }
-      // Reload file list after upload
+      mdForm.value = { source_type: '图书', split_mode: 'full', min_title_level: 1, max_title_level: 6, min_chars: 100 }
       if (props.fetchFn) {
         showAllFiles.value = true
         await loadFiles()
@@ -241,6 +296,22 @@ defineExpose({ refresh: loadFiles })
 }
 
 .upload-form {
+  margin-top: 4px;
+}
+
+.md-options {
+  padding: 8px 12px;
+  background: #f5f7fa;
+  border-radius: 4px;
+}
+.md-options :deep(.el-form-item) {
+  margin-bottom: 8px;
+}
+.md-options :deep(.el-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+.upload-actions {
   margin-top: 4px;
 }
 </style>

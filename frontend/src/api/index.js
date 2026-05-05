@@ -197,6 +197,10 @@ export function uploadManagedFile(data) {
   return api.post('/file-manage/upload', data)
 }
 
+export function uploadMdFile(data) {
+  return api.post('/file-manage/upload-md', data)
+}
+
 export function deleteManagedFile(id) {
   return api.delete(`/file-manage/${id}`)
 }
