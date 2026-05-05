@@ -6,8 +6,8 @@
     </el-radio-group>
 
     <div v-if="mode === 'existing'" class="existing-section">
-      <div v-if="fetchFn && expectedStage" class="stage-filter">
-        <span class="filter-label">{{ showAllFiles ? '显示所有阶段文件' : `仅显示上一阶段（${expectedStageLabel}）文件` }}</span>
+      <div v-if="fetchFn" class="stage-filter">
+        <span class="filter-label">{{ showAllFiles ? '全部文件' : (expectedStage ? `${expectedStageLabel}产出` : '手动上传') }}</span>
         <el-switch v-model="showAllFiles" size="small" :disabled="disabled" />
       </div>
       <el-select

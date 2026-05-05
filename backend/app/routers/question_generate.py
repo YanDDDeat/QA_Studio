@@ -669,19 +669,17 @@ async def list_source_files(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all JSON files available for question_generate.
+    """List JSON files available for question_generate.
 
-    问题生成阶段不做按上一阶段过滤（因为它是入口阶段），show_all 仅为接口一致性保留。
+    默认只返回手动上传的文件（source_stage IS NULL）；show_all=True 时返回所有 JSON。
     """
-    files = (
-        db.query(File)
-        .filter(
-            File.user_id == current_user.id,
-            File.file_type == "json",
-        )
-        .order_by(File.created_at.desc())
-        .all()
+    query = db.query(File).filter(
+        File.user_id == current_user.id,
+        File.file_type == "json",
     )
+    if not show_all:
+        query = query.filter(File.source_stage.is_(None))
+    files = query.order_by(File.created_at.desc()).all()
     return [
         {
             "id": f.id,
