@@ -206,16 +206,21 @@ async def get_dataset_split_status(
 
 @router.get("/source-files")
 async def list_source_files(
+    show_all: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all JSON files available for dataset splitting."""
-    files = (
-        db.query(File)
-        .filter(File.user_id == current_user.id, File.file_type == "json")
-        .order_by(File.created_at.desc())
-        .all()
+    """List JSON files for dataset splitting.
+
+    默认只返回 source_stage=cot_filter 的文件；show_all=True 时返回所有 JSON。
+    """
+    query = db.query(File).filter(
+        File.user_id == current_user.id,
+        File.file_type == "json",
     )
+    if not show_all:
+        query = query.filter(File.source_stage == StageEnum.COT_FILTER)
+    files = query.order_by(File.created_at.desc()).all()
     return [
         {
             "id": f.id,

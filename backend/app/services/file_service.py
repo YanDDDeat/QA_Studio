@@ -1,23 +1,24 @@
-"""Shared file write-back service for QA Studio pipeline stages.
+"""Shared file output service for QA Studio pipeline stages.
 
-Every pipeline stage (except question_generate) writes its results back to the
-same JSON file on disk.  question_generate is the only stage that creates a
-new output file.  Validation stages also produce consolidated fail-files.
+每个 Pipeline 阶段执行成功都会产出一个新的 File 记录 + 物理 JSON 文件，
+原输入文件（File 与磁盘内容）始终保持不变。
 
 Key design:
-- write_datasets_to_file(): overwrite the JSON on disk with latest DB data
-- create_output_file(): make a new File record for question_generate stage
-- create_fail_file(): make a consolidated fail-file for validation stages
-- serialize_dataset_to_dict(): convert a Dataset ORM object to a JSON-ready dict
+- write_datasets_to_file(): 把指定 file_id 下的 Dataset 列表序列化为 JSON 写入新输出文件，绝不覆盖输入文件
+- create_output_file(stage=...): 通用化的新 File 工厂，所有阶段共享
+- clone_datasets_to_new_file(): 把源 file_id 的 Dataset 克隆到新 file_id，方便阶段独立回溯
+- create_fail_file(): 校验阶段产出的失败记录文件
+- serialize_dataset_to_dict(): 把 Dataset ORM 转为可 JSON 序列化的 dict
 
-All functions operate on the File + Dataset models and write to the
-uploads/{user_id}/ directory on disk.
+文件按 stage 自动带中文阶段标签，统一命名规则：
+    {base}_{阶段中文}_{username|user_id}_{YYYYMMDDHHmmss}{_suffix?}.json
 """
 
 import json
 import logging
 import os
 from datetime import datetime
+from typing import Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -31,18 +32,23 @@ logger = logging.getLogger("qa_studio.file_service")
 
 STAGE_LABELS = {
     StageEnum.QUESTION_GENERATE: "问题生成",
+    StageEnum.KNOWLEDGE_GENERATE: "知识体系",
     StageEnum.QUESTION_VALIDATE: "问题校验",
+    StageEnum.ANSWER_GENERATE: "答案生成",
     StageEnum.ANSWER_VALIDATE: "答案校验",
+    StageEnum.DATA_EVALUATE: "数据评估",
+    StageEnum.COT_FILTER: "COT过滤",
+    StageEnum.DATASET_SPLIT: "数据集切分",
+    StageEnum.DATASET_ASSESSMENT: "评分标准生成",
 }
+
 
 # ---------------------------------------------------------------------------
 # Dataset serialization
 # ---------------------------------------------------------------------------
 
 # All Dataset columns in the order they should appear in the JSON deliverable.
-# Columns that are internal (id, user_id, file_id, created_at, updated_at)
-# are excluded from the output -- the JSON file is a data deliverable, not a
-# DB dump.
+# Internal columns (id, user_id, file_id, created_at, updated_at) are excluded.
 
 _SERIALIZABLE_FIELDS = [
     "domain",
@@ -69,6 +75,31 @@ _SERIALIZABLE_FIELDS = [
     "current_stage",
 ]
 
+# Dataset columns that get cloned when creating a new-stage copy of a record.
+_CLONABLE_FIELDS = [
+    "domain",
+    "category",
+    "task_type",
+    "input",
+    "output",
+    "cot",
+    "corpus_cate",
+    "scene",
+    "Assessment",
+    "source",
+    "source_id",
+    "source_type",
+    "originContent",
+    "knowledge",
+    "difficulty",
+    "relevance",
+    "clarity",
+    "reasoning",
+    "terminology",
+    "score",
+    "passed",
+]
+
 
 def serialize_dataset_to_dict(dataset: Dataset) -> dict:
     """Convert a Dataset ORM object to a dict suitable for JSON serialization.
@@ -85,28 +116,21 @@ def serialize_dataset_to_dict(dataset: Dataset) -> dict:
     for field in _SERIALIZABLE_FIELDS:
         value = getattr(dataset, field, None)
 
-        # Skip fields that have never been populated (None)
-        # but keep fields with explicit defaults like "" or 1
         if value is None:
             continue
 
-        # Special handling per field type
         if field == "knowledge":
-            # JSON column: if it's already a dict/list, keep it as-is.
-            # If it's a string (double-encoded), parse it first.
             if isinstance(value, str):
                 try:
                     value = json.loads(value)
                 except (json.JSONDecodeError, TypeError):
-                    pass  # leave as string if it can't be parsed
+                    pass
             result[field] = value
 
         elif field == "current_stage":
-            # Enum column: serialize as its value string
             result[field] = value.value if hasattr(value, "value") else str(value)
 
         elif field == "score":
-            # Float column: serialize as number, not string
             result[field] = float(value)
 
         else:
@@ -116,33 +140,66 @@ def serialize_dataset_to_dict(dataset: Dataset) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Filename helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_output_filename(
+    source_filename: str,
+    stage: StageEnum,
+    output_filename: Optional[str],
+    username_or_id: str,
+    name_suffix: Optional[str] = None,
+) -> str:
+    """构造输出文件名：{base}_{阶段中文}_{username}_{时间}{_suffix?}.json"""
+    if output_filename:
+        base = output_filename
+    else:
+        base = os.path.splitext(source_filename or "output")[0]
+
+    stage_label = STAGE_LABELS.get(stage, stage.value if isinstance(stage, StageEnum) else str(stage))
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    suffix_part = f"_{name_suffix}" if name_suffix else ""
+    return f"{base}_{stage_label}_{username_or_id}_{timestamp}{suffix_part}.json"
+
+
+def _resolve_unique_path(upload_dir: str, filename: str) -> tuple[str, str]:
+    """若文件名冲突则追加 _1 / _2 … 直至可用，返回 (final_filename, final_path)。"""
+    file_path = os.path.join(upload_dir, filename)
+    if not os.path.exists(file_path):
+        return filename, file_path
+
+    base, ext = os.path.splitext(filename)
+    counter = 1
+    while True:
+        candidate_filename = f"{base}_{counter}{ext}"
+        candidate_path = os.path.join(upload_dir, candidate_filename)
+        if not os.path.exists(candidate_path):
+            return candidate_filename, candidate_path
+        counter += 1
+
+
+# ---------------------------------------------------------------------------
 # Core write-back function
 # ---------------------------------------------------------------------------
 
 
 def write_datasets_to_file(db: Session, file_id: int) -> str:
-    """Read all Dataset records linked to this file_id from the database,
-    serialize them to JSON, and overwrite the file on disk.
+    """读取 file_id 关联的 Dataset 列表，序列化为 JSON 写入对应输出文件。
 
-    This is called after each pipeline stage completes to update the JSON file
-    with the latest data from the database.
+    始终写入指定 file_id 对应的输出文件，绝不覆盖输入文件。
 
     Args:
         db: Active SQLAlchemy session.
-        file_id: The File record ID whose linked datasets should be written.
+        file_id: 要写入的输出 File 记录 ID。
 
     Returns:
-        The file_path of the written file.
-
-    Raises:
-        ValueError: If the File record or its disk path cannot be resolved.
+        写入磁盘的文件路径。
     """
-    # Fetch the File record
     file_obj = db.query(File).filter(File.id == file_id).first()
     if file_obj is None:
         raise ValueError(f"File record with id={file_id} not found")
 
-    # Fetch all Dataset records linked to this file, ordered by id
     datasets = (
         db.query(Dataset)
         .filter(Dataset.file_id == file_id)
@@ -150,14 +207,9 @@ def write_datasets_to_file(db: Session, file_id: int) -> str:
         .all()
     )
 
-    # Serialize each dataset
     items = [serialize_dataset_to_dict(d) for d in datasets]
 
-    # Write JSON to disk (overwrite the existing file)
     file_path = file_obj.file_path
-
-    # Ensure parent directory exists (could be missing if file was created
-    # in a different context)
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
     with open(file_path, "w", encoding="utf-8") as f:
@@ -172,75 +224,170 @@ def write_datasets_to_file(db: Session, file_id: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Output file creation (question_generate stage only)
+# Output file creation (general purpose for all stages)
 # ---------------------------------------------------------------------------
 
 
-def create_output_file(db: Session, user_id: int, source_file: File, stage_name: str = "问题生成", output_filename: str = None, username: str = None) -> File:
-    """Create a new output File record for the question_generate stage.
+def create_output_file(
+    db: Session,
+    user_id: int,
+    source_file: File,
+    stage: Optional[StageEnum] = None,
+    output_filename: Optional[str] = None,
+    username: Optional[str] = None,
+    name_suffix: Optional[str] = None,
+    initial_content: Optional[object] = None,
+    text_field: Optional[str] = None,
+    stage_name: Optional[str] = None,
+) -> File:
+    """通用输出 File 工厂：所有阶段共享。
 
-    Called by question_generate to create the new JSON file.  The filename
-    follows the pattern: {output_filename}_{username}_{timestamp}.json where
-    timestamp is YYYYMMDDHHmmss format for uniqueness.
+    新建 File 记录 + 物理空文件（默认空数组），文件名带阶段中文标签。
 
     Args:
         db: Active SQLAlchemy session.
-        user_id: The user who owns the file.
-        source_file: The original uploaded source JSON file.
-        stage_name: Display suffix for the filename (default '问题生成').
-        output_filename: User-specified base name for the output file (required).
-        username: Username to append as suffix for uniqueness.
-                  If not provided, falls back to str(user_id).
+        user_id: 文件归属的用户 id。
+        source_file: 原始（输入）File 记录，用于命名 base 与 text_field 继承。
+        stage: 当前阶段枚举（必填，决定 source_stage 与文件名标签）。
+        output_filename: 用户指定的 base 名（去扩展），若空则取 source_file.filename 去扩展。
+        username: 用户名，用于文件名后缀；不传则退回 user_id 字符串。
+        name_suffix: 可选附加后缀（如 'train'/'test'/'cot'/'no_cot'/'assessed'）。
+        initial_content: 写入磁盘的初始 JSON 内容，默认空数组 []；若调用方需要先写真实内容可传入。
+        text_field: 显式覆盖 text_field，默认沿用源文件 text_field（若源 text_field 空则 'input'）。
+        stage_name: 仅为兼容旧调用（已废弃）。当 stage 为空且传入 stage_name 时，回退为 QUESTION_GENERATE。
 
     Returns:
-        A new File record with a generated filename and file_path.
+        新建并已 commit 的 File 记录。
     """
-    # Build filename: {output_filename}_{username}_{timestamp}.json
-    if output_filename:
-        base = output_filename
-    else:
-        base = os.path.splitext(source_file.filename)[0]
+    if stage is None:
+        if stage_name is not None:
+            logger.warning("create_output_file 调用方仅传入了 stage_name，回退为 QUESTION_GENERATE")
+            stage = StageEnum.QUESTION_GENERATE
+        else:
+            raise ValueError("create_output_file 必须传入 stage 参数")
 
     suffix_name = username or str(user_id)
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    filename = f"{base}_{suffix_name}_{timestamp}.json"
 
-    # Build the file_path in the user's upload directory
     upload_dir = os.path.join("uploads", str(user_id))
     os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, filename)
 
-    # Create an empty JSON array as initial content (will be overwritten
-    # by write_datasets_to_file once question_generate produces records)
+    desired_filename = _build_output_filename(
+        source_filename=source_file.filename if source_file else "output",
+        stage=stage,
+        output_filename=output_filename,
+        username_or_id=suffix_name,
+        name_suffix=name_suffix,
+    )
+    filename, file_path = _resolve_unique_path(upload_dir, desired_filename)
+
+    payload = initial_content if initial_content is not None else []
     with open(file_path, "w", encoding="utf-8") as f:
-        json.dump([], f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    # Create File DB record
+    resolved_text_field = text_field
+    if not resolved_text_field:
+        resolved_text_field = (source_file.text_field if source_file else None) or "input"
+
     file_record = File(
         user_id=user_id,
         filename=filename,
         file_type="json",
         file_path=file_path,
-        source_stage=StageEnum.QUESTION_GENERATE,
-        text_field="output",
+        source_stage=stage,
+        text_field=resolved_text_field,
     )
     db.add(file_record)
     db.commit()
     db.refresh(file_record)
 
     logger.info(
-        "Created output file %s (file_id=%d) from source %s (file_id=%d)",
-        filename, file_record.id, source_file.filename, source_file.id,
+        "Created output file %s (file_id=%d, stage=%s) from source %s",
+        filename, file_record.id, stage.value,
+        source_file.filename if source_file else "<none>",
     )
 
     return file_record
 
 
 # ---------------------------------------------------------------------------
+# Dataset cloning helper
+# ---------------------------------------------------------------------------
+
+
+def clone_datasets_to_new_file(
+    db: Session,
+    source_file_id: int,
+    new_file_id: int,
+    user_id: int,
+    source_stage_filter: StageEnum,
+    new_stage: StageEnum,
+    passed_filter: Optional[str] = None,
+    dataset_ids: Optional[Iterable[int]] = None,
+) -> List[Dataset]:
+    """把源 file_id 下满足条件的 Dataset 克隆到新 file_id，原记录不动。
+
+    Args:
+        db: Active SQLAlchemy session.
+        source_file_id: 源 File 记录 id。
+        new_file_id: 新建输出 File 记录 id（克隆目标）。
+        user_id: 数据归属用户 id。
+        source_stage_filter: 原 Dataset 的 current_stage 必须等于此值。
+        new_stage: 新克隆 Dataset 的 current_stage 值。
+        passed_filter: 可选，原 Dataset.passed == 此值（如 "是"）。
+        dataset_ids: 可选 dataset.id 白名单；传则仅克隆这些 id 的记录。
+
+    Returns:
+        新建并已 commit 的 Dataset 列表（按 id 升序与源记录一致）。
+    """
+    query = (
+        db.query(Dataset)
+        .filter(
+            Dataset.file_id == source_file_id,
+            Dataset.user_id == user_id,
+            Dataset.current_stage == source_stage_filter,
+        )
+    )
+    if passed_filter is not None:
+        query = query.filter(Dataset.passed == passed_filter)
+    if dataset_ids is not None:
+        ids_list = [i for i in dataset_ids]
+        if not ids_list:
+            return []
+        query = query.filter(Dataset.id.in_(ids_list))
+
+    source_records = query.order_by(Dataset.id.asc()).all()
+    if not source_records:
+        return []
+
+    cloned: List[Dataset] = []
+    for src in source_records:
+        kwargs = {field: getattr(src, field) for field in _CLONABLE_FIELDS}
+        new_record = Dataset(
+            user_id=user_id,
+            file_id=new_file_id,
+            current_stage=new_stage,
+            **kwargs,
+        )
+        db.add(new_record)
+        cloned.append(new_record)
+
+    db.commit()
+    for record in cloned:
+        db.refresh(record)
+
+    logger.info(
+        "Cloned %d datasets from file_id=%d to file_id=%d (new_stage=%s)",
+        len(cloned), source_file_id, new_file_id, new_stage.value,
+    )
+
+    return cloned
+
+
+# ---------------------------------------------------------------------------
 # Fail file creation (validation stages)
 # ---------------------------------------------------------------------------
 
-# Stage-specific suffixes for fail filenames
+# 校验阶段失败文件后缀
 _FAIL_SUFFIXES = {
     StageEnum.QUESTION_VALIDATE: "问题校验失败",
     StageEnum.ANSWER_VALIDATE: "答案校验失败",
@@ -254,24 +401,17 @@ def create_fail_file(
     stage: StageEnum,
     fail_records: list,
 ) -> File:
-    """Create a consolidated fail JSON file for validation stages.
-
-    Called by question_validate and answer_validate when records fail
-    validation.  The file contains all failed records together, each with
-    the original record fields plus validation_result and reason.
+    """为校验阶段产出汇总的失败记录 JSON 文件。
 
     Args:
         db: Active SQLAlchemy session.
         user_id: The user who owns the file.
-        source_file: The source JSON file being processed.
-        stage: The pipeline stage that generated the failures
-               (StageEnum.QUESTION_VALIDATE or StageEnum.ANSWER_VALIDATE).
-        fail_records: List of dicts containing failed record data.
-                      Each dict should include the original Dataset fields
-                      plus 'validation_result' and 'reason'.
+        source_file: 源 JSON File 记录（用于派生命名）。
+        stage: 校验阶段枚举（QUESTION_VALIDATE 或 ANSWER_VALIDATE）。
+        fail_records: 失败记录 dict 列表，每条带 validation_result + reason。
 
     Returns:
-        A new File record in the file management area.
+        新建的 File 记录。
     """
     if not fail_records:
         raise ValueError("fail_records must not be empty")
@@ -280,30 +420,17 @@ def create_fail_file(
     if suffix is None:
         raise ValueError(f"Stage {stage} does not produce fail files")
 
-    # Build filename: source_filename (without .json) + _问题校验失败 + .json
     source_base = os.path.splitext(source_file.filename)[0]
-    filename = f"{source_base}_{suffix}.json"
+    desired_filename = f"{source_base}_{suffix}.json"
 
-    # Build file_path in the user's upload directory
     upload_dir = os.path.join("uploads", str(user_id))
     os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, filename)
 
-    # Handle duplicate filenames by appending a counter suffix
-    if os.path.exists(file_path):
-        counter = 1
-        candidate_path = os.path.join(upload_dir, f"{source_base}_{suffix}_{counter}.json")
-        while os.path.exists(candidate_path):
-            counter += 1
-            candidate_path = os.path.join(upload_dir, f"{source_base}_{suffix}_{counter}.json")
-        filename = f"{source_base}_{suffix}_{counter}.json"
-        file_path = candidate_path
+    filename, file_path = _resolve_unique_path(upload_dir, desired_filename)
 
-    # Write the consolidated fail file
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(fail_records, f, ensure_ascii=False, indent=2)
 
-    # Create File DB record
     file_record = File(
         user_id=user_id,
         filename=filename,

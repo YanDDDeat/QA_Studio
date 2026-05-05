@@ -11,7 +11,7 @@
         <div class="config-form">
           <el-form :model="form" label-width="100px" :disabled="taskRunning">
             <el-form-item label="选择文件">
-              <FileSelector v-model="form.file_id" :file-options="fileOptions" :disabled="taskRunning" @upload-success="onFileUploadSuccess" />
+              <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" :expected-stage="answer_generate" :disabled="taskRunning" />
             </el-form-item>
 
             <el-form-item label="选择Prompt">
@@ -264,11 +264,6 @@ const {
   saveAsNewVersion,
 } = usePromptDrawer('answer_validate', promptOptions, form, selectedLLMConfigId)
 
-// ----- File upload callback -----
-function onFileUploadSuccess() {
-  fetchFileOptions()
-}
-
 // ----- Current file name for results header -----
 const currentFileName = computed(() => {
   const targetId = effectiveFileId.value || form.value.file_id
@@ -359,13 +354,15 @@ const statusLabel = computed(() => {
 })
 
 // ----- Data fetching -----
-async function fetchFileOptions() {
+async function fetchFileOptions(showAll) {
   try {
-    const res = await getAnswerValidateSourceFiles()
-    fileOptions.value = Array.isArray(res) ? res : []
+    const res = await getAnswerValidateSourceFiles({ show_all: showAll })
+    const items = Array.isArray(res) ? res : []
+    fileOptions.value = items
+    return items
   } catch (err) {
     ElMessage.error('获取文件列表失败')
-    fileOptions.value = []
+    return []
   }
 }
 
@@ -552,7 +549,6 @@ async function restoreTaskState() {
 
 onMounted(async () => {
   await Promise.all([
-    fetchFileOptions(),
     fetchPromptOptions(),
     fetchLLMConfigs(),
   ])

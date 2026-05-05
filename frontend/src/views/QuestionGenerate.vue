@@ -13,9 +13,8 @@
             <el-form-item label="选择文件">
               <FileSelector
                 v-model="form.file_id"
-                :file-options="fileOptions"
+                :fetch-fn="fetchFileOptions"
                 :disabled="taskRunning"
-                @upload-success="onFileUploadSuccess"
               />
             </el-form-item>
 
@@ -277,14 +276,18 @@ import {
   retryStage,
   getTaskLogs,
   getTaskList,
-  getManagedFiles,
+  getQuestionGenerateSourceFiles,
   getPromptConfigs,
   getLLMConfigs,
+  stopTask,
+  resumeTask,
 } from '../api'
 import { usePromptDrawer } from '../composables/usePromptDrawer'
 import { useStageResults } from '../composables/useStageResults'
 import FileSelector from '../components/FileSelector.vue'
 import PromptPreview from '../components/PromptPreview.vue'
+import { buildDefaultOutputFilename } from '../utils/stageLabels'
+import { useUserStore } from '../composables/useUserStore'
 
 // ----- Form state -----
 const router = useRouter()
@@ -327,11 +330,6 @@ const {
   saveLoading,
   saveAsNewVersion,
 } = usePromptDrawer('question_generate', promptOptions, form, selectedLLMConfigId)
-
-// ----- File upload (handled by FileSelector component) -----
-function onFileUploadSuccess() {
-  fetchFileOptions()
-}
 
 // ----- Stage results (lazy-loaded) -----
 // ----- Task state (must be before useStageResults) -----
@@ -418,13 +416,15 @@ const statusLabel = computed(() => {
 })
 
 // ----- Data fetching -----
-async function fetchFileOptions() {
+async function fetchFileOptions(showAll) {
   try {
-    const res = await getManagedFiles()
-    fileOptions.value = res.items || []
+    const res = await getQuestionGenerateSourceFiles({ show_all: showAll })
+    const items = Array.isArray(res) ? res : []
+    fileOptions.value = items
+    return items
   } catch (err) {
     ElMessage.error('获取文件列表失败')
-    fileOptions.value = []
+    return []
   }
 }
 
@@ -603,7 +603,6 @@ async function restoreTaskState() {
 
 onMounted(async () => {
   await Promise.all([
-    fetchFileOptions(),
     fetchPromptOptions(),
     fetchLLMConfigs(),
   ])

@@ -13,9 +13,7 @@
             <el-form-item label="选择文件">
               <FileSelector
                 v-model="splitForm.file_id"
-                :file-options="splitFileOptions"
-                :disabled="splitTaskRunning"
-                @upload-success="onSplitFileUploadSuccess"
+                :fetch-fn="fetchSplitFileOptions" :expected-stage="cot_filter" :disabled="splitTaskRunning"
               />
             </el-form-item>
 
@@ -88,9 +86,7 @@
             <el-form-item label="选择文件">
               <FileSelector
                 v-model="assessForm.file_id"
-                :file-options="assessFileOptions"
-                :disabled="assessTaskRunning"
-                @upload-success="onAssessFileUploadSuccess"
+                :fetch-fn="fetchAssessFileOptions" :expected-stage="dataset_split" :disabled="assessTaskRunning"
               />
             </el-form-item>
 
@@ -164,8 +160,8 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  startDatasetSplit, getDatasetSplitStatus, getManagedFiles,
-  startDatasetAssessment, getDatasetAssessmentStatus,
+  startDatasetSplit, getDatasetSplitStatus, getDatasetSplitSourceFiles,
+  startDatasetAssessment, getDatasetAssessmentStatus, getDatasetAssessmentSourceFiles,
   getTaskLogs, getTaskList, getPromptConfigs, getLLMConfigs,
   downloadManagedFile,
 } from '../api'
@@ -275,11 +271,17 @@ function handleAssessLLMConfigChange(configId) {
 }
 
 // ---- Split functions ----
-async function fetchSplitFileOptions() {
-  try { const res = await getManagedFiles(); splitFileOptions.value = res.items || [] }
-  catch { ElMessage.error('获取文件列表失败') }
+async function fetchSplitFileOptions(showAll) {
+  try {
+    const res = await getDatasetSplitSourceFiles({ show_all: showAll })
+    const items = Array.isArray(res) ? res : []
+    splitFileOptions.value = items
+    return items
+  } catch (err) {
+    ElMessage.error('获取文件列表失败')
+    return []
+  }
 }
-function onSplitFileUploadSuccess() { fetchSplitFileOptions() }
 
 async function handleStartSplit() {
   if (!canStartSplit.value) return
@@ -357,11 +359,17 @@ function stopSplitPolling() {
 }
 
 // ---- Assessment functions ----
-async function fetchAssessFileOptions() {
-  try { const res = await getManagedFiles(); assessFileOptions.value = res.items || [] }
-  catch { ElMessage.error('获取文件列表失败') }
+async function fetchAssessFileOptions(showAll) {
+  try {
+    const res = await getDatasetAssessmentSourceFiles({ show_all: showAll })
+    const items = Array.isArray(res) ? res : []
+    assessFileOptions.value = items
+    return items
+  } catch (err) {
+    ElMessage.error('获取文件列表失败')
+    return []
+  }
 }
-function onAssessFileUploadSuccess() { fetchAssessFileOptions() }
 
 async function fetchAssessPrompts() {
   try { const res = await getPromptConfigs({ stage: 'dataset_assessment' }); assessPromptOptions.value = Array.isArray(res) ? res : [] }
@@ -481,8 +489,6 @@ async function restoreAssessTaskState() {
 
 onMounted(async () => {
   await Promise.all([
-    fetchSplitFileOptions(),
-    fetchAssessFileOptions(),
     fetchAssessPrompts(),
     fetchAssessLLMConfigs(),
   ])

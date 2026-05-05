@@ -8,20 +8,19 @@ Key design:
 - Reads input JSON file from disk
 - Filters valid QA items, works with whatever task types exist in data
 - Splits into test/train based on chosen strategy
-- Writes two output JSON files and registers in File table
+- Uses create_output_file() for consistent naming and File registration
 """
 
 import json
-import os
 import logging
 import re
 from random import Random
-from datetime import datetime
 from typing import Any, Dict, List, Set, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.models.models import File, StageEnum
+from app.services.file_service import create_output_file
 
 logger = logging.getLogger("qa_studio.split_service")
 
@@ -75,7 +74,6 @@ def discover_task_types(records: List[Dict[str, Any]]) -> List[str]:
     present: Set[str] = set()
     for record in records:
         present.add(record["task_type"])
-    # Sort: known types first in their defined order, then unknown types alphabetically
     known = [t for t in KNOWN_TASK_TYPES if t in present]
     unknown = sorted(t for t in present if t not in KNOWN_TASK_TYPES)
     return known + unknown
@@ -97,7 +95,6 @@ def summarize_task_counts(items: List[Dict[str, Any]]) -> str:
     for item in items:
         tt = normalize_task_type(item.get("task_type", ""))
         counts[tt] = counts.get(tt, 0) + 1
-    # Sort: known types first, then others
     known = [f"{t}={counts[t]}" for t in KNOWN_TASK_TYPES if t in counts]
     unknown = [f"{t}={counts[t]}" for t in sorted(counts) if t not in KNOWN_TASK_TYPES]
     return ", ".join(known + unknown)
@@ -115,16 +112,7 @@ def validate_records(records: List[Dict[str, Any]], test_count: int) -> List[str
     if test_count > len(records):
         raise ValueError(f"测试集数量({test_count})超过总记录数({len(records)})")
 
-    # Each present task type must leave at least 1 record for train
-    grouped = build_grouped_records(records, task_types)
-    max_test = sum(len(group) - 1 for group in grouped.values() if len(group) > 1)
-    # Groups with only 1 record can contribute 0 to test (must stay in train)
-    single_groups = [tt for tt in task_types if len(grouped[tt]) == 1]
-    if single_groups and test_count >= len(records) - len(single_groups):
-        # All non-single records would go to test, leaving only 1-per-type in train
-        pass  # This is actually fine as long as test_count <= max_test
-
-    max_test_count = len(records) - len(task_types)  # at least 1 per type stays in train
+    max_test_count = len(records) - len(task_types)
     if test_count > max_test_count:
         raise ValueError(
             f"测试集数量过大，最多可选 {max_test_count} 条 (需为每种题型保留至少1条训练数据)"
@@ -145,7 +133,6 @@ def select_test_records_difficulty_priority(
     selected: List[Dict[str, Any]] = []
     selected_counts = {task_type: 0 for task_type in task_types}
 
-    # Guarantee at least one per task type (if test_count allows)
     for task_type in task_types:
         if len(selected) >= test_count:
             break
@@ -153,7 +140,6 @@ def select_test_records_difficulty_priority(
         selected.append(record)
         selected_counts[task_type] += 1
 
-    # Fill remaining by difficulty priority
     remaining_candidates: List[Dict[str, Any]] = []
     for task_type in task_types:
         remaining_candidates.extend(grouped[task_type][1:])
@@ -163,7 +149,6 @@ def select_test_records_difficulty_priority(
             break
         task_type = record["task_type"]
         total_in_group = len(grouped[task_type])
-        # Leave at least 1 in train for this task type
         if selected_counts[task_type] >= total_in_group - 1:
             continue
         selected.append(record)
@@ -236,7 +221,6 @@ def split_items(
     test_count: int,
     split_strategy: str = "difficulty_priority",
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
-    # Categorize records: QA candidates for strategic selection, others auto to train
     qa_records: List[Dict[str, Any]] = []
     other_items: List[Dict[str, Any]] = []
 
@@ -256,7 +240,6 @@ def split_items(
 
     test_items = [{**record["item"], "corpus_cate": 2} for record in test_records]
     train_items = [{**record["item"], "corpus_cate": 0} for record in train_records]
-    # Non-QA records all go to train
     train_items.extend([{**item, "corpus_cate": 0} for item in other_items if isinstance(item, dict)])
     train_items.extend([item for item in other_items if not isinstance(item, dict)])
 
@@ -284,45 +267,29 @@ def run_dataset_split(
 
     test_items, train_items, skipped_non_qa = split_items(raw_items, test_count, split_strategy)
 
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    suffix_name = username or str(user_id)
-    upload_dir = os.path.join("uploads", str(user_id))
-    os.makedirs(upload_dir, exist_ok=True)
-
-    test_filename = f"{output_name}_{suffix_name}_{timestamp}_test.json"
-    test_path = os.path.join(upload_dir, test_filename)
-
-    train_filename = f"{output_name}_{suffix_name}_{timestamp}_train.json"
-    train_path = os.path.join(upload_dir, train_filename)
-
-    with open(test_path, "w", encoding="utf-8") as f:
-        json.dump(test_items, f, ensure_ascii=False, indent=2)
-
-    with open(train_path, "w", encoding="utf-8") as f:
-        json.dump(train_items, f, ensure_ascii=False, indent=2)
-
-    test_file_record = File(
+    test_file_record = create_output_file(
+        db=db,
         user_id=user_id,
-        filename=test_filename,
-        file_type="json",
-        file_path=test_path,
-        source_stage=StageEnum.DATASET_SPLIT,
+        source_file=source_file,
+        stage=StageEnum.DATASET_SPLIT,
+        output_filename=output_name,
+        username=username,
+        name_suffix="test",
+        initial_content=test_items,
         text_field="input",
     )
-    db.add(test_file_record)
 
-    train_file_record = File(
+    train_file_record = create_output_file(
+        db=db,
         user_id=user_id,
-        filename=train_filename,
-        file_type="json",
-        file_path=train_path,
-        source_stage=StageEnum.DATASET_SPLIT,
+        source_file=source_file,
+        stage=StageEnum.DATASET_SPLIT,
+        output_filename=output_name,
+        username=username,
+        name_suffix="train",
+        initial_content=train_items,
         text_field="input",
     )
-    db.add(train_file_record)
-    db.commit()
-    db.refresh(test_file_record)
-    db.refresh(train_file_record)
 
     test_task_counts = summarize_task_counts(test_items)
     train_task_counts = summarize_task_counts(train_items)
@@ -338,9 +305,9 @@ def run_dataset_split(
         "skipped_non_qa": skipped_non_qa,
         "split_strategy": split_strategy,
         "test_file_id": test_file_record.id,
-        "test_filename": test_filename,
+        "test_filename": test_file_record.filename,
         "train_file_id": train_file_record.id,
-        "train_filename": train_filename,
+        "train_filename": train_file_record.filename,
         "test_task_counts": test_task_counts,
         "train_task_counts": train_task_counts,
     }
