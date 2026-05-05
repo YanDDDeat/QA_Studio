@@ -7,7 +7,7 @@
 
     <div v-if="mode === 'existing'" class="existing-section">
       <div v-if="fetchFn" class="stage-filter">
-        <span class="filter-label">{{ showAllFiles ? '全部文件' : (expectedStage ? `${expectedStageLabel}产出` : '手动上传') }}</span>
+        <span class="filter-label">是否展示全部文件</span>
         <el-switch v-model="showAllFiles" size="small" :disabled="disabled" />
       </div>
       <el-select
@@ -74,11 +74,10 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { uploadManagedFile } from '../api'
-import { getStageLabel } from '../utils/stageLabels'
 
 const props = defineProps({
   modelValue: { type: [Number, null], default: null },
@@ -97,10 +96,6 @@ const uploadLoading = ref(false)
 const showAllFiles = ref(false)
 const internalFileOptions = ref([])
 const fetchLoading = ref(false)
-
-const expectedStageLabel = computed(() => {
-  return props.expectedStage ? getStageLabel(props.expectedStage) : ''
-})
 
 onMounted(() => {
   if (props.fetchFn) {
