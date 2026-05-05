@@ -76,10 +76,19 @@
           <span v-if="splitSourceTotal > 0" class="results-count">共 {{ splitSourceTotal }} 条</span>
         </div>
         <el-table v-if="splitSourceData.length > 0" :data="splitSourceData" v-loading="splitSourceLoading" stripe border size="small" style="width: 100%">
-          <el-table-column prop="id" label="ID" width="50" />
-          <el-table-column prop="input" label="问题" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="task_type" label="题型" width="100" />
-          <el-table-column prop="domain" label="领域" width="100" show-overflow-tooltip />
+          <el-table-column
+            v-for="col in splitSourceColumns"
+            :key="col.prop"
+            :prop="col.prop"
+            :label="col.label"
+            :width="col.width"
+            :min-width="col.minWidth"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              {{ truncateText(row[col.prop]) }}
+            </template>
+          </el-table-column>
         </el-table>
         <div v-if="splitSourceData.length === 0 && !splitSourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
         <div v-if="splitSourceTotal > 0" class="results-pagination">
@@ -180,10 +189,19 @@
           <span v-if="assessSourceTotal > 0" class="results-count">共 {{ assessSourceTotal }} 条</span>
         </div>
         <el-table v-if="assessSourceData.length > 0" :data="assessSourceData" v-loading="assessSourceLoading" stripe border size="small" style="width: 100%">
-          <el-table-column prop="id" label="ID" width="50" />
-          <el-table-column prop="input" label="问题" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="task_type" label="题型" width="100" />
-          <el-table-column prop="domain" label="领域" width="100" show-overflow-tooltip />
+          <el-table-column
+            v-for="col in assessSourceColumns"
+            :key="col.prop"
+            :prop="col.prop"
+            :label="col.label"
+            :width="col.width"
+            :min-width="col.minWidth"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              {{ truncateText(row[col.prop]) }}
+            </template>
+          </el-table-column>
         </el-table>
         <div v-if="assessSourceData.length === 0 && !assessSourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
         <div v-if="assessSourceTotal > 0" class="results-pagination">
@@ -255,6 +273,7 @@ const {
   sourceLoading: splitSourceLoading,
   sourcePage: splitSourcePage,
   sourceFileName: splitSourceFileName,
+  sourceColumns: splitSourceColumns,
   loadSourcePreview: loadSplitSourcePreview,
   handleSourcePageChange: handleSplitSourcePageChange,
 } = useSourcePreview(
@@ -336,12 +355,22 @@ const {
   sourceLoading: assessSourceLoading,
   sourcePage: assessSourcePage,
   sourceFileName: assessSourceFileName,
+  sourceColumns: assessSourceColumns,
   loadSourcePreview: loadAssessSourcePreview,
   handleSourcePageChange: handleAssessSourcePageChange,
 } = useSourcePreview(
   computed(() => assessForm.value.file_id),
   assessFileOptions
 )
+
+function truncateText(text) {
+  if (!text) return '-'
+  if (typeof text !== 'string') {
+    try { text = JSON.stringify(text) } catch { text = String(text) }
+  }
+  if (text.length > 80) return text.substring(0, 80) + '...'
+  return text
+}
 
 const assessProgressPercent = computed(() => {
   if (!assessTaskInfo.value || assessTaskInfo.value.progress_total === 0) return 0

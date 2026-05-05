@@ -11,6 +11,7 @@ import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import katex from 'katex'
 import { getDatasets } from '../api'
+import { FIELD_LABELS } from '../utils/fieldLabels'
 
 // Truncate threshold for long text in table cells
 const TRUNCATE_LIMIT = 80
@@ -84,6 +85,18 @@ export function useStageResults(stageName, fileIdRef, columns, taskInfoRef) {
     return text
   }
 
+  const tableColumns = computed(() => {
+    if (resultsData.value.length === 0) return []
+    const first = resultsData.value[0]
+    if (!first || typeof first !== 'object') return []
+    return Object.keys(first).map(key => ({
+      prop: key,
+      label: FIELD_LABELS[key] || key,
+      width: key === 'id' ? 55 : undefined,
+      minWidth: 100,
+    }))
+  })
+
   // ---- LaTeX rendering (same logic as DataManage.vue) ----
 
   function renderLatex(text) {
@@ -148,6 +161,7 @@ export function useStageResults(stageName, fileIdRef, columns, taskInfoRef) {
     handleResultsPageChange,
     showDetail,
     truncateText,
+    tableColumns,
     renderContent,
     renderKnowledge,
   }

@@ -90,10 +90,19 @@
           <span v-if="sourceTotal > 0" class="results-count">共 {{ sourceTotal }} 条</span>
         </div>
         <el-table v-if="sourceData.length > 0" :data="sourceData" v-loading="sourceLoading" stripe border size="small" style="width: 100%">
-          <el-table-column prop="id" label="ID" width="50" />
-          <el-table-column prop="input" label="问题" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="task_type" label="题型" width="100" />
-          <el-table-column prop="domain" label="领域" width="100" show-overflow-tooltip />
+          <el-table-column
+            v-for="col in sourceColumns"
+            :key="col.prop"
+            :prop="col.prop"
+            :label="col.label"
+            :width="col.width"
+            :min-width="col.minWidth"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              {{ truncateText(row[col.prop]) }}
+            </template>
+          </el-table-column>
         </el-table>
         <div v-if="sourceData.length === 0 && !sourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
         <div v-if="sourceTotal > 0" class="results-pagination">
@@ -174,18 +183,17 @@
           size="small"
           style="width: 100%"
         >
-          <el-table-column prop="id" label="ID" width="50" />
-          <el-table-column prop="input" label="问题(input)" min-width="180" show-overflow-tooltip />
-          <el-table-column label="答案(output)" min-width="180">
+          <el-table-column
+            v-for="col in tableColumns"
+            :key="col.prop"
+            :prop="col.prop"
+            :label="col.label"
+            :width="col.width"
+            :min-width="col.minWidth"
+            show-overflow-tooltip
+          >
             <template #default="{ row }">
-              {{ truncateText(row.output) }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="passed" label="是否通过" width="100">
-            <template #default="{ row }">
-              <el-tag :type="row.passed === '是' ? 'success' : 'danger'" size="small">
-                {{ row.passed || '-' }}
-              </el-tag>
+              {{ truncateText(row[col.prop]) }}
             </template>
           </el-table-column>
           <el-table-column label="操作" width="80" fixed="right">
@@ -335,6 +343,7 @@ const {
   detailVisible,
   detailRecord,
   effectiveFileId,
+  tableColumns,
   loadResults,
   handleResultsPageChange,
   showDetail,
@@ -354,6 +363,7 @@ const {
   sourceLoading,
   sourcePage,
   sourceFileName,
+  sourceColumns,
   loadSourcePreview,
   handleSourcePageChange,
 } = useSourcePreview(

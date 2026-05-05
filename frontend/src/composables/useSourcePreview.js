@@ -9,6 +9,7 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getManagedFileContent } from '../api'
+import { FIELD_LABELS } from '../utils/fieldLabels'
 
 export function useSourcePreview(fileIdRef, fileOptionsRef) {
   const sourceData = ref([])
@@ -21,6 +22,18 @@ export function useSourcePreview(fileIdRef, fileOptionsRef) {
     if (!id || !fileOptionsRef.value) return ''
     const f = fileOptionsRef.value.find(f => f.id === id)
     return f ? f.filename : ''
+  })
+
+  const sourceColumns = computed(() => {
+    if (sourceData.value.length === 0) return []
+    const first = sourceData.value[0]
+    if (!first || typeof first !== 'object') return []
+    return Object.keys(first).map(key => ({
+      prop: key,
+      label: FIELD_LABELS[key] || key,
+      width: key === 'id' ? 55 : undefined,
+      minWidth: 100,
+    }))
   })
 
   async function loadSourcePreview() {
@@ -57,6 +70,7 @@ export function useSourcePreview(fileIdRef, fileOptionsRef) {
     sourceLoading,
     sourcePage,
     sourceFileName,
+    sourceColumns,
     loadSourcePreview,
     handleSourcePageChange,
   }
