@@ -1,6 +1,6 @@
 <template>
   <div class="page-container">
-    <h2>数据集处理</h2>
+    <h2>测试集切分</h2>
 
     <!-- Split section -->
     <el-card class="section-card">

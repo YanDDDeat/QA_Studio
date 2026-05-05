@@ -58,7 +58,7 @@ const routes = [
         path: 'dataset-processing',
         name: 'DatasetProcessing',
         component: () => import('../views/DatasetProcessing.vue'),
-        meta: { title: '数据集处理', stage: 'dataset_processing' },
+        meta: { title: '测试集切分', stage: 'dataset_processing' },
       },
       {
         path: 'data-manage',

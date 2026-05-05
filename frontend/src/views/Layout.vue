@@ -65,7 +65,7 @@
           </el-menu-item>
           <el-menu-item index="/dataset-processing">
             <el-icon><Grid /></el-icon>
-            <span>数据集处理</span>
+            <span>测试集切分</span>
           </el-menu-item>
         </el-sub-menu>
 
