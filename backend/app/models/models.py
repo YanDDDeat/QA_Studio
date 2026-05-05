@@ -25,6 +25,12 @@ class StageEnum(str, PyEnum):
     DATASET_ASSESSMENT = "dataset_assessment"
 
 
+# SQLAlchemy 2.0 解析混合 Enum 类时 dict keys 用的是 member 名称而非值
+# 通过 values_callable 让 SA 正确获取枚举的字符串值
+def _stage_enum_type(**kw):
+    return Enum(StageEnum, values_callable=lambda x: [m.value for m in x], **kw)
+
+
 class TaskStatusEnum(str, PyEnum):
     """Task status enumeration"""
     PENDING = "pending"
@@ -100,7 +106,7 @@ class Dataset(Base):
     score = Column(Float, nullable=True)
     passed = Column(String(16), default="是", nullable=False)
     file_id = Column(Integer, ForeignKey("files.id"), nullable=True, index=True)
-    current_stage = Column(Enum(StageEnum), default=StageEnum.QUESTION_GENERATE, nullable=True)
+    current_stage = Column(_stage_enum_type(), default=StageEnum.QUESTION_GENERATE, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -116,7 +122,7 @@ class File(Base):
     filename = Column(String(256), nullable=False)
     file_type = Column(String(64), nullable=True)
     file_path = Column(String(512), nullable=False)
-    source_stage = Column(Enum(StageEnum), nullable=True)
+    source_stage = Column(_stage_enum_type(), nullable=True)
     text_field = Column(String(128), default="text", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -129,7 +135,7 @@ class Prompt(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # NULL=全局共享
-    stage = Column(Enum(StageEnum), nullable=False)
+    stage = Column(_stage_enum_type(), nullable=False)
     version = Column(Integer, default=1, nullable=False)
     content = Column(Text, nullable=False)
     model = Column(String(128), nullable=True)
@@ -146,7 +152,7 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    stage = Column(Enum(StageEnum), nullable=False)
+    stage = Column(_stage_enum_type(), nullable=False)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True)
     file_id = Column(Integer, ForeignKey("files.id"), nullable=True)
     model = Column(String(128), nullable=True)
