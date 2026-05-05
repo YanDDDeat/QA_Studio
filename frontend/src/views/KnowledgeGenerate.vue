@@ -11,7 +11,7 @@
         <div class="config-form">
           <el-form :model="form" label-width="100px" :disabled="taskRunning">
             <el-form-item label="选择文件">
-              <FileSelector v-model="form.file_id" :file-options="fileOptions" :disabled="taskRunning" @upload-success="onFileUploadSuccess" />
+              <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" :expected-stage="question_generate" :disabled="taskRunning" />
             </el-form-item>
 
             <el-form-item label="选择Prompt">
@@ -255,9 +255,17 @@ const {
   saveAsNewVersion,
 } = usePromptDrawer('knowledge_generate', promptOptions, form, selectedLLMConfigId)
 
-// ----- File upload success handler -----
-function onFileUploadSuccess() {
-  fetchFileOptions()
+// ----- File options (populated by FileSelector's fetchFn) -----
+async function fetchFileOptions(showAll) {
+  try {
+    const res = await getKnowledgeGenerateSourceFiles({ show_all: showAll })
+    const items = Array.isArray(res) ? res : []
+    fileOptions.value = items
+    return items
+  } catch (err) {
+    ElMessage.error('获取文件列表失败')
+    return []
+  }
 }
 
 // ----- Current file name for results header -----
@@ -351,16 +359,6 @@ const statusLabel = computed(() => {
 })
 
 // ----- Data fetching -----
-async function fetchFileOptions() {
-  try {
-    const res = await getKnowledgeGenerateSourceFiles()
-    fileOptions.value = Array.isArray(res) ? res : []
-  } catch (err) {
-    ElMessage.error('获取文件列表失败')
-    fileOptions.value = []
-  }
-}
-
 async function fetchPromptOptions() {
   try {
     const res = await getPromptConfigs({ stage: 'knowledge_generate' })
@@ -544,7 +542,6 @@ async function restoreTaskState() {
 
 onMounted(async () => {
   await Promise.all([
-    fetchFileOptions(),
     fetchPromptOptions(),
     fetchLLMConfigs(),
   ])

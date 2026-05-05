@@ -6,6 +6,10 @@
     </el-radio-group>
 
     <div v-if="mode === 'existing'" class="existing-section">
+      <div v-if="fetchFn && expectedStage" class="stage-filter">
+        <span class="filter-label">{{ showAllFiles ? '显示所有阶段文件' : `仅显示上一阶段（${expectedStageLabel}）文件` }}</span>
+        <el-switch v-model="showAllFiles" size="small" :disabled="disabled" />
+      </div>
       <el-select
         :model-value="modelValue"
         placeholder="请选择文件"
@@ -15,7 +19,7 @@
         @update:model-value="$emit('update:modelValue', $event)"
       >
         <el-option
-          v-for="f in fileOptions"
+          v-for="f in internalFileOptions"
           :key="f.id"
           :label="f.filename"
           :value="f.id"
@@ -70,15 +74,18 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { uploadManagedFile } from '../api'
+import { getStageLabel } from '../utils/stageLabels'
 
 const props = defineProps({
   modelValue: { type: [Number, null], default: null },
   fileOptions: { type: Array, default: () => [] },
   disabled: { type: Boolean, default: false },
+  fetchFn: { type: Function, default: null },
+  expectedStage: { type: String, default: null },
 })
 
 const emit = defineEmits(['update:modelValue', 'upload-success'])
@@ -87,13 +94,51 @@ const mode = ref('existing')
 const uploadFileList = ref([])
 const uploadForm = ref({ text_field: 'text' })
 const uploadLoading = ref(false)
+const showAllFiles = ref(false)
+const internalFileOptions = ref([])
+const fetchLoading = ref(false)
 
-// Auto-switch to existing mode when a file is selected via upload
+const expectedStageLabel = computed(() => {
+  return props.expectedStage ? getStageLabel(props.expectedStage) : ''
+})
+
+onMounted(() => {
+  if (props.fetchFn) {
+    loadFiles()
+  }
+})
+
+watch(() => props.fileOptions, (val) => {
+  if (!props.fetchFn) {
+    internalFileOptions.value = val || []
+  }
+}, { immediate: true })
+
+watch(showAllFiles, () => {
+  if (props.fetchFn) {
+    loadFiles()
+  }
+})
+
 watch(() => props.modelValue, (val) => {
   if (val && mode.value === 'upload') {
     // Don't switch — user just uploaded, keep upload view briefly
   }
 })
+
+async function loadFiles() {
+  if (!props.fetchFn) return
+  fetchLoading.value = true
+  try {
+    const res = await props.fetchFn(showAllFiles.value)
+    internalFileOptions.value = Array.isArray(res) ? res : (res.items || [])
+  } catch (err) {
+    console.error('FileSelector fetch error:', err)
+    internalFileOptions.value = []
+  } finally {
+    fetchLoading.value = false
+  }
+}
 
 function handleFileChange(file, fileList) {
   uploadFileList.value = fileList
@@ -127,10 +172,14 @@ async function submitUpload() {
       ElMessage.success('文件上传成功')
       emit('update:modelValue', uploaded[0].id)
       emit('upload-success', uploaded[0])
-      // Switch to existing mode and clear upload state
       mode.value = 'existing'
       uploadFileList.value = []
       uploadForm.value = { text_field: 'text' }
+      // Reload file list after upload
+      if (props.fetchFn) {
+        showAllFiles.value = true
+        await loadFiles()
+      }
     }
     if (errors.length > 0) {
       const msg = errors.map(e => `${e.filename}: ${e.error}`).join('\n')
@@ -143,6 +192,8 @@ async function submitUpload() {
     uploadLoading.value = false
   }
 }
+
+defineExpose({ refresh: loadFiles })
 </script>
 
 <style scoped>
@@ -158,9 +209,20 @@ async function submitUpload() {
 .mode-toggle .el-radio-button {
   flex: 1;
 }
-/* Make radio buttons fill equal width */
 .mode-toggle :deep(.el-radio-button__inner) {
   width: 100%;
+}
+
+.stage-filter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.filter-label {
+  font-size: 12px;
+  color: #909399;
 }
 
 .full-select {

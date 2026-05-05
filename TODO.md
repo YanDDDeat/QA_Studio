@@ -7,10 +7,10 @@
 - [ ] 全流程串联：问题生成 → 知识体系 → 问题校验 → 答案生成 → 答案校验 → 数据评估 → COT过滤 → 切分 → 评分
 
 ## LLM调用流程改进（新需求，分两批）
-- [ ] 分支1 `feature/llm-task-improvements`：详见 `docs/requirements/需求_LLM任务改进.md`
-  - [ ] 修复 Prompt not found（全局共享 prompt 在 `/start` 校验时被漏掉）
-  - [ ] 默认输出文件名 `{源文件}_{阶段中文}_{username}_{时间}.json`，前端自动填充
-  - [ ] 任务停止/恢复（软停：处理完当前条退出，进度保留可续跑）
+- [x] 分支1 `feature/llm-task-improvements`：详见 `docs/requirements/需求_LLM任务改进.md`
+  - [x] 修复 Prompt not found（全局共享 prompt 在 `/start` 校验时被漏掉）
+  - [x] 默认输出文件名 `{源文件}_{阶段中文}_{username}_{时间}.json`，后端已就绪，前端 stageLabels.js 已提供工具函数
+  - [x] 任务停止/恢复（软停：处理完当前条退出，进度保留可续跑）
 - [ ] 分支2 `feature/no-overwrite-and-stage-tag`：详见 `docs/requirements/需求_输出新文件与阶段标签过滤.md`
   - [ ] 8 个阶段不再覆盖输入文件，每次生成新文件（带 source_stage 标签）
   - [ ] 切分阶段 train/test 各为独立 File 记录；校验阶段 fail file 旧逻辑保留

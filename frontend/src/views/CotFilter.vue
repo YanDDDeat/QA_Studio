@@ -11,12 +11,7 @@
         <div class="config-form">
           <el-form :model="form" label-width="100px" :disabled="taskRunning">
             <el-form-item label="选择文件">
-              <FileSelector
-                v-model="form.file_id"
-                :file-options="fileOptions"
-                :disabled="taskRunning"
-                @upload-success="onFileUploadSuccess"
-              />
+              <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" :expected-stage="data_evaluate" :disabled="taskRunning" />
             </el-form-item>
 
             <el-form-item label="输出名称">
@@ -164,17 +159,16 @@ const statusLabel = computed(() => {
   return map[taskInfo.value.status] || taskInfo.value.status
 })
 
-async function fetchFileOptions() {
+async function fetchFileOptions(showAll) {
   try {
-    const res = await getManagedFiles()
-    fileOptions.value = res.items || []
+    const res = await getCotFilterSourceFiles({ show_all: showAll })
+    const items = Array.isArray(res) ? res : []
+    fileOptions.value = items
+    return items
   } catch (err) {
     ElMessage.error('获取文件列表失败')
+    return []
   }
-}
-
-function onFileUploadSuccess() {
-  fetchFileOptions()
 }
 
 async function handleStart() {
@@ -319,7 +313,6 @@ async function restoreTaskState() {
 }
 
 onMounted(async () => {
-  await fetchFileOptions()
   await restoreTaskState()
 })
 

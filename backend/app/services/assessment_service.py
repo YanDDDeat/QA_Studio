@@ -9,19 +9,18 @@ Key design:
 - Generates scoring standards using LLM (call_llm_json)
 - Validates: at least 2 scoring points, total=100, each point has 满分标准/失分规则
 - If validation fails, attempts repair with a retry prompt
-- Writes assessed items to a new output file
+- Uses create_output_file() for consistent naming and File registration
 """
 
 import json
-import os
 import logging
 import re
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models.models import Dataset, File, StageEnum
+from app.models.models import File, StageEnum
+from app.services.file_service import create_output_file
 from app.services.llm_service import call_llm_json, LLMCallError
 
 logger = logging.getLogger("qa_studio.assessment_service")
@@ -327,31 +326,18 @@ async def run_assessment_job(
         if update_progress:
             update_progress(db, task_id, idx + 1)
 
-    # Build output filename
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    suffix_name = username or str(user_id)
-    upload_dir = os.path.join("uploads", str(user_id))
-    os.makedirs(upload_dir, exist_ok=True)
-
-    output_filename = f"{output_name}_{suffix_name}_{timestamp}_assessed.json"
-    output_path = os.path.join(upload_dir, output_filename)
-
-    # Write output file
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(updated_items, f, ensure_ascii=False, indent=2)
-
-    # Register output file in DB
-    output_file_record = File(
+    # Create output file via shared factory
+    output_file_record = create_output_file(
+        db=db,
         user_id=user_id,
-        filename=output_filename,
-        file_type="json",
-        file_path=output_path,
-        source_stage=StageEnum.DATASET_ASSESSMENT,
+        source_file=source_file,
+        stage=StageEnum.DATASET_ASSESSMENT,
+        output_filename=output_name,
+        username=username,
+        name_suffix="assessed",
+        initial_content=updated_items,
         text_field="input",
     )
-    db.add(output_file_record)
-    db.commit()
-    db.refresh(output_file_record)
 
     if add_task_log:
         add_task_log(db, task_id, f"评分标准生成完成: 简答题 {short_answer_count} 条, 成功 {generated_count - empty_count} 条, 空 {empty_count} 条")
@@ -367,5 +353,5 @@ async def run_assessment_job(
         "generated": generated_count,
         "empty_assessment": empty_count,
         "output_file_id": output_file_record.id,
-        "output_filename": output_filename,
+        "output_filename": output_file_record.filename,
     }
