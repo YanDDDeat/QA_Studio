@@ -35,8 +35,8 @@ export function useSourcePreview(fileIdRef, fileOptionsRef) {
         page: sourcePage.value,
         page_size: 10,
       })
-      sourceData.value = res.items || []
-      sourceTotal.value = res.total || 0
+      sourceData.value = res.preview || []
+      sourceTotal.value = res.total_records || 0
     } catch (err) {
       ElMessage.error('加载源文件失败')
       sourceData.value = []
