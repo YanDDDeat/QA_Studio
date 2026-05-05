@@ -11,7 +11,7 @@
         <div class="config-form">
           <el-form :model="form" label-width="100px" :disabled="taskRunning">
             <el-form-item label="选择文件">
-              <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" :expected-stage="data_evaluate" :disabled="taskRunning" />
+              <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" expected-stage="data_evaluate" :disabled="taskRunning" />
             </el-form-item>
 
             <el-form-item label="输出名称">
@@ -71,6 +71,22 @@
         <div class="card-header">
           <span class="card-title">过滤进度</span>
           <el-tag :type="statusTagType" size="small">{{ statusLabel }}</el-tag>
+          <el-button
+            v-if="taskInfo.status === 'running'"
+            type="danger"
+            size="small"
+            @click="handleStop"
+          >
+            停止
+          </el-button>
+          <el-button
+            v-if="taskInfo.status === 'paused'"
+            type="primary"
+            size="small"
+            @click="handleResume"
+          >
+            恢复
+          </el-button>
         </div>
       </template>
       <div class="progress-area">
@@ -100,7 +116,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   startCotFilter,
@@ -110,8 +126,11 @@ import {
   getTaskList,
   getManagedFiles,
   downloadManagedFile,
+  stopTask,
+  resumeTask,
 } from '../api'
 import FileSelector from '../components/FileSelector.vue'
+import { buildDefaultOutputFilename } from '../utils/stageLabels'
 
 const form = ref({
   file_id: null,
@@ -120,6 +139,7 @@ const form = ref({
 
 const fileOptions = ref([])
 const startLoading = ref(false)
+const username = computed(() => localStorage.getItem('username') || 'unknown')
 const taskInfo = ref(null)
 const taskId = ref(null)
 const taskRunning = ref(false)
@@ -131,6 +151,15 @@ let pollTimer = null
 let logTimer = null
 
 const canStart = computed(() => form.value.file_id && form.value.output_name && !taskRunning.value)
+
+// Auto-fill output name when source file changes
+watch(() => form.value.file_id, (newFileId) => {
+  if (!newFileId) return
+  const file = fileOptions.value.find(f => f.id === newFileId)
+  if (file && !form.value.output_name) {
+    form.value.output_name = buildDefaultOutputFilename(file.filename, 'cot_filter', username.value)
+  }
+})
 
 const progressPercent = computed(() => {
   if (!taskInfo.value || taskInfo.value.progress_total === 0) return 0
@@ -148,6 +177,7 @@ const statusTagType = computed(() => {
   if (!taskInfo.value) return 'info'
   const s = taskInfo.value.status
   if (s === 'running') return 'primary'
+  if (s === 'paused') return 'warning'
   if (s === 'completed') return 'success'
   if (s === 'failed') return 'danger'
   return 'info'
@@ -155,7 +185,7 @@ const statusTagType = computed(() => {
 
 const statusLabel = computed(() => {
   if (!taskInfo.value) return ''
-  const map = { running: '运行中', completed: '已完成', failed: '失败', pending: '等待中' }
+  const map = { running: '运行中', paused: '已暂停', completed: '已完成', failed: '失败', pending: '等待中' }
   return map[taskInfo.value.status] || taskInfo.value.status
 })
 
@@ -168,6 +198,27 @@ async function fetchFileOptions(showAll) {
   } catch (err) {
     ElMessage.error('获取文件列表失败')
     return []
+  }
+}
+
+async function handleStop() {
+  try {
+    await stopTask(taskId.value)
+    ElMessage.success('已发送停止信号，任务将在当前条处理完后停止')
+    if (taskInfo.value) taskInfo.value.status = 'paused'
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '停止失败')
+  }
+}
+
+async function handleResume() {
+  try {
+    await resumeTask(taskId.value)
+    ElMessage.success('任务已恢复运行')
+    if (taskInfo.value) taskInfo.value.status = 'running'
+    startPolling()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '恢复失败')
   }
 }
 

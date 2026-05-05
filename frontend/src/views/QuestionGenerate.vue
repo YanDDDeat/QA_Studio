@@ -158,6 +158,22 @@
           >
             查看数据
           </el-button>
+          <el-button
+            v-if="taskInfo.status === 'running'"
+            type="danger"
+            size="small"
+            @click="handleStop"
+          >
+            停止
+          </el-button>
+          <el-button
+            v-if="taskInfo.status === 'paused'"
+            type="primary"
+            size="small"
+            @click="handleResume"
+          >
+            恢复
+          </el-button>
         </div>
       </template>
       <div class="progress-area">
@@ -267,7 +283,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -287,7 +303,6 @@ import { useStageResults } from '../composables/useStageResults'
 import FileSelector from '../components/FileSelector.vue'
 import PromptPreview from '../components/PromptPreview.vue'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
-import { useUserStore } from '../composables/useUserStore'
 
 // ----- Form state -----
 const router = useRouter()
@@ -312,11 +327,22 @@ const currentModelOptions = computed(() => {
 })
 const startLoading = ref(false)
 
+const username = computed(() => localStorage.getItem('username') || 'unknown')
+
 // ----- Current file name for results header -----
 const currentFileName = computed(() => {
   const targetId = effectiveFileId.value || form.value.file_id
   const f = fileOptions.value.find(f => f.id === targetId)
   return f ? f.filename : '未选择文件'
+})
+
+// Auto-fill output filename when source file changes
+watch(() => form.value.file_id, (newFileId) => {
+  if (!newFileId) return
+  const file = fileOptions.value.find(f => f.id === newFileId)
+  if (file && !form.value.output_filename) {
+    form.value.output_filename = buildDefaultOutputFilename(file.filename, 'question_generate', username.value)
+  }
 })
 
 // ----- Prompt preview (inline, not drawer) -----
@@ -399,6 +425,7 @@ const statusTagType = computed(() => {
   if (!taskInfo.value) return 'info'
   const s = taskInfo.value.status
   if (s === 'running') return 'primary'
+  if (s === 'paused') return 'warning'
   if (s === 'completed') return 'success'
   if (s === 'failed') return 'danger'
   return 'info'
@@ -408,6 +435,7 @@ const statusLabel = computed(() => {
   if (!taskInfo.value) return ''
   const map = {
     running: '运行中',
+    paused: '已暂停',
     completed: '已完成',
     failed: '失败',
     pending: '等待中',
@@ -458,6 +486,27 @@ function handleLLMConfigChange(configId) {
 }
 
 // ----- Task operations -----
+async function handleStop() {
+  try {
+    await stopTask(taskId.value)
+    ElMessage.success('已发送停止信号，任务将在当前条处理完后停止')
+    if (taskInfo.value) taskInfo.value.status = 'paused'
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '停止失败')
+  }
+}
+
+async function handleResume() {
+  try {
+    await resumeTask(taskId.value)
+    ElMessage.success('任务已恢复运行')
+    if (taskInfo.value) taskInfo.value.status = 'running'
+    startPolling()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '恢复失败')
+  }
+}
+
 async function handleStart() {
   if (!canStart.value) return
 

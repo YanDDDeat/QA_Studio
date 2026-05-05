@@ -13,7 +13,7 @@
             <el-form-item label="选择文件">
               <FileSelector
                 v-model="splitForm.file_id"
-                :fetch-fn="fetchSplitFileOptions" :expected-stage="cot_filter" :disabled="splitTaskRunning"
+                :fetch-fn="fetchSplitFileOptions" expected-stage="cot_filter" :disabled="splitTaskRunning"
               />
             </el-form-item>
 
@@ -50,6 +50,8 @@
           <div v-if="splitTaskInfo" class="progress-area">
             <el-progress :percentage="splitProgressPercent" :status="splitProgressStatus" :stroke-width="16" :text-inside="true" />
             <el-tag :type="splitStatusTagType" size="small" style="margin-top: 8px">{{ splitStatusLabel }}</el-tag>
+            <el-button v-if="splitTaskInfo.status === 'running'" type="danger" size="small" style="margin-top: 8px; margin-left: 8px" @click="handleStopSplit">停止</el-button>
+            <el-button v-if="splitTaskInfo.status === 'paused'" type="primary" size="small" style="margin-top: 8px; margin-left: 8px" @click="handleResumeSplit">恢复</el-button>
           </div>
           <div v-if="splitResult" class="result-stats">
             <div class="stat-item"><span class="stat-label">测试集数量</span><span class="stat-value">{{ splitResult.test_count }}</span></div>
@@ -86,7 +88,7 @@
             <el-form-item label="选择文件">
               <FileSelector
                 v-model="assessForm.file_id"
-                :fetch-fn="fetchAssessFileOptions" :expected-stage="dataset_split" :disabled="assessTaskRunning"
+                :fetch-fn="fetchAssessFileOptions" expected-stage="dataset_split" :disabled="assessTaskRunning"
               />
             </el-form-item>
 
@@ -132,6 +134,8 @@
       <div v-if="assessTaskInfo" class="progress-area" style="margin-top: 16px">
         <el-progress :percentage="assessProgressPercent" :status="assessProgressStatus" :stroke-width="16" :text-inside="true" />
         <el-tag :type="assessStatusTagType" size="small" style="margin-top: 8px">{{ assessStatusLabel }}</el-tag>
+        <el-button v-if="assessTaskInfo.status === 'running'" type="danger" size="small" style="margin-top: 8px; margin-left: 8px" @click="handleStopAssess">停止</el-button>
+        <el-button v-if="assessTaskInfo.status === 'paused'" type="primary" size="small" style="margin-top: 8px; margin-left: 8px" @click="handleResumeAssess">恢复</el-button>
       </div>
       <div v-if="assessResult" class="result-stats" style="margin-top: 12px">
         <div class="stat-item"><span class="stat-label">QA条目数</span><span class="stat-value">{{ assessResult.qa_items }}</span></div>
@@ -157,17 +161,19 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   startDatasetSplit, getDatasetSplitStatus, getDatasetSplitSourceFiles,
   startDatasetAssessment, getDatasetAssessmentStatus, getDatasetAssessmentSourceFiles,
   getTaskLogs, getTaskList, getPromptConfigs, getLLMConfigs,
   downloadManagedFile,
+  stopTask, resumeTask,
 } from '../api'
 import FileSelector from '../components/FileSelector.vue'
 import PromptPreview from '../components/PromptPreview.vue'
 import { usePromptDrawer } from '../composables/usePromptDrawer'
+import { buildDefaultOutputFilename } from '../utils/stageLabels'
 
 // ---- Split state ----
 const splitForm = ref({ file_id: null, test_count: 20, output_name: '', split_strategy: 'difficulty_priority' })
@@ -182,7 +188,18 @@ const splitLogLoading = ref(false)
 let splitPollTimer = null
 let splitLogTimer = null
 
+const username = computed(() => localStorage.getItem('username') || 'unknown')
+
 const canStartSplit = computed(() => splitForm.value.file_id && splitForm.value.output_name && splitForm.value.test_count >= 1 && !splitTaskRunning.value)
+
+// Auto-fill output name when split source file changes
+watch(() => splitForm.value.file_id, (newFileId) => {
+  if (!newFileId) return
+  const file = splitFileOptions.value.find(f => f.id === newFileId)
+  if (file && !splitForm.value.output_name) {
+    splitForm.value.output_name = buildDefaultOutputFilename(file.filename, 'dataset_split', username.value)
+  }
+})
 
 const splitProgressPercent = computed(() => {
   if (!splitTaskInfo.value || splitTaskInfo.value.progress_total === 0) return 0
@@ -198,13 +215,14 @@ const splitStatusTagType = computed(() => {
   if (!splitTaskInfo.value) return 'info'
   const s = splitTaskInfo.value.status
   if (s === 'running') return 'primary'
+  if (s === 'paused') return 'warning'
   if (s === 'completed') return 'success'
   if (s === 'failed') return 'danger'
   return 'info'
 })
 const splitStatusLabel = computed(() => {
   if (!splitTaskInfo.value) return ''
-  const map = { running: '运行中', completed: '已完成', failed: '失败' }
+  const map = { running: '运行中', paused: '已暂停', completed: '已完成', failed: '失败' }
   return map[splitTaskInfo.value.status] || splitTaskInfo.value.status
 })
 
@@ -241,6 +259,15 @@ let assessLogTimer = null
 
 const canStartAssess = computed(() => assessForm.value.file_id && assessForm.value.output_name && assessForm.value.prompt_id && assessForm.value.model && !assessTaskRunning.value)
 
+// Auto-fill output name when assessment source file changes
+watch(() => assessForm.value.file_id, (newFileId) => {
+  if (!newFileId) return
+  const file = assessFileOptions.value.find(f => f.id === newFileId)
+  if (file && !assessForm.value.output_name) {
+    assessForm.value.output_name = buildDefaultOutputFilename(file.filename, 'dataset_assessment', username.value)
+  }
+})
+
 const assessProgressPercent = computed(() => {
   if (!assessTaskInfo.value || assessTaskInfo.value.progress_total === 0) return 0
   return Math.round((assessTaskInfo.value.progress_current / assessTaskInfo.value.progress_total) * 100)
@@ -255,13 +282,14 @@ const assessStatusTagType = computed(() => {
   if (!assessTaskInfo.value) return 'info'
   const s = assessTaskInfo.value.status
   if (s === 'running') return 'primary'
+  if (s === 'paused') return 'warning'
   if (s === 'completed') return 'success'
   if (s === 'failed') return 'danger'
   return 'info'
 })
 const assessStatusLabel = computed(() => {
   if (!assessTaskInfo.value) return ''
-  const map = { running: '运行中', completed: '已完成', failed: '失败' }
+  const map = { running: '运行中', paused: '已暂停', completed: '已完成', failed: '失败' }
   return map[assessTaskInfo.value.status] || assessTaskInfo.value.status
 })
 
@@ -271,6 +299,27 @@ function handleAssessLLMConfigChange(configId) {
 }
 
 // ---- Split functions ----
+async function handleStopSplit() {
+  try {
+    await stopTask(splitTaskId.value)
+    ElMessage.success('已发送停止信号')
+    if (splitTaskInfo.value) splitTaskInfo.value.status = 'paused'
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '停止失败')
+  }
+}
+
+async function handleResumeSplit() {
+  try {
+    await resumeTask(splitTaskId.value)
+    ElMessage.success('任务已恢复运行')
+    if (splitTaskInfo.value) splitTaskInfo.value.status = 'running'
+    startSplitPolling()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '恢复失败')
+  }
+}
+
 async function fetchSplitFileOptions(showAll) {
   try {
     const res = await getDatasetSplitSourceFiles({ show_all: showAll })
@@ -359,6 +408,27 @@ function stopSplitPolling() {
 }
 
 // ---- Assessment functions ----
+async function handleStopAssess() {
+  try {
+    await stopTask(assessTaskId.value)
+    ElMessage.success('已发送停止信号，任务将在当前条处理完后停止')
+    if (assessTaskInfo.value) assessTaskInfo.value.status = 'paused'
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '停止失败')
+  }
+}
+
+async function handleResumeAssess() {
+  try {
+    await resumeTask(assessTaskId.value)
+    ElMessage.success('任务已恢复运行')
+    if (assessTaskInfo.value) assessTaskInfo.value.status = 'running'
+    startAssessPolling()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '恢复失败')
+  }
+}
+
 async function fetchAssessFileOptions(showAll) {
   try {
     const res = await getDatasetAssessmentSourceFiles({ show_all: showAll })
@@ -461,7 +531,7 @@ async function restoreSplitTaskState() {
   try {
     const tasks = await getTaskList({ stage: 'dataset_split' })
     if (!Array.isArray(tasks) || tasks.length === 0) return
-    const runningTask = tasks.find(t => t.status === 'running')
+    const runningTask = tasks.find(t => t.status === 'running' || t.status === 'paused')
     const latestTask = runningTask || tasks[0]
     splitTaskId.value = latestTask.id
     splitTaskRunning.value = latestTask.status === 'running'
@@ -476,7 +546,7 @@ async function restoreAssessTaskState() {
   try {
     const tasks = await getTaskList({ stage: 'dataset_assessment' })
     if (!Array.isArray(tasks) || tasks.length === 0) return
-    const runningTask = tasks.find(t => t.status === 'running')
+    const runningTask = tasks.find(t => t.status === 'running' || t.status === 'paused')
     const latestTask = runningTask || tasks[0]
     assessTaskId.value = latestTask.id
     assessTaskRunning.value = latestTask.status === 'running'

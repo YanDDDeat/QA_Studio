@@ -11,7 +11,7 @@
         <div class="config-form">
           <el-form :model="form" label-width="100px" :disabled="taskRunning">
             <el-form-item label="选择文件">
-              <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" :expected-stage="question_validate" :disabled="taskRunning" />
+              <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" expected-stage="question_validate" :disabled="taskRunning" />
             </el-form-item>
 
             <el-form-item label="选择Prompt">
@@ -94,6 +94,22 @@
             @click="router.push('/data-manage?file_id=' + taskInfo.file_id)"
           >
             查看数据
+          </el-button>
+          <el-button
+            v-if="taskInfo.status === 'running'"
+            type="danger"
+            size="small"
+            @click="handleStop"
+          >
+            停止
+          </el-button>
+          <el-button
+            v-if="taskInfo.status === 'paused'"
+            type="primary"
+            size="small"
+            @click="handleResume"
+          >
+            恢复
           </el-button>
         </div>
       </template>
@@ -215,11 +231,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   startAnswerGenerate,
+  stopTask,
+  resumeTask,
   getStageStatus,
   retryStage,
   getTaskLogs,
@@ -232,6 +250,7 @@ import FileSelector from '../components/FileSelector.vue'
 import PromptPreview from '../components/PromptPreview.vue'
 import { usePromptDrawer } from '../composables/usePromptDrawer'
 import { useStageResults } from '../composables/useStageResults'
+import { buildDefaultOutputFilename } from '../utils/stageLabels'
 
 // ----- Form state -----
 const router = useRouter()
@@ -239,6 +258,7 @@ const form = ref({
   file_id: null,
   prompt_id: null,
   model: '',
+  output_filename: '',
 })
 
 const fileOptions = ref([])
@@ -250,6 +270,17 @@ const currentModelOptions = computed(() => {
   return cfg ? (cfg.models || []) : []
 })
 const startLoading = ref(false)
+
+const username = computed(() => localStorage.getItem('username') || 'unknown')
+
+// Auto-fill output filename when source file changes
+watch(() => form.value.file_id, (newFileId) => {
+  if (!newFileId) return
+  const file = fileOptions.value.find(f => f.id === newFileId)
+  if (file && !form.value.output_filename) {
+    form.value.output_filename = buildDefaultOutputFilename(file.filename, 'answer_generate', username.value)
+  }
+})
 
 // ----- Prompt drawer -----
 const {
@@ -336,6 +367,7 @@ const statusTagType = computed(() => {
   if (!taskInfo.value) return 'info'
   const s = taskInfo.value.status
   if (s === 'running') return 'primary'
+  if (s === 'paused') return 'warning'
   if (s === 'completed') return 'success'
   if (s === 'failed') return 'danger'
   return 'info'
@@ -347,6 +379,7 @@ const statusLabel = computed(() => {
     running: '运行中',
     completed: '已完成',
     failed: '失败',
+    paused: '已暂停',
     pending: '等待中',
   }
   return map[taskInfo.value.status] || taskInfo.value.status
@@ -395,6 +428,27 @@ function handleLLMConfigChange(configId) {
 }
 
 // ----- Task operations -----
+async function handleStop() {
+  try {
+    await stopTask(taskId.value)
+    ElMessage.success('已发送停止信号，任务将在当前条处理完后停止')
+    if (taskInfo.value) taskInfo.value.status = 'paused'
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '停止失败')
+  }
+}
+
+async function handleResume() {
+  try {
+    await resumeTask(taskId.value)
+    ElMessage.success('任务已恢复运行')
+    if (taskInfo.value) taskInfo.value.status = 'running'
+    startPolling()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '恢复失败')
+  }
+}
+
 async function handleStart() {
   if (!canStart.value) return
 
