@@ -89,6 +89,11 @@
               {{ truncateText(row[col.prop]) }}
             </template>
           </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" link size="small" @click.stop="showSourceDetail(row)">查看</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <div v-if="sourceData.length === 0 && !sourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
         <div v-if="sourceTotal > 0" class="results-pagination">
@@ -144,6 +149,22 @@
         </div>
       </div>
     </el-card>
+    <!-- Source detail dialog -->
+    <el-dialog v-model="sourceDetailVisible" title="源文件记录详情" width="700px" :append-to-body="true">
+      <template v-if="sourceDetailRecord">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item v-for="key in sourceMetaFields" :key="key" :label="FIELD_LABELS[key] || key">
+            {{ sourceDetailRecord[key] != null ? sourceDetailRecord[key] : '-' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <div class="detail-text-fields">
+          <div v-for="key in sourceLongTextFields" :key="key" class="text-field-block" v-if="sourceDetailRecord[key]">
+            <div class="field-label">{{ FIELD_LABELS[key] || key }}</div>
+            <div class="field-content" v-html="renderContent(sourceDetailRecord[key])"></div>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -164,6 +185,7 @@ import {
 import FileSelector from '../components/FileSelector.vue'
 import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
+import { FIELD_LABELS } from '../utils/fieldLabels'
 
 const form = ref({
   file_id: null,
@@ -202,8 +224,14 @@ const {
   sourcePage,
   sourceFileName,
   sourceColumns,
+  sourceDetailVisible,
+  sourceDetailRecord,
+  sourceMetaFields,
+  sourceLongTextFields,
   loadSourcePreview,
   handleSourcePageChange,
+  showSourceDetail,
+  renderContent,
 } = useSourcePreview(
   computed(() => form.value.file_id),
   fileOptions
@@ -457,4 +485,11 @@ onUnmounted(() => stopPolling())
 .log-item:last-child { border-bottom: none }
 .log-time { color: #909399; font-size: 12px; white-space: nowrap; min-width: 140px }
 .log-content { color: #303133; font-size: 13px; word-break: break-all }
+
+/* Detail dialog styles */
+.detail-text-fields { margin-top: 16px }
+.text-field-block { margin-bottom: 16px; padding: 12px; background: #f5f7fa; border-radius: 4px }
+.text-field-block .field-label { font-weight: 600; margin-bottom: 8px; color: #303133; font-size: 14px }
+.text-field-block .field-content { font-size: 14px; line-height: 1.6; word-break: break-word; color: #606266 }
+.empty-field { color: #c0c4cc }
 </style>

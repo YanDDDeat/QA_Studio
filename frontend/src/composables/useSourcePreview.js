@@ -9,13 +9,15 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getManagedFileContent } from '../api'
-import { FIELD_LABELS } from '../utils/fieldLabels'
+import { FIELD_LABELS, LONG_TEXT_FIELDS, META_FIELDS } from '../utils/fieldLabels'
 
 export function useSourcePreview(fileIdRef, fileOptionsRef) {
   const sourceData = ref([])
   const sourceTotal = ref(0)
   const sourceLoading = ref(false)
   const sourcePage = ref(1)
+  const sourceDetailVisible = ref(false)
+  const sourceDetailRecord = ref(null)
 
   const sourceFileName = computed(() => {
     const id = fileIdRef.value
@@ -64,6 +66,28 @@ export function useSourcePreview(fileIdRef, fileOptionsRef) {
     loadSourcePreview()
   }
 
+  function showSourceDetail(row) {
+    sourceDetailRecord.value = row
+    sourceDetailVisible.value = true
+  }
+
+  const sourceMetaFields = computed(() => {
+    if (!sourceDetailRecord.value) return []
+    return META_FIELDS.filter(k => sourceDetailRecord.value[k] != null)
+  })
+  const sourceLongTextFields = computed(() => {
+    if (!sourceDetailRecord.value) return []
+    return LONG_TEXT_FIELDS.filter(k => sourceDetailRecord.value[k])
+  })
+
+  function renderContent(text) {
+    if (!text) return '-'
+    if (typeof text !== 'string') {
+      try { text = JSON.stringify(text) } catch { text = String(text) }
+    }
+    return text.replace(/\n/g, '<br>')
+  }
+
   return {
     sourceData,
     sourceTotal,
@@ -71,7 +95,13 @@ export function useSourcePreview(fileIdRef, fileOptionsRef) {
     sourcePage,
     sourceFileName,
     sourceColumns,
+    sourceDetailVisible,
+    sourceDetailRecord,
+    sourceMetaFields,
+    sourceLongTextFields,
     loadSourcePreview,
     handleSourcePageChange,
+    showSourceDetail,
+    renderContent,
   }
 }

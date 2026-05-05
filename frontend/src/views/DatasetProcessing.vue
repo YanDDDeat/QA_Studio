@@ -89,6 +89,11 @@
               {{ truncateText(row[col.prop]) }}
             </template>
           </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" link size="small" @click.stop="showSplitSourceDetail(row)">查看</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <div v-if="splitSourceData.length === 0 && !splitSourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
         <div v-if="splitSourceTotal > 0" class="results-pagination">
@@ -202,6 +207,11 @@
               {{ truncateText(row[col.prop]) }}
             </template>
           </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" link size="small" @click.stop="showAssessSourceDetail(row)">查看</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <div v-if="assessSourceData.length === 0 && !assessSourceLoading" class="results-empty">点击"加载预览"查看源文件内容</div>
         <div v-if="assessSourceTotal > 0" class="results-pagination">
@@ -221,6 +231,39 @@
         </div>
       </div>
     </el-card>
+    <!-- Split source detail dialog -->
+    <el-dialog v-model="splitSourceDetailVisible" title="源文件记录详情" width="700px" :append-to-body="true">
+      <template v-if="splitSourceDetailRecord">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item v-for="key in splitSourceMetaFields" :key="key" :label="FIELD_LABELS[key] || key">
+            {{ splitSourceDetailRecord[key] != null ? splitSourceDetailRecord[key] : '-' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <div class="detail-text-fields">
+          <div v-for="key in splitSourceLongTextFields" :key="key" class="text-field-block" v-if="splitSourceDetailRecord[key]">
+            <div class="field-label">{{ FIELD_LABELS[key] || key }}</div>
+            <div class="field-content" v-html="renderSplitSourceContent(splitSourceDetailRecord[key])"></div>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- Assessment source detail dialog -->
+    <el-dialog v-model="assessSourceDetailVisible" title="源文件记录详情" width="700px" :append-to-body="true">
+      <template v-if="assessSourceDetailRecord">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item v-for="key in assessSourceMetaFields" :key="key" :label="FIELD_LABELS[key] || key">
+            {{ assessSourceDetailRecord[key] != null ? assessSourceDetailRecord[key] : '-' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <div class="detail-text-fields">
+          <div v-for="key in assessSourceLongTextFields" :key="key" class="text-field-block" v-if="assessSourceDetailRecord[key]">
+            <div class="field-label">{{ FIELD_LABELS[key] || key }}</div>
+            <div class="field-content" v-html="renderAssessSourceContent(assessSourceDetailRecord[key])"></div>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -239,6 +282,7 @@ import PromptPreview from '../components/PromptPreview.vue'
 import { usePromptDrawer } from '../composables/usePromptDrawer'
 import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
+import { FIELD_LABELS } from '../utils/fieldLabels'
 
 // ---- Split state ----
 const splitForm = ref({ file_id: null, test_count: 20, output_name: '', split_strategy: 'difficulty_priority' })
@@ -274,8 +318,14 @@ const {
   sourcePage: splitSourcePage,
   sourceFileName: splitSourceFileName,
   sourceColumns: splitSourceColumns,
+  sourceDetailVisible: splitSourceDetailVisible,
+  sourceDetailRecord: splitSourceDetailRecord,
+  sourceMetaFields: splitSourceMetaFields,
+  sourceLongTextFields: splitSourceLongTextFields,
   loadSourcePreview: loadSplitSourcePreview,
   handleSourcePageChange: handleSplitSourcePageChange,
+  showSourceDetail: showSplitSourceDetail,
+  renderContent: renderSplitSourceContent,
 } = useSourcePreview(
   computed(() => splitForm.value.file_id),
   splitFileOptions
@@ -356,8 +406,14 @@ const {
   sourcePage: assessSourcePage,
   sourceFileName: assessSourceFileName,
   sourceColumns: assessSourceColumns,
+  sourceDetailVisible: assessSourceDetailVisible,
+  sourceDetailRecord: assessSourceDetailRecord,
+  sourceMetaFields: assessSourceMetaFields,
+  sourceLongTextFields: assessSourceLongTextFields,
   loadSourcePreview: loadAssessSourcePreview,
   handleSourcePageChange: handleAssessSourcePageChange,
+  showSourceDetail: showAssessSourceDetail,
+  renderContent: renderAssessSourceContent,
 } = useSourcePreview(
   computed(() => assessForm.value.file_id),
   assessFileOptions
@@ -703,4 +759,11 @@ onUnmounted(() => { stopSplitPolling(); stopAssessPolling() })
 .results-count { color: #909399; font-size: 13px }
 .results-empty { text-align: center; color: #909399; padding: 20px }
 .results-pagination { display: flex; justify-content: flex-end; margin-top: 12px }
+
+/* Detail dialog styles */
+.detail-text-fields { margin-top: 16px }
+.text-field-block { margin-bottom: 16px; padding: 12px; background: #f5f7fa; border-radius: 4px }
+.text-field-block .field-label { font-weight: 600; margin-bottom: 8px; color: #303133; font-size: 14px }
+.text-field-block .field-content { font-size: 14px; line-height: 1.6; word-break: break-word; color: #606266 }
+.empty-field { color: #c0c4cc }
 </style>
