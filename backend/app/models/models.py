@@ -133,6 +133,7 @@ class Prompt(Base):
     content = Column(Text, nullable=False)
     model = Column(String(128), nullable=True)
     llm_config_id = Column(Integer, ForeignKey("llm_configs.id"), nullable=True, index=True)
+    is_default = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="prompts")

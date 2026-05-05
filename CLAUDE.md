@@ -38,6 +38,7 @@ QA 数据生成评估平台，Vue 3 + FastAPI + MySQL，6 阶段 Pipeline。
 - 前端：Vue 3 + Element Plus，页面在 `frontend/src/views/`，组件在 `frontend/src/components/`
 - 数据库变更必须有迁移脚本，放在 `scripts/` 目录
 - 新接口必须遵循现有路由命名模式（`/api/<resource>`）
+- **git 提交备注必须用中文**（如 `修复数据集切分自引用bug`，不要用英文）
 
 ## 文件结构约定
 

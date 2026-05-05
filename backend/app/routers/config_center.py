@@ -29,12 +29,13 @@ class PromptConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
+    user_id: Optional[int] = None
     stage: str
     version: int
     content: str
     model: Optional[str] = None
     llm_config_id: Optional[int] = None
+    is_default: bool = False
     created_at: Optional[datetime] = None
 
 
@@ -91,8 +92,10 @@ async def list_prompt_configs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List prompt configurations for the current user. Optionally filter by stage."""
-    query = db.query(Prompt).filter(Prompt.user_id == current_user.id)
+    """List prompt configurations for the current user + default prompts. Optionally filter by stage."""
+    query = db.query(Prompt).filter(
+        (Prompt.user_id == current_user.id) | (Prompt.is_default == True)
+    )
     if stage:
         if stage not in [s.value for s in StageEnum]:
             raise HTTPException(
@@ -100,7 +103,7 @@ async def list_prompt_configs(
                 detail=f"Invalid stage: {stage}",
             )
         query = query.filter(Prompt.stage == StageEnum(stage))
-    prompts = query.order_by(Prompt.stage, Prompt.version.desc()).all()
+    prompts = query.order_by(Prompt.stage, Prompt.is_default.desc(), Prompt.version.desc()).all()
     return prompts
 
 
@@ -149,10 +152,10 @@ async def delete_prompt_config(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete a prompt version by ID (must belong to current user)."""
+    """Delete a prompt version by ID (must belong to current user, default prompts cannot be deleted)."""
     prompt = (
         db.query(Prompt)
-        .filter(Prompt.id == prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == prompt_id)
         .first()
     )
     if prompt is None:
@@ -160,6 +163,19 @@ async def delete_prompt_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Prompt not found",
         )
+
+    if prompt.is_default:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="默认Prompt不能删除",
+        )
+
+    if prompt.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="只能删除自己的Prompt",
+        )
+
     db.delete(prompt)
     db.commit()
 

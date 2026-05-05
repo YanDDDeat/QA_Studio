@@ -56,7 +56,7 @@
           <div v-if="splitResult" class="result-stats">
             <div class="stat-item"><span class="stat-label">测试集数量</span><span class="stat-value">{{ splitResult.test_count }}</span></div>
             <div class="stat-item"><span class="stat-label">训练集数量</span><span class="stat-value">{{ splitResult.train_count }}</span></div>
-            <div class="stat-item"><span class="stat-label">跳过非QA</span><span class="stat-value">{{ splitResult.skipped_non_qa }}</span></div>
+            <div class="stat-item"><span class="stat-label">非QA归入训练集</span><span class="stat-value">{{ splitResult.skipped_non_qa }}</span></div>
             <div class="stat-item"><span class="stat-label">测试集题型分布</span><span class="stat-value">{{ splitResult.test_task_counts }}</span></div>
             <div class="stat-item"><span class="stat-label">训练集题型分布</span><span class="stat-value">{{ splitResult.train_task_counts }}</span></div>
           </div>
@@ -101,7 +101,7 @@
             <el-form-item label="选择Prompt">
               <el-select v-model="assessForm.prompt_id" placeholder="选择评分标准生成Prompt" style="width: 100%" filterable>
                 <el-option v-for="p in assessPromptOptions" :key="p.id" :label="'v' + p.version" :value="p.id">
-                  <span>v{{ p.version }}</span>
+                  <span>v{{ p.version }}{{ p.is_default ? '(默认)' : '' }}</span>
                   <span style="float: right; color: #909399; font-size: 13px">{{ p.content.substring(0, 50) }}{{ p.content.length > 50 ? '...' : '' }}</span>
                 </el-option>
               </el-select>
@@ -127,20 +127,23 @@
           </el-form>
         </div>
 
-        <div class="config-result">
-          <div v-if="assessTaskInfo" class="progress-area">
-            <el-progress :percentage="assessProgressPercent" :status="assessProgressStatus" :stroke-width="16" :text-inside="true" />
-            <el-tag :type="assessStatusTagType" size="small" style="margin-top: 8px">{{ assessStatusLabel }}</el-tag>
-          </div>
-          <div v-if="assessResult" class="result-stats">
-            <div class="stat-item"><span class="stat-label">QA条目数</span><span class="stat-value">{{ assessResult.qa_items }}</span></div>
-            <div class="stat-item"><span class="stat-label">简答题数量</span><span class="stat-value">{{ assessResult.short_answer_items }}</span></div>
-            <div class="stat-item"><span class="stat-label">已生成评分</span><span class="stat-value">{{ assessResult.generated }}</span></div>
-            <div class="stat-item"><span class="stat-label">空评分数</span><span class="stat-value">{{ assessResult.empty_assessment }}</span></div>
-          </div>
-          <div v-if="!assessTaskInfo && !assessResult" class="result-empty">生成完成后将在此显示统计结果</div>
+        <div class="config-preview">
+          <PromptPreview :version="assessDrawerVersion" :content="assessDrawerContent" :time-label="formatTime(assessDrawerCreatedAt)" :content-changed="assessDrawerContentChanged" :next-version="assessNextVersion" :save-loading="assessSaveLoading" @update:content="assessDrawerContent = $event" @save="assessSaveAsNewVersion" />
         </div>
       </div>
+
+      <!-- Progress + result area (below config) -->
+      <div v-if="assessTaskInfo" class="progress-area" style="margin-top: 16px">
+        <el-progress :percentage="assessProgressPercent" :status="assessProgressStatus" :stroke-width="16" :text-inside="true" />
+        <el-tag :type="assessStatusTagType" size="small" style="margin-top: 8px">{{ assessStatusLabel }}</el-tag>
+      </div>
+      <div v-if="assessResult" class="result-stats" style="margin-top: 12px">
+        <div class="stat-item"><span class="stat-label">QA条目数</span><span class="stat-value">{{ assessResult.qa_items }}</span></div>
+        <div class="stat-item"><span class="stat-label">简答题数量</span><span class="stat-value">{{ assessResult.short_answer_items }}</span></div>
+        <div class="stat-item"><span class="stat-label">已生成评分</span><span class="stat-value">{{ assessResult.generated }}</span></div>
+        <div class="stat-item"><span class="stat-label">空评分数</span><span class="stat-value">{{ assessResult.empty_assessment }}</span></div>
+      </div>
+      <div v-if="!assessTaskInfo && !assessResult" class="result-empty" style="margin-top: 12px">生成完成后将在此显示统计结果</div>
     </el-card>
 
     <!-- Assessment logs -->
@@ -167,6 +170,8 @@ import {
   downloadManagedFile,
 } from '../api'
 import FileSelector from '../components/FileSelector.vue'
+import PromptPreview from '../components/PromptPreview.vue'
+import { usePromptDrawer } from '../composables/usePromptDrawer'
 
 // ---- Split state ----
 const splitForm = ref({ file_id: null, test_count: 20, output_name: '', split_strategy: 'difficulty_priority' })
@@ -221,6 +226,17 @@ const assessStartLoading = ref(false)
 const assessTaskInfo = ref(null)
 const assessTaskId = ref(null)
 const assessTaskRunning = ref(false)
+
+// ----- Assess Prompt drawer -----
+const {
+  drawerVersion: assessDrawerVersion,
+  drawerContent: assessDrawerContent,
+  drawerCreatedAt: assessDrawerCreatedAt,
+  drawerContentChanged: assessDrawerContentChanged,
+  nextVersion: assessNextVersion,
+  saveLoading: assessSaveLoading,
+  saveAsNewVersion: assessSaveAsNewVersion,
+} = usePromptDrawer('dataset_assessment', assessPromptOptions, assessForm, selectedAssessLLMConfigId)
 const assessResult = ref(null)
 const assessLogs = ref([])
 const assessLogLoading = ref(false)
@@ -305,8 +321,8 @@ async function loadSplitResult() {
     const logItems = Array.isArray(logsRes) ? logsRes : []
     const resultLog = logItems.find(l => l.log_content && l.log_content.includes('切分完成'))
     if (resultLog) {
-      // Parse: "切分完成: 测试集 X 条, 训练集 Y 条, 跳过非QA Z 条 | 测试集题型: 单选=3, ... | 训练集题型: ..."
-      const mainMatch = resultLog.log_content.match(/测试集 (\d+) 条, 训练集 (\d+) 条, 跳过非QA (\d+) 条/)
+      // Parse: "切分完成: 测试集 X 条, 训练集 Y 条, 非QA自动归入训练集 Z 条 | 测试集题型: ... | 训练集题型: ..."
+      const mainMatch = resultLog.log_content.match(/测试集 (\d+) 条, 训练集 (\d+) 条, 非QA自动归入训练集 (\d+) 条/)
       const testTaskMatch = resultLog.log_content.match(/测试集题型: ([^|]+)/)
       const trainTaskMatch = resultLog.log_content.match(/训练集题型: ([^\n|]+)/)
       if (mainMatch) {
@@ -483,6 +499,7 @@ onUnmounted(() => { stopSplitPolling(); stopAssessPolling() })
 .card-title { font-size: 16px; font-weight: 600 }
 .config-layout { display: flex; gap: 24px }
 .config-form { flex: 3; min-width: 0 }
+.config-preview { flex: 2; min-width: 0 }
 .config-result { flex: 2; min-width: 0 }
 
 .progress-area { padding: 8px 0 }

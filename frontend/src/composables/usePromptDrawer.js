@@ -48,6 +48,22 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
   // Watch promptOptions changes (initial load, refresh after save)
   watch(promptOptionsRef, () => {
     if (promptOptionsRef.value.length > 0) {
+      // Auto-select default prompt if user hasn't selected one yet
+      if (!formRef.value?.prompt_id) {
+        const defaultPrompt = promptOptionsRef.value.find(p => p.is_default)
+        if (defaultPrompt) {
+          formRef.value.prompt_id = defaultPrompt.id
+          // Also inherit the default prompt's LLM config and model
+          if (defaultPrompt.llm_config_id && !selectedLLMConfigIdRef.value) {
+            selectedLLMConfigIdRef.value = defaultPrompt.llm_config_id
+          }
+          if (defaultPrompt.model && !formRef.value?.model) {
+            formRef.value.model = defaultPrompt.model
+          }
+        } else {
+          formRef.value.prompt_id = promptOptionsRef.value[0].id
+        }
+      }
       syncDrawerContent()
     }
   })

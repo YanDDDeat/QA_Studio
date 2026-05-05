@@ -236,14 +236,15 @@ def split_items(
     test_count: int,
     split_strategy: str = "difficulty_priority",
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
+    # Categorize records: QA candidates for strategic selection, others auto to train
     qa_records: List[Dict[str, Any]] = []
-    skipped_non_qa = 0
+    other_items: List[Dict[str, Any]] = []
 
     for index, item in enumerate(items):
         if is_qa_item(item):
             qa_records.append(build_record(index, item))
         else:
-            skipped_non_qa += 1
+            other_items.append(item)
 
     if not qa_records:
         raise ValueError("输入文件中没有有效的QA记录")
@@ -255,7 +256,11 @@ def split_items(
 
     test_items = [{**record["item"], "corpus_cate": 2} for record in test_records]
     train_items = [{**record["item"], "corpus_cate": 0} for record in train_records]
-    return test_items, train_items, skipped_non_qa
+    # Non-QA records all go to train
+    train_items.extend([{**item, "corpus_cate": 0} for item in other_items if isinstance(item, dict)])
+    train_items.extend([item for item in other_items if not isinstance(item, dict)])
+
+    return test_items, train_items, len(other_items)
 
 
 def run_dataset_split(

@@ -72,7 +72,7 @@
                   :label="`v${p.version}`"
                   :value="p.id"
                 >
-                  <span>v{{ p.version }}</span>
+                  <span>v{{ p.version }}{{ p.is_default ? '(默认)' : '' }}</span>
                   <span style="float: right; color: #909399; font-size: 13px">
                     {{ p.content.substring(0, 50) }}{{ p.content.length > 50 ? '...' : '' }}
                   </span>

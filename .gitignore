@@ -38,3 +38,10 @@ logs/
 
 # Claude
 .claude/
+
+# Local data / DB
+backend/uploads/
+backend/qa_studio_test.db
+backend/server.log
+test_body.json
+test_output_*.txt

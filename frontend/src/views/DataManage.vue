@@ -7,7 +7,22 @@
     <el-card class="file-list-card">
       <div class="file-list-header">
         <span class="file-count">共 {{ fileTotal }} 个文件</span>
-        <el-button type="primary" size="small" @click="fetchFiles">刷新</el-button>
+        <div class="file-list-controls">
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索文件名"
+            clearable
+            size="small"
+            style="width: 180px"
+            @input="onSearchChange"
+          />
+          <el-select v-model="sortMode" size="small" style="width: 140px" @change="fetchFiles">
+            <el-option label="最新优先" value="time_desc" />
+            <el-option label="最早优先" value="time_asc" />
+            <el-option label="文件名排序" value="name_asc" />
+          </el-select>
+          <el-button type="primary" size="small" @click="fetchFiles">刷新</el-button>
+        </div>
       </div>
 
       <el-table
@@ -74,6 +89,40 @@
           </span>
         </div>
         <el-button type="success" size="small" @click="handleDownload(selectedFile)">下载文件</el-button>
+      </div>
+
+      <!-- Record filter controls -->
+      <div v-if="filterOptions" class="record-filter-bar">
+        <el-select
+          v-model="filterTaskType"
+          placeholder="题型"
+          clearable
+          size="small"
+          style="width: 120px"
+          @change="loadPreview"
+        >
+          <el-option v-for="t in filterOptions.task_types" :key="t" :label="t" :value="t" />
+        </el-select>
+        <el-select
+          v-model="filterDomain"
+          placeholder="领域"
+          clearable
+          size="small"
+          style="width: 120px"
+          @change="loadPreview"
+        >
+          <el-option v-for="d in filterOptions.domains" :key="d" :label="d" :value="d" />
+        </el-select>
+        <el-select
+          v-model="filterDifficulty"
+          placeholder="难度"
+          clearable
+          size="small"
+          style="width: 120px"
+          @change="loadPreview"
+        >
+          <el-option v-for="d in filterOptions.difficulties" :key="d" :label="d" :value="d" />
+        </el-select>
       </div>
 
       <div v-loading="previewLoading" class="preview-content">
@@ -193,6 +242,8 @@ const files = ref([])
 const fileTotal = ref(0)
 const filePage = ref(1)
 const route = useRoute()
+const searchKeyword = ref('')
+const sortMode = ref('time_desc')
 
 // Computed: current page slice (backend now paginated, so files already is the page slice)
 const pagedFiles = computed(() => files.value)
@@ -202,6 +253,10 @@ const selectedFile = ref(null)
 const previewLoading = ref(false)
 const previewData = ref(null)
 const previewPage = ref(1)
+const filterOptions = ref(null)
+const filterTaskType = ref(null)
+const filterDomain = ref(null)
+const filterDifficulty = ref(null)
 
 // Record detail state (inline, no dialog)
 const selectedRecord = ref(null)
@@ -239,10 +294,25 @@ function formatTime(dt) {
   })
 }
 
+let searchTimer = null
+function onSearchChange() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    filePage.value = 1
+    fetchFiles()
+  }, 300)
+}
+
 async function fetchFiles() {
   loading.value = true
   try {
-    const res = await getManagedFiles({ page: filePage.value, page_size: 10 })
+    const params = {
+      page: filePage.value,
+      page_size: 10,
+      sort: sortMode.value,
+    }
+    if (searchKeyword.value) params.search = searchKeyword.value
+    const res = await getManagedFiles(params)
     files.value = res.items || []
     fileTotal.value = res.total || 0
   } catch (err) {
@@ -259,6 +329,10 @@ function handleFileSelect(row) {
     selectedFile.value = row
     previewPage.value = 1
     selectedRecord.value = null
+    // Reset filters when selecting a new file
+    filterTaskType.value = null
+    filterDomain.value = null
+    filterDifficulty.value = null
     loadPreview()
   }
 }
@@ -267,11 +341,16 @@ async function loadPreview() {
   previewLoading.value = true
   previewData.value = null
   try {
-    const res = await getManagedFileContent(selectedFile.value.id, {
+    const params = {
       page: previewPage.value,
       page_size: 10,
-    })
+    }
+    if (filterTaskType.value) params.task_type = filterTaskType.value
+    if (filterDomain.value) params.domain = filterDomain.value
+    if (filterDifficulty.value) params.difficulty = filterDifficulty.value
+    const res = await getManagedFileContent(selectedFile.value.id, params)
     previewData.value = res
+    filterOptions.value = res.filter_options || null
   } catch (err) {
     const detail = err.response?.data?.detail || '预览文件内容失败'
     ElMessage.error(detail)
@@ -439,6 +518,11 @@ async function autoSelectFile(targetId) {
   align-items: center;
   margin-bottom: 12px;
 }
+.file-list-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .file-count {
   color: #909399;
   font-size: 13px;
@@ -466,6 +550,12 @@ async function autoSelectFile(targetId) {
   color: #909399;
   font-size: 13px;
   margin-left: 12px;
+}
+.record-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 .preview-pagination {
   display: flex;

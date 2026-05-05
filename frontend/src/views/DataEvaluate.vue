@@ -17,7 +17,7 @@
             <el-form-item label="选择Prompt">
               <el-select v-model="form.prompt_id" placeholder="请选择数据评估阶段的Prompt" style="width: 100%" filterable>
                 <el-option v-for="p in promptOptions" :key="p.id" :label="`v${p.version}`" :value="p.id">
-                  <span>v{{ p.version }}</span>
+                  <span>v{{ p.version }}{{ p.is_default ? '(默认)' : '' }}</span>
                   <span style="float: right; color: #909399; font-size: 13px">
                     {{ p.content.substring(0, 50) }}{{ p.content.length > 50 ? '...' : '' }}
                   </span>

@@ -265,13 +265,14 @@
                   >
                     <el-card shadow="hover" class="version-card">
                       <div class="version-header">
-                        <el-tag :type="ver.version === latestVersion ? 'primary' : 'info'" size="small">
+                        <el-tag :type="ver.is_default ? 'warning' : (ver.version === latestVersion ? 'primary' : 'info')" size="small">
                           v{{ ver.version }}
                         </el-tag>
+                        <el-tag v-if="ver.is_default" type="warning" size="small">默认</el-tag>
                         <span v-if="ver.model" class="version-model">{{ ver.model }}</span>
                         <span v-if="ver.llm_config_name" class="version-llm">{{ ver.llm_config_name }}</span>
                         <el-button
-                          v-if="ver.version !== latestVersion"
+                          v-if="ver.version !== latestVersion && !ver.is_default"
                           type="text"
                           size="small"
                           @click="handleViewVersion(ver)"
@@ -279,6 +280,7 @@
                           查看内容
                         </el-button>
                         <el-button
+                          v-if="!ver.is_default"
                           type="text"
                           size="small"
                           style="color: #f56c6c"

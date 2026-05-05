@@ -42,15 +42,19 @@ def _serialize_file(f: File) -> dict:
 
 @router.get("")
 async def list_managed_files(
+    search: str = None,
+    sort: str = "time_desc",
     source_stage: str = None,
     page: int = 1,
     page_size: int = 10,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all files for the current user, including uploaded and auto-generated files."""
+    """List all files for the current user, with search and sort."""
     query = db.query(File).filter(File.user_id == current_user.id)
 
+    if search:
+        query = query.filter(File.filename.like(f"%{search}%"))
     if source_stage:
         if source_stage not in [s.value for s in StageEnum]:
             raise HTTPException(
@@ -59,9 +63,17 @@ async def list_managed_files(
             )
         query = query.filter(File.source_stage == StageEnum(source_stage))
 
+    # Sorting
+    if sort == "time_asc":
+        query = query.order_by(File.created_at.asc())
+    elif sort == "name_asc":
+        query = query.order_by(File.filename.asc())
+    else:  # time_desc (default)
+        query = query.order_by(File.id.desc())
+
     total = query.count()
     offset = (page - 1) * page_size
-    files = query.order_by(File.id.desc()).offset(offset).limit(page_size).all()
+    files = query.offset(offset).limit(page_size).all()
     return {
         "total": total,
         "page": page,
@@ -93,12 +105,16 @@ async def get_managed_file(
 @router.get("/content/{file_id}")
 async def get_file_content(
     file_id: int,
+    task_type: str = None,
+    domain: str = None,
+    difficulty: str = None,
     page: int = 1,
     page_size: int = 10,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get JSON content preview for a file by ID (must belong to current user)."""
+    """Get JSON content preview for a file by ID (must belong to current user).
+    Supports filtering by task_type, domain, difficulty."""
     file_obj = (
         db.query(File)
         .filter(File.id == file_id, File.user_id == current_user.id)
@@ -132,12 +148,38 @@ async def get_file_content(
         )
 
     if isinstance(content, list):
-        total = len(content)
-        offset = (page - 1) * page_size
-        preview = content[offset:offset + page_size]
+        all_records = content
     else:
-        total = 1
-        preview = [content] if page == 1 else []
+        all_records = [content]
+
+    # Build filter options from all records (before filtering)
+    filter_options = {
+        "task_types": sorted(set(
+            str(r.get("task_type", "")) for r in all_records
+            if isinstance(r, dict) and r.get("task_type")
+        )),
+        "domains": sorted(set(
+            str(r.get("domain", "")) for r in all_records
+            if isinstance(r, dict) and r.get("domain")
+        )),
+        "difficulties": sorted(set(
+            str(r.get("difficulty", "")) for r in all_records
+            if isinstance(r, dict) and r.get("difficulty")
+        )),
+    }
+
+    # Apply filters
+    filtered = all_records
+    if task_type:
+        filtered = [r for r in filtered if isinstance(r, dict) and str(r.get("task_type", "")) == task_type]
+    if domain:
+        filtered = [r for r in filtered if isinstance(r, dict) and str(r.get("domain", "")) == domain]
+    if difficulty:
+        filtered = [r for r in filtered if isinstance(r, dict) and str(r.get("difficulty", "")) == difficulty]
+
+    total = len(filtered)
+    offset = (page - 1) * page_size
+    preview = filtered[offset:offset + page_size]
 
     return {
         "id": file_obj.id,
@@ -147,6 +189,7 @@ async def get_file_content(
         "page": page,
         "page_size": page_size,
         "preview": preview,
+        "filter_options": filter_options,
     }
 
 
