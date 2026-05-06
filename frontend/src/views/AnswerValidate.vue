@@ -42,6 +42,14 @@
               </el-select>
             </el-form-item>
 
+            <el-form-item label="输出文件名">
+              <el-input
+                v-model="form.output_filename"
+                placeholder="请输入输出文件名（系统自动追加用户名和时间戳后缀）"
+                clearable
+              />
+            </el-form-item>
+
             <el-form-item label="选择模型">
               <el-select v-model="form.model" placeholder="请选择LLM模型" style="width: 100%" :disabled="!selectedLLMConfigId">
                 <el-option
@@ -543,6 +551,7 @@ async function handleStart() {
       prompt_id: form.value.prompt_id,
       model: form.value.model,
       llm_config_id: selectedLLMConfigId.value || null,
+      output_filename: form.value.output_filename || undefined,
     }
     const res = await startAnswerValidate(payload)
     taskId.value = res.task_id
