@@ -209,6 +209,10 @@ export function downloadManagedFile(id) {
   return api.get(`/file-manage/download/${id}`, { responseType: 'blob' })
 }
 
+export function mergeAndDownloadFiles(fileIds) {
+  return api.post('/file-manage/merge-download', { file_ids: fileIds }, { responseType: 'blob' })
+}
+
 // LLM Config API
 export function getLLMConfigs() {
   return api.get('/llm-configs')

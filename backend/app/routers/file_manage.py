@@ -1,11 +1,13 @@
 """File Manage router - Combined file management for the workspace"""
 
 import json
-from typing import List
+from typing import List, Optional
 import os
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File as FastAPIFile, status
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -472,4 +474,81 @@ async def download_managed_file(
         path=file_obj.file_path,
         filename=file_obj.filename,
         media_type=media_type,
+    )
+
+
+class MergeDownloadRequest(BaseModel):
+    file_ids: List[int]
+
+
+@router.post("/merge-download")
+async def merge_and_download(
+    body: MergeDownloadRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Merge multiple JSON files into one and return as download."""
+    file_ids = body.file_ids
+    if len(file_ids) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请至少选择2个文件进行合并",
+        )
+
+    # Validate all files belong to user
+    files = (
+        db.query(File)
+        .filter(File.id.in_(file_ids), File.user_id == current_user.id)
+        .all()
+    )
+    if len(files) != len(file_ids):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="部分文件不存在或无权访问",
+        )
+
+    # Merge JSON contents
+    merged = []
+    skipped = []
+    for f in files:
+        if not os.path.exists(f.file_path):
+            skipped.append(f"{f.filename} (文件不存在)")
+            continue
+        if f.file_type != "json":
+            skipped.append(f"{f.filename} (非JSON文件)")
+            continue
+        try:
+            with open(f.file_path, "r", encoding="utf-8") as fh:
+                content = json.load(fh)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            skipped.append(f"{f.filename} (JSON解析失败)")
+            continue
+
+        if isinstance(content, list):
+            merged.extend(content)
+        elif isinstance(content, dict):
+            merged.append(content)
+        else:
+            skipped.append(f"{f.filename} (内容不是数组或对象)")
+
+    if not merged:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="没有可合并的内容。请检查选择的文件是否为有效JSON数组",
+        )
+
+    # Write temporary merged file
+    temp_dir = os.path.join("uploads", str(current_user.id))
+    os.makedirs(temp_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    merged_filename = f"merged_{len(file_ids)}files_{timestamp}.json"
+    merged_path = os.path.join(temp_dir, merged_filename)
+
+    with open(merged_path, "w", encoding="utf-8") as fh:
+        json.dump(merged, fh, ensure_ascii=False, indent=2)
+
+    return FileResponse(
+        path=merged_path,
+        filename=merged_filename,
+        media_type="application/json",
     )

@@ -78,11 +78,19 @@
                 :value="s.value"
               />
             </el-select>
+            <el-button
+              type="success"
+              :disabled="selectedFiles.length < 2"
+              @click="handleMergeDownload"
+            >
+              合并下载 ({{ selectedFiles.length }})
+            </el-button>
           </div>
         </div>
       </template>
 
-      <el-table :data="paginatedFiles" v-loading="loading" stripe>
+      <el-table :data="paginatedFiles" v-loading="loading" stripe @selection-change="handleSelectionChange" ref="fileTableRef">
+        <el-table-column type="selection" width="45" />
         <el-table-column prop="filename" label="文件名" min-width="180" />
         <el-table-column prop="file_type" label="类型" width="80" />
         <el-table-column prop="source_stage" label="来源阶段" width="140">
@@ -185,6 +193,7 @@ import {
   uploadManagedFile,
   deleteManagedFile,
   downloadManagedFile,
+  mergeAndDownloadFiles,
 } from '../api'
 
 // Stage options for filter and display
@@ -209,6 +218,8 @@ const allFiles = ref([])
 const filterStage = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
+const selectedFiles = ref([])
+const fileTableRef = ref(null)
 
 // Preview state
 const previewVisible = ref(false)
@@ -333,6 +344,35 @@ async function handleDownload(row) {
     window.URL.revokeObjectURL(url)
   } catch (err) {
     const detail = err.response?.data?.detail || '下载失败'
+    ElMessage.error(detail)
+  }
+}
+
+// Multi-select
+function handleSelectionChange(selection) {
+  selectedFiles.value = selection
+}
+
+// Merge download
+async function handleMergeDownload() {
+  if (selectedFiles.value.length < 2) {
+    ElMessage.warning('请至少选择2个文件')
+    return
+  }
+  const ids = selectedFiles.value.map(f => f.id)
+  try {
+    const blob = await mergeAndDownloadFiles(ids)
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `merged_${ids.length}files.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    ElMessage.success(`已合并${ids.length}个文件，下载中`)
+  } catch (err) {
+    const detail = err.response?.data?.detail || '合并下载失败'
     ElMessage.error(detail)
   }
 }
