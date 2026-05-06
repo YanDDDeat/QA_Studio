@@ -17,8 +17,8 @@
   - [x] FileSelector 加 expectedStage 过滤 + 「显示全部」开关，默认仅显示上一阶段
 
 ## 小需求
-- [ ] 分支3 `feature/file-merge-download`：详见 `docs/requirements/需求_JSON文件合并导出.md`
-  - [ ] 文件管理页多选JSON文件合并下载
+- [x] 分支3 `feature/file-merge-download`：详见 `docs/requirements/需求_JSON文件合并导出.md`
+  - [x] 文件管理页多选JSON文件合并下载
 
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
