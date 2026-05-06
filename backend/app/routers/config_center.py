@@ -176,6 +176,16 @@ async def delete_prompt_config(
             detail="只能删除自己的Prompt",
         )
 
+    # Check if any tasks reference this prompt
+    from app.models.models import Task
+    ref_tasks = db.query(Task).filter(Task.prompt_id == prompt_id).all()
+    if ref_tasks:
+        task_ids = [t.id for t in ref_tasks]
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"该提示词已被 {len(ref_tasks)} 个任务引用（任务ID: {task_ids}），请先删除或修改相关任务后再删除提示词",
+        )
+
     db.delete(prompt)
     db.commit()
 
