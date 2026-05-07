@@ -342,6 +342,27 @@ const startLoading = ref(false)
 
 const username = computed(() => localStorage.getItem('username') || 'unknown')
 
+// ----- Fetch options -----
+async function fetchPromptOptions() {
+  try {
+    const res = await getPromptConfigs({ stage: 'knowledge_generate' })
+    promptOptions.value = Array.isArray(res) ? res : []
+  } catch (err) {
+    ElMessage.error('获取提示词列表失败')
+    promptOptions.value = []
+  }
+}
+
+async function fetchLLMConfigs() {
+  try {
+    const res = await getLLMConfigs()
+    llmConfigs.value = Array.isArray(res) ? res : []
+  } catch (err) {
+    ElMessage.error('获取LLM配置失败')
+    llmConfigs.value = []
+  }
+}
+
 // Auto-fill output filename when source file changes
 watch(() => form.value.file_id, (newFileId) => {
   if (!newFileId) return
