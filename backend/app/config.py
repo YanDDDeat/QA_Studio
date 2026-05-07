@@ -11,7 +11,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _ENV_FILE = _PROJECT_ROOT / ".env"
 
 
-# LLM provider presets — API keys removed, must be set via .env
+# LLM provider presets (base_url & models only; API keys read from .env)
 LLM_PROVIDERS = {
     "dashscope": {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -37,8 +37,12 @@ class Settings(BaseSettings):
     # LLM provider selection: "dashscope" or "swust"
     LLM_PROVIDER: str = "dashscope"
 
-    # LLM overrides — provider preset api_key removed, must set LLM_API_KEY in .env
-    LLM_API_KEY: str
+    # Per-provider API keys (required, must be set in .env)
+    DASHSCOPE_API_KEY: str
+    SWUST_API_KEY: str
+
+    # LLM overrides (optional, override selected provider's preset)
+    LLM_API_KEY: str = ""     # 通用覆盖：填了则优先于 per-provider key
     LLM_BASE_URL: str = ""
     LLM_MODEL: str = ""
 
@@ -58,7 +62,14 @@ class Settings(BaseSettings):
 
     @property
     def effective_llm_api_key(self) -> str:
-        return self.LLM_API_KEY
+        # LLM_API_KEY override > per-provider key
+        if self.LLM_API_KEY:
+            return self.LLM_API_KEY
+        if self.LLM_PROVIDER == "dashscope":
+            return self.DASHSCOPE_API_KEY
+        if self.LLM_PROVIDER == "swust":
+            return self.SWUST_API_KEY
+        return ""
 
     @property
     def effective_llm_model(self) -> str:
