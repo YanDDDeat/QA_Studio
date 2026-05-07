@@ -2,9 +2,49 @@
 
 import asyncio
 import bcrypt
+import logging
+from logging.handlers import TimedRotatingFileHandler
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# ---------------------------------------------------------------------------
+# Logging configuration: file + console
+# ---------------------------------------------------------------------------
+LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+_log_format = logging.Formatter(
+    "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+# File handler: daily rotation, keep 30 days
+_file_handler = TimedRotatingFileHandler(
+    os.path.join(LOG_DIR, "qa_studio.log"),
+    when="midnight",
+    backupCount=30,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(_log_format)
+_file_handler.setLevel(logging.INFO)
+
+# Console handler
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_log_format)
+_console_handler.setLevel(logging.INFO)
+
+# Apply to the qa_studio root logger and all children
+_root_logger = logging.getLogger("qa_studio")
+_root_logger.setLevel(logging.INFO)
+_root_logger.addHandler(_file_handler)
+_root_logger.addHandler(_console_handler)
+
+# Also route uvicorn access logs to file
+for _uv_name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+    _uv_logger = logging.getLogger(_uv_name)
+    _uv_logger.addHandler(_file_handler)
 
 from app.routers import (
     auth,
