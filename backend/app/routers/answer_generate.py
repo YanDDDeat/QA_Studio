@@ -155,6 +155,7 @@ async def _run_answer_generate_task(
                     temperature=0.3,
                     base_url_override=base_url_override,
                     api_key_override=api_key_override,
+                    username=username,
                 )
             except LLMCallError as e:
                 logger.error(

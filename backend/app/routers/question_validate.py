@@ -159,6 +159,7 @@ async def _run_question_validate_task(
                     temperature=0.3,
                     base_url_override=base_url_override,
                     api_key_override=api_key_override,
+                    username=username,
                 )
             except LLMCallError as e:
                 logger.error(

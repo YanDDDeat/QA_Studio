@@ -55,6 +55,7 @@ async def call_llm(
     base_url_override: str = None,
     api_key_override: str = None,
     model_override: str = None,
+    username: str = None,
 ) -> str:
     """Call an OpenAI-compatible LLM endpoint and return the text response.
 
@@ -109,9 +110,10 @@ async def call_llm(
     }
 
     start_time = time.time()
+    user_tag = f"user={username}" if username else ""
     logger.info(
-        "LLM call start | model=%s | url=%s | prompt_len=%d",
-        model, url, len(prompt),
+        "LLM call start | %smodel=%s | url=%s | prompt_len=%d",
+        user_tag + " | " if user_tag else "", model, url, len(prompt),
     )
 
     try:
@@ -129,8 +131,8 @@ async def call_llm(
                 detail = response.text[:500]
 
             logger.error(
-                "LLM call failed | status=%d | elapsed=%.1fs | detail=%s",
-                response.status_code, elapsed, detail,
+                "LLM call failed | %sstatus=%d | elapsed=%.1fs | detail=%s",
+                user_tag + " | " if user_tag else "", response.status_code, elapsed, detail,
             )
             raise LLMCallError(
                 f"LLM API returned status {response.status_code}",
@@ -143,8 +145,8 @@ async def call_llm(
 
         if not content:
             logger.warning(
-                "LLM call returned empty content | model=%s | elapsed=%.1fs",
-                model, elapsed,
+                "LLM call returned empty content | %smodel=%s | elapsed=%.1fs",
+                user_tag + " | " if user_tag else "", model, elapsed,
             )
             raise LLMCallError(
                 "LLM returned empty response",
@@ -152,14 +154,15 @@ async def call_llm(
             )
 
         logger.info(
-            "LLM call success | model=%s | elapsed=%.1fs | response_len=%d",
-            model, elapsed, len(content),
+            "LLM call success | %smodel=%s | elapsed=%.1fs | response_len=%d",
+            user_tag + " | " if user_tag else "", model, elapsed, len(content),
         )
         return content
 
     except httpx.TimeoutException:
         elapsed = time.time() - start_time
-        logger.error("LLM call timeout | elapsed=%.1fs | model=%s", elapsed, model)
+        logger.error("LLM call timeout | %selapsed=%.1fs | model=%s",
+                     user_tag + " | " if user_tag else "", elapsed, model)
         raise LLMCallError(
             f"LLM call timed out after {timeout}s",
             status_code=0,
@@ -167,8 +170,8 @@ async def call_llm(
     except httpx.ConnectError as exc:
         elapsed = time.time() - start_time
         logger.error(
-            "LLM connection error | elapsed=%.1fs | model=%s | error=%s",
-            elapsed, model, str(exc),
+            "LLM connection error | %selapsed=%.1fs | model=%s | error=%s",
+            user_tag + " | " if user_tag else "", elapsed, model, str(exc),
         )
         raise LLMCallError(
             f"Cannot connect to LLM endpoint: {exc}",
@@ -180,8 +183,8 @@ async def call_llm(
     except Exception as exc:
         elapsed = time.time() - start_time
         logger.error(
-            "LLM call unexpected error | elapsed=%.1fs | model=%s | error=%s\n%s",
-            elapsed, model, str(exc), traceback.format_exc(),
+            "LLM call unexpected error | %selapsed=%.1fs | model=%s | error=%s\n%s",
+            user_tag + " | " if user_tag else "", elapsed, model, str(exc), traceback.format_exc(),
         )
         raise LLMCallError(
             f"Unexpected LLM call error: {exc}",
@@ -267,6 +270,7 @@ async def call_llm_json(
     base_url_override: str = None,
     api_key_override: str = None,
     model_override: str = None,
+    username: str = None,
 ) -> dict:
     """Call LLM and parse the response as JSON.
 
@@ -304,5 +308,6 @@ async def call_llm_json(
         base_url_override=base_url_override,
         api_key_override=api_key_override,
         model_override=model_override,
+        username=username,
     )
     return parse_llm_json(raw)
