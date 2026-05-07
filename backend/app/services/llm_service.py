@@ -201,7 +201,8 @@ def parse_llm_json(text: str) -> dict:
     """Parse a JSON object from LLM response text.
 
     LLMs sometimes wrap JSON in markdown code blocks or add extra text.
-    This helper extracts the JSON content reliably.
+    Some models (e.g. qwen3) also include a <thinking>...</thinking> block
+    for reasoning — this is stripped before parsing.
 
     Args:
         text: Raw LLM response text.
@@ -212,6 +213,9 @@ def parse_llm_json(text: str) -> dict:
     Raises:
         LLMCallError: If no valid JSON can be extracted.
     """
+    # Strip <thinking>...</thinking> blocks (qwen3 reasoning output)
+    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL).strip()
+
     # Strategy 1: Try direct parse first
     try:
         return json.loads(text)

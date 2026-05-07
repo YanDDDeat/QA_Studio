@@ -20,8 +20,8 @@ LLM_PROVIDERS = {
     },
     "swust": {
         "base_url": "http://10.10.15.6:30080/api/v1",
-        "default_model": "问题生成",
-        "models": ["问题生成", "知识体系生成", "问题校验", "答案生成", "答案校验", "数据评估"],
+        "default_model": "qwen3-235b",
+        "models": ["qwen3-235b"],
     },
 }
 
