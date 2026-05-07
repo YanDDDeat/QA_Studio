@@ -9,7 +9,7 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getManagedFileContent } from '../api'
-import { FIELD_LABELS, LONG_TEXT_FIELDS, META_FIELDS } from '../utils/fieldLabels'
+import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
 export function useSourcePreview(fileIdRef, fileOptionsRef) {
   const sourceData = ref([])
@@ -30,12 +30,16 @@ export function useSourcePreview(fileIdRef, fileOptionsRef) {
     if (sourceData.value.length === 0) return []
     const first = sourceData.value[0]
     if (!first || typeof first !== 'object') return []
-    return Object.keys(first).map(key => ({
-      prop: key,
-      label: FIELD_LABELS[key] || key,
-      width: key === 'id' ? 55 : undefined,
-      minWidth: 100,
-    }))
+    return Object.keys(first).map(key => {
+      const val = first[key]
+      const isLong = typeof val === 'string' && val.length > 200
+      return {
+        prop: key,
+        label: key,
+        width: key === 'id' ? 55 : undefined,
+        minWidth: isLong ? 80 : 100,
+      }
+    })
   })
 
   async function loadSourcePreview() {
@@ -73,11 +77,15 @@ export function useSourcePreview(fileIdRef, fileOptionsRef) {
 
   const sourceMetaFields = computed(() => {
     if (!sourceDetailRecord.value) return []
-    return META_FIELDS.filter(k => sourceDetailRecord.value[k] != null)
+    return categorizeFields(sourceDetailRecord.value).meta
   })
   const sourceLongTextFields = computed(() => {
     if (!sourceDetailRecord.value) return []
-    return LONG_TEXT_FIELDS.filter(k => sourceDetailRecord.value[k])
+    return categorizeFields(sourceDetailRecord.value).longText
+  })
+  const sourceDetailFlatRecord = computed(() => {
+    if (!sourceDetailRecord.value) return null
+    return categorizeFields(sourceDetailRecord.value).flat
   })
 
   function renderContent(text) {
@@ -99,6 +107,7 @@ export function useSourcePreview(fileIdRef, fileOptionsRef) {
     sourceDetailRecord,
     sourceMetaFields,
     sourceLongTextFields,
+    sourceDetailFlatRecord,
     loadSourcePreview,
     handleSourcePageChange,
     showSourceDetail,

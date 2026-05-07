@@ -99,7 +99,6 @@ async def call_llm(
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
         "enable_thinking": False,
     }
 

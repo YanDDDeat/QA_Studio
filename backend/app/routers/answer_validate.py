@@ -33,7 +33,7 @@ from app.models.models import (
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import (
-    create_output_file, clone_datasets_to_new_file,
+    create_output_file, clone_single_dataset,
     write_datasets_to_file, create_fail_file, serialize_dataset_to_dict,
 )
 from app.services.validation_service import validate_file_fields
@@ -66,6 +66,7 @@ class TaskStatusResponse(BaseModel):
     pass_count: int = 0
     fail_count: int = 0
     file_id: Optional[int] = None
+    filename: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +97,6 @@ async def _run_answer_validate_task(
             .filter(
                 Dataset.file_id == file_id,
                 Dataset.user_id == user_id,
-                Dataset.current_stage == StageEnum.ANSWER_GENERATE,
             )
             .order_by(Dataset.id.asc())
             .all()
@@ -109,13 +109,20 @@ async def _run_answer_validate_task(
             task.progress_total = total
             db.commit()
 
-        if total == 0:
-            _add_task_log(db, task_id, "文件中没有待处理的answer_generate阶段记录")
-            task = db.query(Task).filter(Task.id == task_id).first()
-            if task:
-                task.status = TaskStatusEnum.COMPLETED
-                db.commit()
-            return
+        # 提前创建输出文件，点击开始后前端立即显示输出文件名
+        source_file = db.query(File).filter(File.id == file_id).first()
+        output_file = create_output_file(
+            db=db,
+            user_id=user_id,
+            source_file=source_file,
+            stage=StageEnum.ANSWER_VALIDATE,
+            output_filename=output_filename,
+            username=username,
+        )
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.file_id = output_file.id
+            db.commit()
 
         pass_ids: list[int] = []
         fail_records: list[dict] = []
@@ -174,8 +181,20 @@ async def _run_answer_validate_task(
             reason = llm_result.get("reason", "")
             validation_result_upper = str(validation_result).upper().strip()
 
+            # 提取 step_count 和 extra_fields
+            _AV_KNOWN_KEYS = {"validation_result", "reason", "step_count"}
+            step_count = str(llm_result.get("step_count", "")) if llm_result.get("step_count") else None
+            extra = {k: v for k, v in llm_result.items() if k not in _AV_KNOWN_KEYS} if isinstance(llm_result, dict) else None
+
             if validation_result_upper == "PASS":
-                pass_ids.append(dataset.id)
+                # 立即克隆到输出文件，让前端能实时加载结果
+                cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.ANSWER_VALIDATE)
+                cloned_ds.passed = "是"
+                if step_count:
+                    cloned_ds.step_count = step_count
+                if extra:
+                    cloned_ds.extra_fields = extra
+                db.commit()
                 pass_count += 1
                 _add_task_log(db, task_id, f"记录 {idx + 1}: 校验通过")
             else:
@@ -183,41 +202,21 @@ async def _run_answer_validate_task(
                 fail_dict["passed"] = "否"
                 fail_dict["validation_result"] = validation_result
                 fail_dict["reason"] = reason
+                if step_count:
+                    fail_dict["step_count"] = step_count
+                if extra:
+                    fail_dict["extra_fields"] = extra
                 fail_records.append(fail_dict)
                 fail_count += 1
                 _add_task_log(db, task_id, f"记录 {idx + 1}: 校验失败 - {reason[:100]}")
 
             _update_progress(db, task_id, idx + 1)
 
-        source_file = db.query(File).filter(File.id == file_id).first()
-        output_file = None
-
-        if pass_ids:
-            output_file = create_output_file(
-                db=db,
-                user_id=user_id,
-                source_file=source_file,
-                stage=StageEnum.ANSWER_VALIDATE,
-                output_filename=output_filename,
-                username=username,
-            )
-            cloned = clone_datasets_to_new_file(
-                db=db,
-                source_file_id=file_id,
-                new_file_id=output_file.id,
-                user_id=user_id,
-                source_stage_filter=StageEnum.ANSWER_GENERATE,
-                new_stage=StageEnum.ANSWER_VALIDATE,
-                dataset_ids=pass_ids,
-            )
-            for record in cloned:
-                record.passed = "是"
-            db.commit()
-
+        if pass_count > 0:
             write_datasets_to_file(db=db, file_id=output_file.id)
-            _add_task_log(db, task_id, f"通过文件已生成: {output_file.filename}")
+            _add_task_log(db, task_id, f"通过文件已生成: {output_file.filename} (共{pass_count}条)")
         else:
-            _add_task_log(db, task_id, "本次任务无通过记录，不创建主输出文件")
+            _add_task_log(db, task_id, "本次任务无通过记录，输出文件无数据")
 
         if fail_records and source_file:
             fail_file = create_fail_file(
@@ -235,8 +234,7 @@ async def _run_answer_validate_task(
         task = db.query(Task).filter(Task.id == task_id).first()
         if task:
             task.status = TaskStatusEnum.COMPLETED
-            if output_file:
-                task.file_id = output_file.id
+            task.file_id = output_file.id
             db.commit()
 
         logger.info(
@@ -250,6 +248,7 @@ async def _run_answer_validate_task(
             task_id, str(e), traceback.format_exc(),
         )
         try:
+            db.rollback()
             task = db.query(Task).filter(Task.id == task_id).first()
             if task:
                 task.status = TaskStatusEnum.FAILED
@@ -314,22 +313,6 @@ async def start_answer_validate(
             detail=validation_msg,
         )
 
-    # Validate file has qualifying datasets (at answer_generate stage)
-    qualifying_count = (
-        db.query(Dataset)
-        .filter(
-            Dataset.file_id == data.file_id,
-            Dataset.user_id == current_user.id,
-            Dataset.current_stage == StageEnum.ANSWER_GENERATE,
-        )
-        .count()
-    )
-    if qualifying_count == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="该文件中没有answer_generate阶段的记录",
-        )
-
     # Validate prompt exists and belongs to user (or is global)
     prompt_obj = (
         db.query(Prompt)
@@ -385,7 +368,7 @@ async def start_answer_validate(
         prompt_id=data.prompt_id,
         status=TaskStatusEnum.RUNNING,
         progress_current=0,
-        progress_total=qualifying_count,
+        progress_total=0,
     )
     db.add(task)
     db.commit()
@@ -462,6 +445,7 @@ async def get_answer_validate_status(
         pass_count=pass_count,
         fail_count=fail_count,
         file_id=task.file_id,
+        filename=db.query(File).filter(File.id == task.file_id).first().filename if task.file_id else None,
     )
 
 

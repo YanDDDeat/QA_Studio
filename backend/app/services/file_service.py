@@ -17,6 +17,7 @@ Key design:
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Iterable, List, Optional
 
@@ -57,6 +58,7 @@ _SERIALIZABLE_FIELDS = [
     "input",
     "output",
     "cot",
+    "step_count",
     "corpus_cate",
     "scene",
     "Assessment",
@@ -73,6 +75,7 @@ _SERIALIZABLE_FIELDS = [
     "score",
     "passed",
     "current_stage",
+    "extra_fields",
 ]
 
 # Dataset columns that get cloned when creating a new-stage copy of a record.
@@ -83,6 +86,7 @@ _CLONABLE_FIELDS = [
     "input",
     "output",
     "cot",
+    "step_count",
     "corpus_cate",
     "scene",
     "Assessment",
@@ -98,7 +102,22 @@ _CLONABLE_FIELDS = [
     "terminology",
     "score",
     "passed",
+    "extra_fields",
 ]
+
+
+def clone_single_dataset(db: Session, source: Dataset, new_file_id: int, new_stage: StageEnum) -> Dataset:
+    """Clone one Dataset to a new file. Flushes but does NOT commit."""
+    kwargs = {field: getattr(source, field) for field in _CLONABLE_FIELDS}
+    new_record = Dataset(
+        user_id=source.user_id,
+        file_id=new_file_id,
+        current_stage=new_stage,
+        **kwargs,
+    )
+    db.add(new_record)
+    db.flush()
+    return new_record
 
 
 def serialize_dataset_to_dict(dataset: Dataset) -> dict:
@@ -107,6 +126,7 @@ def serialize_dataset_to_dict(dataset: Dataset) -> dict:
     Only includes fields that have been populated (not None).
     Special handling:
     - knowledge (JSON column): serialize as-is (dict/list), never double-encoded
+    - extra_fields (JSON column): serialize as-is, never double-encoded
     - score (Float): serialize as number, not string
     - current_stage (Enum): serialize as its string value
     - Assessment (default ""): included even when empty
@@ -119,7 +139,7 @@ def serialize_dataset_to_dict(dataset: Dataset) -> dict:
         if value is None:
             continue
 
-        if field == "knowledge":
+        if field in ("knowledge", "extra_fields"):
             if isinstance(value, str):
                 try:
                     value = json.loads(value)
@@ -151,16 +171,57 @@ def _build_output_filename(
     username_or_id: str,
     name_suffix: Optional[str] = None,
 ) -> str:
-    """构造输出文件名：{base}_{阶段中文}_{username}_{时间}{_suffix?}.json"""
+    """构造输出文件名：{base}_{阶段中文}_{username}_{时间}{_suffix?}.json
+
+    如果 source_filename 已包含之前阶段的后缀（如 _问题生成_user_20260507123456），
+    先剥离这些后缀再重新追加，避免文件名越来越长。
+    """
     if output_filename:
         base = output_filename
     else:
-        base = os.path.splitext(source_filename or "output")[0]
+        raw_base = os.path.splitext(source_filename or "output")[0]
+        # Strip previously appended stage suffixes to avoid cascading length
+        # Pattern: _阶段中文_username_timestamp or _阶段英文_username_timestamp
+        base = _strip_stage_suffix(raw_base)
 
     stage_label = STAGE_LABELS.get(stage, stage.value if isinstance(stage, StageEnum) else str(stage))
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     suffix_part = f"_{name_suffix}" if name_suffix else ""
     return f"{base}_{stage_label}_{username_or_id}_{timestamp}{suffix_part}.json"
+
+
+def _strip_stage_suffix(filename_base: str) -> str:
+    """Remove previously appended stage suffix from a filename base.
+
+    Previous stages appended patterns like:
+      _问题生成_username_20260507123456
+      _知识体系_username_20260507123456
+      _COT过滤_username_20260507123456
+      etc.
+
+    This strips all such suffixes, keeping only the original user-provided base name.
+    """
+    labels = list(STAGE_LABELS.values()) + [s.value for s in StageEnum]
+    # Build regex: match _{label}_{anything}_{14-digit-timestamp} at end
+    for label in labels:
+        # Pattern: _label_*_<14 digits> at end of string
+        pattern = re.compile(rf'_{re.escape(label)}_[^_]+_\d{{14}}$')
+        match = pattern.search(filename_base)
+        if match:
+            return filename_base[:match.start()]
+    # Also handle cases where the suffix might have been stripped once already
+    # but there's still a trailing _username_timestamp pattern
+    pattern = re.compile(r'_[^_]+_\d{14}$')
+    # Only strip if the username part looks short enough (not the original base)
+    # We check by seeing if remaining base after stripping is still meaningful (>3 chars)
+    match = pattern.search(filename_base)
+    if match and len(filename_base[:match.start()]) > 3:
+        # Verify it's not just a coincidence — check if there's a stage label before
+        preceding = filename_base[:match.start()]
+        for label in labels:
+            if preceding.endswith(f'_{label}'):
+                return preceding[:preceding.rfind(f'_{label}')]
+    return filename_base
 
 
 def _resolve_unique_path(upload_dir: str, filename: str) -> tuple[str, str]:
@@ -221,6 +282,44 @@ def write_datasets_to_file(db: Session, file_id: int) -> str:
     )
 
     return file_path
+
+
+def repair_file_on_disk(db: Session, file_id: int) -> bool:
+    """如果 File 下有 Dataset 但磁盘文件为空，自动补写。
+
+    Returns:
+        True if repair was performed, False otherwise.
+    """
+    file_obj = db.query(File).filter(File.id == file_id).first()
+    if file_obj is None:
+        return False
+
+    # 检查磁盘文件是否存在且为空
+    if not os.path.exists(file_obj.file_path):
+        logger.info("repair: file_id=%d 磁盘文件不存在，无需修复", file_id)
+        return False
+
+    file_size = os.path.getsize(file_obj.file_path)
+    # 只有空数组或极小文件才修复（正常文件都会有内容）
+    if file_size > 5:
+        return False
+
+    datasets_count = (
+        db.query(Dataset)
+        .filter(Dataset.file_id == file_id)
+        .count()
+    )
+    if datasets_count == 0:
+        return False
+
+    logger.info("repair: file_id=%d 磁盘文件为空但DB有%d条Dataset，补写文件",
+                file_id, datasets_count)
+    try:
+        write_datasets_to_file(db, file_id)
+        return True
+    except Exception as e:
+        logger.error("repair: file_id=%d 修复失败: %s", file_id, str(e))
+        return False
 
 
 # ---------------------------------------------------------------------------

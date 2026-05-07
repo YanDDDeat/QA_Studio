@@ -235,14 +235,14 @@
     <el-dialog v-model="splitSourceDetailVisible" title="源文件记录详情" width="700px" :append-to-body="true">
       <template v-if="splitSourceDetailRecord">
         <el-descriptions :column="2" border size="small">
-          <el-descriptions-item v-for="key in splitSourceMetaFields" :key="key" :label="FIELD_LABELS[key] || key">
-            {{ splitSourceDetailRecord[key] != null ? splitSourceDetailRecord[key] : '-' }}
+          <el-descriptions-item v-for="key in splitSourceMetaFields" :key="key" :label="key">
+            {{ splitSourceDetailFlatRecord[key] != null ? splitSourceDetailFlatRecord[key] : '-' }}
           </el-descriptions-item>
         </el-descriptions>
         <div class="detail-text-fields">
-          <div v-for="key in splitSourceLongTextFields" :key="key" class="text-field-block" v-if="splitSourceDetailRecord[key]">
-            <div class="field-label">{{ FIELD_LABELS[key] || key }}</div>
-            <div class="field-content" v-html="renderSplitSourceContent(splitSourceDetailRecord[key])"></div>
+          <div v-for="key in splitSourceLongTextFields" :key="key" class="text-field-block">
+            <div class="field-label">{{ key }}</div>
+            <div class="field-content" v-html="renderSplitSourceContent(splitSourceDetailFlatRecord[key])"></div>
           </div>
         </div>
       </template>
@@ -252,14 +252,14 @@
     <el-dialog v-model="assessSourceDetailVisible" title="源文件记录详情" width="700px" :append-to-body="true">
       <template v-if="assessSourceDetailRecord">
         <el-descriptions :column="2" border size="small">
-          <el-descriptions-item v-for="key in assessSourceMetaFields" :key="key" :label="FIELD_LABELS[key] || key">
-            {{ assessSourceDetailRecord[key] != null ? assessSourceDetailRecord[key] : '-' }}
+          <el-descriptions-item v-for="key in assessSourceMetaFields" :key="key" :label="key">
+            {{ assessSourceDetailFlatRecord[key] != null ? assessSourceDetailFlatRecord[key] : '-' }}
           </el-descriptions-item>
         </el-descriptions>
         <div class="detail-text-fields">
-          <div v-for="key in assessSourceLongTextFields" :key="key" class="text-field-block" v-if="assessSourceDetailRecord[key]">
-            <div class="field-label">{{ FIELD_LABELS[key] || key }}</div>
-            <div class="field-content" v-html="renderAssessSourceContent(assessSourceDetailRecord[key])"></div>
+          <div v-for="key in assessSourceLongTextFields" :key="key" class="text-field-block">
+            <div class="field-label">{{ key }}</div>
+            <div class="field-content" v-html="renderAssessSourceContent(assessSourceDetailFlatRecord[key])"></div>
           </div>
         </div>
       </template>
@@ -282,7 +282,6 @@ import PromptPreview from '../components/PromptPreview.vue'
 import { usePromptDrawer } from '../composables/usePromptDrawer'
 import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
-import { FIELD_LABELS } from '../utils/fieldLabels'
 
 // ---- Split state ----
 const splitForm = ref({ file_id: null, test_count: 20, output_name: '', split_strategy: 'difficulty_priority' })
@@ -320,6 +319,7 @@ const {
   sourceColumns: splitSourceColumns,
   sourceDetailVisible: splitSourceDetailVisible,
   sourceDetailRecord: splitSourceDetailRecord,
+  sourceDetailFlatRecord: splitSourceDetailFlatRecord,
   sourceMetaFields: splitSourceMetaFields,
   sourceLongTextFields: splitSourceLongTextFields,
   loadSourcePreview: loadSplitSourcePreview,
@@ -408,6 +408,7 @@ const {
   sourceColumns: assessSourceColumns,
   sourceDetailVisible: assessSourceDetailVisible,
   sourceDetailRecord: assessSourceDetailRecord,
+  sourceDetailFlatRecord: assessSourceDetailFlatRecord,
   sourceMetaFields: assessSourceMetaFields,
   sourceLongTextFields: assessSourceLongTextFields,
   loadSourcePreview: loadAssessSourcePreview,

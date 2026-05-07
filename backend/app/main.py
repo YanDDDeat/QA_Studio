@@ -30,7 +30,6 @@ from app.routers import (
 from app.database import engine, Base, SessionLocal
 from app.models import User, Dataset, File, Prompt, Task, TaskLog, LLMConfig
 from app.config import settings
-from app.services.llm_service import call_llm, LLMCallError
 
 app = FastAPI(
     title="QA Studio",
@@ -68,27 +67,6 @@ async def startup_event():
         db.rollback()
     finally:
         db.close()
-
-    # LLM connection test
-    print(f"[Startup] LLM provider: {settings.LLM_PROVIDER}")
-    print(f"[Startup] LLM base_url: {settings.effective_llm_base_url}")
-    print(f"[Startup] LLM model: {settings.effective_llm_model}")
-    print("[Startup] Testing LLM connection...")
-    try:
-        result = await call_llm(
-            prompt="你好，请用一句话回复确认连接正常。",
-            model=settings.effective_llm_model,
-            api_key=settings.effective_llm_api_key,
-            base_url=settings.effective_llm_base_url,
-            temperature=0.1,
-            max_tokens=64,
-            timeout=30.0,
-        )
-        print(f"[Startup] LLM test OK — response: {result.strip()[:100]}")
-    except LLMCallError as e:
-        print(f"[Startup] LLM test FAILED: {e}")
-    except Exception as e:
-        print(f"[Startup] LLM test FAILED (unexpected): {e}")
 
 # CORS middleware
 app.add_middleware(

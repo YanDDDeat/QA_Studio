@@ -14,7 +14,6 @@ Key design:
 """
 
 import asyncio
-import json
 import logging
 import traceback
 
@@ -32,7 +31,8 @@ from app.models.models import (
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import (
-    create_output_file, clone_datasets_to_new_file, write_datasets_to_file,
+    create_output_file, clone_single_dataset, write_datasets_to_file,
+    repair_file_on_disk,
 )
 from app.services.validation_service import validate_file_fields
 
@@ -63,6 +63,7 @@ class TaskStatusResponse(BaseModel):
     progress_total: int
     generated_count: int = 0
     file_id: Optional[int] = None
+    filename: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +94,6 @@ async def _run_knowledge_generate_task(
             .filter(
                 Dataset.file_id == file_id,
                 Dataset.user_id == user_id,
-                Dataset.current_stage == StageEnum.QUESTION_GENERATE,
             )
             .order_by(Dataset.id.asc())
             .all()
@@ -106,17 +106,23 @@ async def _run_knowledge_generate_task(
             task.progress_total = total
             db.commit()
 
-        if total == 0:
-            _add_task_log(db, task_id, "文件中没有待处理的question_generate阶段记录")
-            task = db.query(Task).filter(Task.id == task_id).first()
-            if task:
-                task.status = TaskStatusEnum.COMPLETED
-                db.commit()
-            return
+        # 提前创建输出文件，点击开始后前端立即显示输出文件名
+        source_file = db.query(File).filter(File.id == file_id).first()
+        output_file = create_output_file(
+            db=db,
+            user_id=user_id,
+            source_file=source_file,
+            stage=StageEnum.KNOWLEDGE_GENERATE,
+            output_filename=output_filename,
+            username=username,
+        )
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.file_id = output_file.id
+            db.commit()
+        _add_task_log(db, task_id, f"输出文件已创建: {output_file.filename} (file_id={output_file.id})")
 
-        # 阶段产物缓存：dataset.id -> {"knowledge": dict, "scene": str}
-        results_by_id: dict[int, dict] = {}
-        successful_ids: list[int] = []
+        success_count = 0
 
         for idx in range(start_index, total):
             dataset = source_datasets[idx]
@@ -162,12 +168,19 @@ async def _run_knowledge_generate_task(
                 return
 
             if isinstance(llm_result, dict):
-                knowledge_str = json.dumps(llm_result, ensure_ascii=False)
-                results_by_id[dataset.id] = {
-                    "knowledge": llm_result,
-                    "scene": knowledge_str,
-                }
-                successful_ids.append(dataset.id)
+                knowledge_value = llm_result.get("knowledge", "")
+                # 立即克隆到输出文件，让前端能实时加载结果
+                cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.KNOWLEDGE_GENERATE)
+                cloned_ds.domain = llm_result.get("domain", "")
+                cloned_ds.scene = knowledge_value
+                cloned_ds.knowledge = knowledge_value
+                # 提取 step_count 和 extra_fields
+                _KG_KNOWN_KEYS = {"knowledge", "domain", "step_count"}
+                cloned_ds.step_count = str(llm_result.get("step_count", "")) if llm_result.get("step_count") else None
+                extra = {k: v for k, v in llm_result.items() if k not in _KG_KNOWN_KEYS}
+                cloned_ds.extra_fields = extra if extra else None
+                db.commit()
+                success_count += 1
 
                 _add_task_log(
                     db, task_id,
@@ -185,46 +198,19 @@ async def _run_knowledge_generate_task(
 
             _update_progress(db, task_id, idx + 1)
 
-        if not successful_ids:
-            _add_task_log(db, task_id, "本次任务未生成任何有效记录，未创建输出文件")
+        if success_count == 0:
+            _add_task_log(db, task_id, "本次任务未生成任何有效记录")
             task = db.query(Task).filter(Task.id == task_id).first()
             if task:
                 task.status = TaskStatusEnum.COMPLETED
                 db.commit()
             return
 
-        source_file = db.query(File).filter(File.id == file_id).first()
-        output_file = create_output_file(
-            db=db,
-            user_id=user_id,
-            source_file=source_file,
-            stage=StageEnum.KNOWLEDGE_GENERATE,
-            output_filename=output_filename,
-            username=username,
-        )
-
-        cloned = clone_datasets_to_new_file(
-            db=db,
-            source_file_id=file_id,
-            new_file_id=output_file.id,
-            user_id=user_id,
-            source_stage_filter=StageEnum.QUESTION_GENERATE,
-            new_stage=StageEnum.KNOWLEDGE_GENERATE,
-            dataset_ids=successful_ids,
-        )
-
-        # 通过原 dataset.id 映射回 LLM 结果
-        # 克隆顺序与源 successful_ids 同序（按 id 升序），故按 successful_ids 对齐
-        sorted_source_ids = sorted(successful_ids)
-        for new_ds, src_id in zip(cloned, sorted_source_ids):
-            payload = results_by_id.get(src_id)
-            if payload:
-                new_ds.knowledge = payload["knowledge"]
-                new_ds.scene = payload["scene"]
-        db.commit()
-
         write_datasets_to_file(db=db, file_id=output_file.id)
         _add_task_log(db, task_id, f"输出文件已生成: {output_file.filename} (file_id={output_file.id})")
+
+        # 兜底：如果任务中断导致文件未写，修复磁盘文件
+        repair_file_on_disk(db, output_file.id)
 
         task = db.query(Task).filter(Task.id == task_id).first()
         if task:
@@ -234,7 +220,7 @@ async def _run_knowledge_generate_task(
 
         logger.info(
             "Task %d completed: processed %d records, generated %d knowledge entries -> file_id=%d",
-            task_id, total, len(successful_ids), output_file.id,
+            task_id, total, success_count, output_file.id,
         )
 
     except Exception as e:
@@ -243,6 +229,7 @@ async def _run_knowledge_generate_task(
             task_id, str(e), traceback.format_exc(),
         )
         try:
+            db.rollback()
             task = db.query(Task).filter(Task.id == task_id).first()
             if task:
                 task.status = TaskStatusEnum.FAILED
@@ -307,22 +294,6 @@ async def start_knowledge_generate(
             detail=validation_msg,
         )
 
-    # Validate file has qualifying datasets (at question_generate stage)
-    qualifying_count = (
-        db.query(Dataset)
-        .filter(
-            Dataset.file_id == data.file_id,
-            Dataset.user_id == current_user.id,
-            Dataset.current_stage == StageEnum.QUESTION_GENERATE,
-        )
-        .count()
-    )
-    if qualifying_count == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="该文件中没有question_generate阶段的记录",
-        )
-
     # Validate prompt exists and belongs to user (or is global)
     prompt_obj = (
         db.query(Prompt)
@@ -378,7 +349,7 @@ async def start_knowledge_generate(
         prompt_id=data.prompt_id,
         status=TaskStatusEnum.RUNNING,
         progress_current=0,
-        progress_total=qualifying_count,
+        progress_total=0,
     )
     db.add(task)
     db.commit()
@@ -443,6 +414,7 @@ async def get_knowledge_generate_status(
         progress_total=task.progress_total or 0,
         generated_count=generated_count,
         file_id=task.file_id,
+        filename=db.query(File).filter(File.id == task.file_id).first().filename if task.file_id else None,
     )
 
 

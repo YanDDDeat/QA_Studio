@@ -14,9 +14,25 @@ export function getStageLabel(stageKey) {
   return STAGE_LABELS[stageKey] || stageKey
 }
 
-/** Build default output filename: {srcBase}_{stageLabel}_{username}_{timestamp} */
+/** Strip previously appended stage suffixes to avoid cascading filename length.
+ *  Pattern: _阶段中文_username_14-digit-timestamp at end of base name.
+ */
+function stripStageSuffix(base) {
+  const labels = Object.values(STAGE_LABELS)
+  for (const label of labels) {
+    const pattern = new RegExp(`_${label}_[^_]+_\\d{14}$`)
+    const match = base.match(pattern)
+    if (match) return base.slice(0, match.index)
+  }
+  return base
+}
+
+/** Build default output filename: {srcBase}_{stageLabel}_{username}_{timestamp}
+ *  Strips any previous stage suffix from the source filename first.
+ */
 export function buildDefaultOutputFilename(srcFilename, stageKey, username) {
-  const base = srcFilename ? srcFilename.replace(/\.json$/i, '') : 'output'
+  const rawBase = srcFilename ? srcFilename.replace(/\.json$/i, '') : 'output'
+  const base = stripStageSuffix(rawBase)
   const label = getStageLabel(stageKey)
   const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
   return `${base}_${label}_${username}_${ts}`
