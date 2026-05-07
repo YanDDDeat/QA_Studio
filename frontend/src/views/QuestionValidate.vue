@@ -256,14 +256,14 @@
     <el-dialog v-model="detailVisible" title="记录详情" width="700px" :append-to-body="true">
       <template v-if="detailRecord">
         <el-descriptions :column="2" border size="small">
-          <el-descriptions-item v-for="key in metaFields" :key="key" :label="key">
-            {{ detailFlatRecord[key] != null ? detailFlatRecord[key] : '-' }}
+          <el-descriptions-item v-for="key in metaFields" :key="key" :label="FIELD_LABELS[key] || key">
+            {{ detailRecord[key] != null ? detailRecord[key] : '-' }}
           </el-descriptions-item>
         </el-descriptions>
         <div class="detail-text-fields">
           <div v-for="key in longTextFields" :key="key" class="text-field-block">
-            <div class="field-label">{{ key }}</div>
-            <div class="field-content" v-html="renderContent(detailFlatRecord[key])"></div>
+            <div class="field-label">{{ FIELD_LABELS[key] || key }}</div>
+            <div class="field-content" v-html="renderContent(detailRecord[key])"></div>
           </div>
         </div>
       </template>
@@ -273,14 +273,14 @@
     <el-dialog v-model="sourceDetailVisible" title="源文件记录详情" width="700px" :append-to-body="true">
       <template v-if="sourceDetailRecord">
         <el-descriptions :column="2" border size="small">
-          <el-descriptions-item v-for="key in sourceMetaFields" :key="key" :label="key">
-            {{ sourceDetailFlatRecord[key] != null ? sourceDetailFlatRecord[key] : '-' }}
+          <el-descriptions-item v-for="key in sourceMetaFields" :key="key" :label="FIELD_LABELS[key] || key">
+            {{ sourceDetailRecord[key] != null ? sourceDetailRecord[key] : '-' }}
           </el-descriptions-item>
         </el-descriptions>
         <div class="detail-text-fields">
           <div v-for="key in sourceLongTextFields" :key="key" class="text-field-block">
-            <div class="field-label">{{ key }}</div>
-            <div class="field-content" v-html="renderSourceContent(sourceDetailFlatRecord[key])"></div>
+            <div class="field-label">{{ FIELD_LABELS[key] || key }}</div>
+            <div class="field-content" v-html="renderSourceContent(sourceDetailRecord[key])"></div>
           </div>
         </div>
       </template>
@@ -312,18 +312,6 @@ import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
 import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
-function formatTime(dt) {
-  if (!dt) return '-'
-  const d = new Date(dt)
-  return d.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 // ----- Form state -----
 const router = useRouter()
 const form = ref({
@@ -344,39 +332,6 @@ const currentModelOptions = computed(() => {
 const startLoading = ref(false)
 
 const username = computed(() => localStorage.getItem('username') || 'unknown')
-
-// ----- Fetch options -----
-async function fetchPromptOptions() {
-  try {
-    const res = await getPromptConfigs({ stage: 'question_validate' })
-    promptOptions.value = Array.isArray(res) ? res : []
-  } catch (err) {
-    ElMessage.error('获取提示词列表失败')
-    promptOptions.value = []
-  }
-}
-
-async function fetchLLMConfigs() {
-  try {
-    const res = await getLLMConfigs()
-    llmConfigs.value = Array.isArray(res) ? res : []
-  } catch (err) {
-    ElMessage.error('获取LLM配置失败')
-    llmConfigs.value = []
-  }
-}
-
-async function fetchFileOptions(showAll) {
-  try {
-    const res = await getQuestionValidateSourceFiles({ show_all: showAll })
-    const items = Array.isArray(res) ? res : []
-    fileOptions.value = items
-    return items
-  } catch (err) {
-    ElMessage.error('获取文件列表失败')
-    return []
-  }
-}
 
 // Auto-fill output filename when source file changes
 watch(() => form.value.file_id, (newFileId) => {
@@ -400,10 +355,8 @@ const {
 
 // ----- Current file name for results header -----
 const currentFileName = computed(() => {
-  if (taskInfo.value && taskInfo.value.filename) {
-    return taskInfo.value.filename
-  }
-  const f = fileOptions.value.find(f => f.id === form.value.file_id)
+  const targetId = effectiveFileId.value || form.value.file_id
+  const f = fileOptions.value.find(f => f.id === targetId)
   return f ? f.filename : '未选择文件'
 })
 
@@ -442,7 +395,6 @@ const {
   sourceColumns,
   sourceDetailVisible,
   sourceDetailRecord,
-  sourceDetailFlatRecord,
   sourceMetaFields,
   sourceLongTextFields,
   loadSourcePreview,
@@ -455,10 +407,6 @@ const {
 )
 
 // ----- Detail dialog computed fields -----
-const detailFlatRecord = computed(() => {
-  if (!detailRecord.value) return null
-  return categorizeFields(detailRecord.value).flat
-})
 const metaFields = computed(() => {
   if (!detailRecord.value) return []
   return categorizeFields(detailRecord.value).meta
@@ -467,6 +415,252 @@ const longTextFields = computed(() => {
   if (!detailRecord.value) return []
   return categorizeFields(detailRecord.value).longText
 })
+
+// ----- More Task state -----
+const taskId = ref(null)
+const taskRunning = ref(false)
+const logs = ref([])
+const logLoading = ref(false)
+
+// Polling timer
+let pollTimer = null
+let logTimer = null
+
+// ----- Computed -----
+const canStart = computed(() => {
+  return (
+    form.value.file_id &&
+    form.value.prompt_id &&
+    form.value.model &&
+    !taskRunning.value
+  )
+})
+
+const canRetry = computed(() => {
+  return taskInfo.value && taskInfo.value.status === 'failed'
+})
+
+const progressPercent = computed(() => {
+  if (!taskInfo.value || taskInfo.value.progress_total === 0) return 0
+  return Math.round(
+    (taskInfo.value.progress_current / taskInfo.value.progress_total) * 100
+  )
+})
+
+const progressStatus = computed(() => {
+  if (!taskInfo.value) return ''
+  if (taskInfo.value.status === 'completed') return 'success'
+  if (taskInfo.value.status === 'failed') return 'exception'
+  return ''
+})
+
+const statusTagType = computed(() => {
+  if (!taskInfo.value) return 'info'
+  const s = taskInfo.value.status
+  if (s === 'running') return 'primary'
+  if (s === 'paused') return 'warning'
+  if (s === 'completed') return 'success'
+  if (s === 'failed') return 'danger'
+  return 'info'
+})
+
+const statusLabel = computed(() => {
+  if (!taskInfo.value) return ''
+  const map = {
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+    paused: '已暂停',
+    pending: '等待中',
+  }
+  return map[taskInfo.value.status] || taskInfo.value.status
+})
+
+// ----- Data fetching -----
+async function fetchFileOptions(showAll) {
+  try {
+    const res = await getQuestionValidateSourceFiles({ show_all: showAll })
+    const items = Array.isArray(res) ? res : []
+    fileOptions.value = items
+    return items
+  } catch (err) {
+    ElMessage.error('获取文件列表失败')
+    return []
+  }
+}
+
+async function fetchPromptOptions() {
+  try {
+    const res = await getPromptConfigs({ stage: 'question_validate' })
+    promptOptions.value = Array.isArray(res) ? res : []
+  } catch (err) {
+    ElMessage.error('获取Prompt列表失败')
+    promptOptions.value = []
+  }
+}
+
+async function fetchLLMConfigs() {
+  try {
+    const res = await getLLMConfigs()
+    llmConfigs.value = Array.isArray(res) ? res : []
+  } catch (err) {
+    ElMessage.error('获取LLM配置失败')
+    llmConfigs.value = []
+  }
+}
+
+function handleLLMConfigChange(configId) {
+  const cfg = llmConfigs.value.find(c => c.id === configId)
+  if (cfg) {
+    form.value.model = cfg.default_model || ''
+  } else {
+    form.value.model = ''
+  }
+}
+
+// ----- Task operations -----
+async function handleStop() {
+  try {
+    await stopTask(taskId.value)
+    ElMessage.success('已发送停止信号，任务将在当前条处理完后停止')
+    if (taskInfo.value) taskInfo.value.status = 'paused'
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '停止失败')
+  }
+}
+
+async function handleResume() {
+  try {
+    await resumeTask(taskId.value)
+    ElMessage.success('任务已恢复运行')
+    if (taskInfo.value) taskInfo.value.status = 'running'
+    startPolling()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '恢复失败')
+  }
+}
+
+async function handleStart() {
+  if (!canStart.value) return
+
+  startLoading.value = true
+  try {
+    const payload = {
+      file_id: form.value.file_id,
+      prompt_id: form.value.prompt_id,
+      model: form.value.model,
+      llm_config_id: selectedLLMConfigId.value || null,
+      output_filename: form.value.output_filename || undefined,
+    }
+    const res = await startQuestionValidate(payload)
+    taskId.value = res.task_id
+    taskRunning.value = true
+
+    // Immediately fetch initial status
+    await pollStatus()
+
+    // Start polling
+    startPolling()
+
+    ElMessage.success('问题校验任务已启动')
+  } catch (err) {
+    const detail = err.response?.data?.detail || '启动任务失败'
+    ElMessage.error(detail)
+  } finally {
+    startLoading.value = false
+  }
+}
+
+async function handleRetry() {
+  if (!taskId.value) return
+
+  startLoading.value = true
+  try {
+    const res = await retryStage('question-validate', taskId.value)
+    taskId.value = res.task_id
+    taskRunning.value = true
+
+    await pollStatus()
+    startPolling()
+
+    ElMessage.success('重试任务已启动')
+  } catch (err) {
+    const detail = err.response?.data?.detail || '重试失败'
+    ElMessage.error(detail)
+  } finally {
+    startLoading.value = false
+  }
+}
+
+async function pollStatus() {
+  if (!taskId.value) return
+  try {
+    const res = await getStageStatus('question-validate', taskId.value)
+    taskInfo.value = res
+    taskRunning.value = res.status === 'running'
+
+    // Auto-stop polling when task is done
+    if (res.status === 'completed' || res.status === 'failed') {
+      stopPolling()
+      taskRunning.value = false
+    }
+  } catch (err) {
+    // Silently handle polling errors to avoid spamming
+    console.error('Poll status error:', err)
+  }
+}
+
+async function fetchLogs() {
+  if (!taskId.value) return
+  logLoading.value = true
+  try {
+    const res = await getTaskLogs(taskId.value)
+    logs.value = Array.isArray(res) ? res : []
+  } catch (err) {
+    // Silently handle log fetch errors
+    console.error('Fetch logs error:', err)
+  } finally {
+    logLoading.value = false
+  }
+}
+
+// ----- Polling control -----
+function startPolling() {
+  stopPolling()
+  // Poll status every 3 seconds
+  pollTimer = setInterval(() => {
+    pollStatus()
+  }, 3000)
+  // Refresh logs every 5 seconds
+  logTimer = setInterval(() => {
+    fetchLogs()
+  }, 5000)
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+  if (logTimer) {
+    clearInterval(logTimer)
+    logTimer = null
+  }
+}
+
+// ----- Formatting -----
+function formatTime(dt) {
+  if (!dt) return '-'
+  const d = new Date(dt)
+  return d.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
 
 // ----- Lifecycle -----
 async function restoreTaskState() {
