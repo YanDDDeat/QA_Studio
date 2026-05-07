@@ -31,17 +31,24 @@ Thumbs.db
 node_modules/
 frontend/node_modules/
 frontend/dist/
+frontend/dist-ssr/
 
 # Logs
 *.log
 logs/
+backend/server.log
 
 # Claude
 .claude/
 
-# Local data / DB
+# Local data / uploads (generated JSON files)
+uploads/
 backend/uploads/
-backend/qa_studio_test.db
-backend/server.log
+
+# Local DB
+*.db
+*.sqlite3
+
+# Test temp files
 test_body.json
 test_output_*.txt
