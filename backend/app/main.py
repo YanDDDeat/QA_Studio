@@ -95,7 +95,7 @@ from app.routers import (
 )
 from app.database import engine, Base, SessionLocal
 from app.models import User, Dataset, File, Prompt, Task, TaskLog, LLMConfig
-from app.config import settings
+from app.config import settings, LLM_PROVIDERS
 
 app = FastAPI(
     title="QA Studio",
@@ -107,12 +107,12 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def startup_event():
-    """Create database tables, initialize admin account, and test LLM connection."""
+    """Create database tables, initialize admin account, and seed default LLM configs."""
     Base.metadata.create_all(bind=engine)
 
-    # Auto-initialize admin account
     db = SessionLocal()
     try:
+        # Auto-initialize admin account
         admin = db.query(User).filter(User.username == settings.ADMIN_USERNAME).first()
         if admin is None:
             password_hash = bcrypt.hashpw(
@@ -128,8 +128,27 @@ async def startup_event():
             print(f"[Startup] Admin account created: username='{settings.ADMIN_USERNAME}'")
         else:
             print(f"[Startup] Admin account exists: username='{settings.ADMIN_USERNAME}'")
+
+        # Seed default LLM configs from .env provider presets
+        for provider_name, preset in LLM_PROVIDERS.items():
+            existing = db.query(LLMConfig).filter(LLMConfig.name == provider_name).first()
+            if existing is None:
+                api_key = settings.DASHSCOPE_API_KEY if provider_name == "dashscope" else settings.SWUST_API_KEY
+                llm_cfg = LLMConfig(
+                    user_id=None,  # global shared
+                    name=provider_name,
+                    base_url=preset["base_url"],
+                    api_key=api_key,
+                    models=preset["models"],
+                    default_model=preset["default_model"],
+                )
+                db.add(llm_cfg)
+                db.commit()
+                print(f"[Startup] Default LLM config seeded: '{provider_name}'")
+            else:
+                print(f"[Startup] LLM config exists: '{provider_name}', skipping")
     except Exception as e:
-        print(f"[Startup] Error initializing admin: {e}")
+        print(f"[Startup] Error initializing: {e}")
         db.rollback()
     finally:
         db.close()
