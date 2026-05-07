@@ -1,7 +1,7 @@
 """Data Manage router - 数据管理"""
 
 import json
-from typing import List, Optional, Union
+from typing import List, Optional
 import os
 from datetime import datetime
 
@@ -108,7 +108,7 @@ class DatasetUpdateRequest(BaseModel):
     source_id: Optional[str] = None
     source_type: Optional[str] = None
     originContent: Optional[str] = None
-    knowledge: Optional[Union[dict, list]] = None
+    knowledge: Optional[str] = None
     difficulty: Optional[str] = None
     relevance: Optional[int] = None
     clarity: Optional[int] = None

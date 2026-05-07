@@ -35,7 +35,7 @@ from app.models.models import (
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import (
-    create_output_file, clone_datasets_to_new_file,
+    create_output_file, clone_single_dataset,
     write_datasets_to_file,
 )
 from app.services.validation_service import validate_file_fields
@@ -66,6 +66,7 @@ class TaskStatusResponse(BaseModel):
     evaluated_count: int = 0
     avg_score: Optional[float] = None
     file_id: Optional[int] = None
+    filename: Optional[str] = None
 
 
 class EvaluationReportResponse(BaseModel):
@@ -170,8 +171,6 @@ async def _run_data_evaluate_task(
             .filter(
                 Dataset.file_id == file_id,
                 Dataset.user_id == user_id,
-                Dataset.current_stage == StageEnum.ANSWER_VALIDATE,
-                Dataset.passed == "是",
             )
             .order_by(Dataset.id.asc())
             .all()
@@ -184,17 +183,23 @@ async def _run_data_evaluate_task(
             task.progress_total = total
             db.commit()
 
-        if total == 0:
-            _add_task_log(db, task_id, "文件中没有待处理的answer_validate阶段(已通过)记录")
-            task = db.query(Task).filter(Task.id == task_id).first()
-            if task:
-                task.status = TaskStatusEnum.COMPLETED
-                db.commit()
-            return
+        # 提前创建输出文件，点击开始后前端立即显示输出文件名
+        source_file = db.query(File).filter(File.id == file_id).first()
+        output_file = create_output_file(
+            db=db,
+            user_id=user_id,
+            source_file=source_file,
+            stage=StageEnum.DATA_EVALUATE,
+            output_filename=output_filename,
+            username=username,
+        )
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.file_id = output_file.id
+            db.commit()
+        _add_task_log(db, task_id, f"输出文件已创建: {output_file.filename} (file_id={output_file.id})")
 
         evaluated_count = 0
-        # Store evaluation results keyed by source dataset.id
-        results_by_id: dict[int, dict] = {}
 
         for idx in range(start_index, total):
             dataset = source_datasets[idx]
@@ -263,13 +268,26 @@ async def _run_data_evaluate_task(
                 _update_progress(db, task_id, idx + 1)
                 continue
 
-            results_by_id[dataset.id] = {
-                "relevance": relevance,
-                "clarity": clarity,
-                "reasoning": reasoning,
-                "terminology": terminology,
-                "score": score,
+            # 立即克隆到输出文件，让前端能实时加载结果
+            cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.DATA_EVALUATE)
+            cloned_ds.relevance = relevance
+            cloned_ds.clarity = clarity
+            cloned_ds.reasoning = reasoning
+            cloned_ds.terminology = terminology
+            cloned_ds.score = score
+            # 提取 step_count 和 extra_fields
+            _DE_KNOWN_KEYS = {
+                "relevance", "relevant", "相关性",
+                "clarity", "clear", "清晰度",
+                "reasoning", "reasoning_quality", "推理",
+                "terminology", "terminology_accuracy", "术语",
+                "score", "综合评分", "overall_score", "total_score", "总分",
+                "step_count",
             }
+            cloned_ds.step_count = str(llm_result.get("step_count", "")) if llm_result.get("step_count") else None
+            extra = {k: v for k, v in llm_result.items() if k not in _DE_KNOWN_KEYS} if isinstance(llm_result, dict) else None
+            cloned_ds.extra_fields = extra if extra else None
+            db.commit()
             evaluated_count += 1
             _add_task_log(
                 db, task_id,
@@ -277,65 +295,15 @@ async def _run_data_evaluate_task(
             )
             _update_progress(db, task_id, idx + 1)
 
-        source_file = db.query(File).filter(File.id == file_id).first()
-        output_file = None
-
-        if results_by_id:
-            successful_ids = list(results_by_id.keys())
-            output_file = create_output_file(
-                db=db,
-                user_id=user_id,
-                source_file=source_file,
-                stage=StageEnum.DATA_EVALUATE,
-                output_filename=output_filename,
-                username=username,
-            )
-            cloned = clone_datasets_to_new_file(
-                db=db,
-                source_file_id=file_id,
-                new_file_id=output_file.id,
-                user_id=user_id,
-                source_stage_filter=StageEnum.ANSWER_VALIDATE,
-                new_stage=StageEnum.DATA_EVALUATE,
-                passed_filter="是",
-                dataset_ids=successful_ids,
-            )
-            for record in cloned:
-                r = results_by_id.get(record.id)
-                if r:
-                    # The cloned record has a new id, so we need to look up by original
-                    pass
-            # Map source dataset id → cloned record
-            cloned_by_source: dict[int, Dataset] = {}
-            for src_ds in source_datasets:
-                if src_ds.id in results_by_id:
-                    # Find the corresponding clone
-                    pass
-
-            # Apply scores to clones. Since clones have new IDs, iterate and match by content.
-            # Actually, clone_datasets_to_new_file returns clones in the same order as source,
-            # so we can zip with the source_dataset ids.
-            source_id_order = [ds.id for ds in source_datasets if ds.id in results_by_id]
-            for i, record in enumerate(cloned):
-                src_id = source_id_order[i]
-                r = results_by_id[src_id]
-                record.relevance = r["relevance"]
-                record.clarity = r["clarity"]
-                record.reasoning = r["reasoning"]
-                record.terminology = r["terminology"]
-                record.score = r["score"]
-            db.commit()
-
+        if evaluated_count == 0:
+            _add_task_log(db, task_id, "本次任务无成功评估记录")
+        else:
             write_datasets_to_file(db=db, file_id=output_file.id)
             _add_task_log(db, task_id, f"评估文件已生成: {output_file.filename}")
-        else:
-            _add_task_log(db, task_id, "本次任务无成功评估记录，不创建输出文件")
 
         task = db.query(Task).filter(Task.id == task_id).first()
         if task:
             task.status = TaskStatusEnum.COMPLETED
-            if output_file:
-                task.file_id = output_file.id
             db.commit()
 
         logger.info(
@@ -349,6 +317,7 @@ async def _run_data_evaluate_task(
             task_id, str(e), traceback.format_exc(),
         )
         try:
+            db.rollback()
             task = db.query(Task).filter(Task.id == task_id).first()
             if task:
                 task.status = TaskStatusEnum.FAILED
@@ -413,23 +382,6 @@ async def start_data_evaluate(
             detail=validation_msg,
         )
 
-    # Validate file has qualifying datasets (answer_validate stage, passed="是")
-    qualifying_count = (
-        db.query(Dataset)
-        .filter(
-            Dataset.file_id == data.file_id,
-            Dataset.user_id == current_user.id,
-            Dataset.current_stage == StageEnum.ANSWER_VALIDATE,
-            Dataset.passed == "是",
-        )
-        .count()
-    )
-    if qualifying_count == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="该文件中没有answer_validate阶段(已通过)的记录",
-        )
-
     # Validate prompt exists and belongs to user (or is global)
     prompt_obj = (
         db.query(Prompt)
@@ -485,7 +437,7 @@ async def start_data_evaluate(
         prompt_id=data.prompt_id,
         status=TaskStatusEnum.RUNNING,
         progress_current=0,
-        progress_total=qualifying_count,
+        progress_total=0,
     )
     db.add(task)
     db.commit()
@@ -561,6 +513,7 @@ async def get_data_evaluate_status(
         evaluated_count=evaluated_count,
         avg_score=avg_score,
         file_id=task.file_id,
+        filename=db.query(File).filter(File.id == task.file_id).first().filename if task.file_id else None,
     )
 
 

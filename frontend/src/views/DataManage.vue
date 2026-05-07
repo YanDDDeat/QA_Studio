@@ -8,6 +8,13 @@
       <div class="file-list-header">
         <span class="file-count">共 {{ fileTotal }} 个文件</span>
         <div class="file-list-controls">
+          <el-switch
+            v-if="isAdmin"
+            v-model="showAllFiles"
+            active-text="全部用户"
+            inactive-text="仅自己"
+            @change="onToggleAllFiles"
+          />
           <el-input
             v-model="searchKeyword"
             placeholder="搜索文件名"
@@ -21,20 +28,27 @@
             <el-option label="最早优先" value="time_asc" />
             <el-option label="文件名排序" value="name_asc" />
           </el-select>
+          <el-button type="success" size="small" :disabled="selectedFileIds.size < 2" @click="handleMergeDownload">
+            合并下载 ({{ selectedFileIds.size }})
+          </el-button>
           <el-button type="primary" size="small" @click="fetchFiles">刷新</el-button>
         </div>
       </div>
 
       <el-table
+        ref="fileTableRef"
         :data="pagedFiles"
         v-loading="loading"
         stripe
         highlight-current-row
         @current-change="handleFileSelect"
+        @selection-change="handleSelectionChange"
         style="width: 100%"
       >
+        <el-table-column type="selection" width="45" />
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="filename" label="文件名" min-width="200" show-overflow-tooltip />
+        <el-table-column v-if="showAllFiles" prop="username" label="用户名" width="100" />
         <el-table-column label="来源阶段" width="130">
           <template #default="{ row }">
             <el-tag v-if="row.source_stage" size="small" :type="stageTagType(row.source_stage)">
@@ -132,14 +146,16 @@
             stripe
             border
             size="small"
-            style="width: 100%"
           >
-            <el-table-column prop="id" label="ID" width="50" />
-            <el-table-column prop="input" label="问题(input)" min-width="180" show-overflow-tooltip />
-            <el-table-column prop="output" label="答案(output)" min-width="180" show-overflow-tooltip />
-            <el-table-column prop="domain" label="领域" width="80" show-overflow-tooltip />
-            <el-table-column prop="difficulty" label="难度" width="70" />
-            <el-table-column prop="source" label="来源" width="100" show-overflow-tooltip />
+            <el-table-column
+              v-for="col in previewColumns"
+              :key="col.prop"
+              :prop="col.prop"
+              :label="col.label"
+              :width="col.width"
+              :min-width="col.minWidth"
+              show-overflow-tooltip
+            />
             <el-table-column label="操作" width="70" fixed="right">
               <template #default="{ row }">
                 <el-button type="primary" link size="small" @click="handleRecordSelect(row)">查看</el-button>
@@ -171,44 +187,15 @@
       </div>
 
       <el-descriptions :column="2" border size="small">
-        <el-descriptions-item label="id">{{ selectedRecord.id || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="domain">{{ selectedRecord.domain || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="category">{{ selectedRecord.category || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="task_type">{{ selectedRecord.task_type || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="source">{{ selectedRecord.source || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="source_type">{{ selectedRecord.source_type || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="source_id">{{ selectedRecord.source_id || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="difficulty">{{ selectedRecord.difficulty || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="corpus_cate">{{ selectedRecord.corpus_cate ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="scene">{{ selectedRecord.scene || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="score">{{ selectedRecord.score ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="relevance">{{ selectedRecord.relevance ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="clarity">{{ selectedRecord.clarity ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="reasoning">{{ selectedRecord.reasoning ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="terminology">{{ selectedRecord.terminology ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="Assessment">{{ selectedRecord.Assessment || '-' }}</el-descriptions-item>
+        <el-descriptions-item v-for="key in detailMetaFields" :key="key" :label="key">
+          {{ detailFlatRecord[key] != null ? detailFlatRecord[key] : '-' }}
+        </el-descriptions-item>
       </el-descriptions>
 
       <div class="detail-text-fields">
-        <div class="text-field-block" v-if="selectedRecord.input">
-          <div class="field-label">问题 (Input)</div>
-          <div class="field-content" v-html="renderContent(selectedRecord.input)"></div>
-        </div>
-        <div class="text-field-block" v-if="selectedRecord.output">
-          <div class="field-label">答案 (Output)</div>
-          <div class="field-content" v-html="renderContent(selectedRecord.output)"></div>
-        </div>
-        <div class="text-field-block" v-if="selectedRecord.cot">
-          <div class="field-label">思维链 (CoT)</div>
-          <div class="field-content" v-html="renderContent(selectedRecord.cot)"></div>
-        </div>
-        <div class="text-field-block" v-if="selectedRecord.originContent">
-          <div class="field-label">原始内容 (Origin Content)</div>
-          <div class="field-content" v-html="renderContent(selectedRecord.originContent)"></div>
-        </div>
-        <div class="text-field-block" v-if="selectedRecord.knowledge">
-          <div class="field-label">知识 (Knowledge)</div>
-          <div class="field-content" v-html="renderKnowledge(selectedRecord.knowledge)"></div>
+        <div v-for="key in detailLongTextFields" :key="key" class="text-field-block">
+          <div class="field-label">{{ key }}</div>
+          <div class="field-content" v-html="renderContent(detailFlatRecord[key])"></div>
         </div>
       </div>
     </el-card>
@@ -216,7 +203,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import katex from 'katex'
@@ -225,7 +212,9 @@ import {
   getManagedFileContent,
   downloadManagedFile,
   deleteManagedFile,
+  mergeAndDownloadFiles,
 } from '../api'
+import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
 const STAGE_MAP = {
   question_generate: '问题生成',
@@ -260,6 +249,59 @@ const filterDifficulty = ref(null)
 
 // Record detail state (inline, no dialog)
 const selectedRecord = ref(null)
+
+// Cross-page selection tracking
+const selectedFileIds = ref(new Set())
+const selectedFileInfo = ref(new Map()) // fileId → {filename, username}
+const fileTableRef = ref(null)
+
+// Admin toggle
+const showAllFiles = ref(false)
+const isAdmin = computed(() => localStorage.getItem('username') === 'admin')
+
+// Dynamic preview columns from actual data
+const previewColumns = computed(() => {
+  if (!previewData.value?.preview?.length) return []
+  const first = previewData.value.preview[0]
+  if (!first || typeof first !== 'object') return []
+  return Object.keys(first).map(key => {
+    const val = first[key]
+    const isLong = typeof val === 'string' && val.length > 200
+    return {
+      prop: key,
+      label: key,
+      width: key === 'id' ? 55 : undefined,
+      minWidth: isLong ? 80 : 100,
+    }
+  })
+})
+
+// Flattened record for detail display (extra_fields expanded)
+const detailFlatRecord = computed(() => {
+  if (!selectedRecord.value) return null
+  const flat = { ...selectedRecord.value }
+  const extra = flat.extra_fields
+  if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
+    delete flat.extra_fields
+    for (const [k, v] of Object.entries(extra)) {
+      if (!(k in flat)) flat[k] = v
+    }
+  } else {
+    delete flat.extra_fields
+  }
+  return flat
+})
+
+// Detail fields: split into meta (short) and long-text
+const detailMetaFields = computed(() => {
+  if (!selectedRecord.value) return []
+  return categorizeFields(selectedRecord.value).meta
+})
+
+const detailLongTextFields = computed(() => {
+  if (!selectedRecord.value) return []
+  return categorizeFields(selectedRecord.value).longText
+})
 
 function stageLabel(stage) {
   if (!stage) return '-'
@@ -303,6 +345,16 @@ function onSearchChange() {
   }, 300)
 }
 
+function onToggleAllFiles() {
+  filePage.value = 1
+  selectedFileIds.value = new Set()
+  selectedFileInfo.value = new Map()
+  selectedFile.value = null
+  previewData.value = null
+  selectedRecord.value = null
+  fetchFiles()
+}
+
 async function fetchFiles() {
   loading.value = true
   try {
@@ -312,9 +364,17 @@ async function fetchFiles() {
       sort: sortMode.value,
     }
     if (searchKeyword.value) params.search = searchKeyword.value
+    if (showAllFiles.value) params.all_users = true
     const res = await getManagedFiles(params)
     files.value = res.items || []
     fileTotal.value = res.total || 0
+    // Restore cross-page selections
+    await nextTick()
+    pagedFiles.value.forEach(row => {
+      if (selectedFileIds.value.has(row.id)) {
+        fileTableRef.value?.toggleRowSelection(row, true)
+      }
+    })
   } catch (err) {
     ElMessage.error('获取文件列表失败')
     files.value = []
@@ -380,6 +440,61 @@ async function handleDownload(row) {
   }
 }
 
+function handleSelectionChange(selection) {
+  // Remove all current-page IDs from tracking
+  pagedFiles.value.forEach(row => {
+    selectedFileIds.value.delete(row.id)
+    selectedFileInfo.value.delete(row.id)
+  })
+  // Add back only the currently selected ones
+  selection.forEach(row => {
+    selectedFileIds.value.add(row.id)
+    selectedFileInfo.value.set(row.id, {
+      filename: row.filename,
+      username: row.username || '',
+    })
+  })
+}
+
+async function handleMergeDownload() {
+  if (selectedFileIds.value.size < 2) {
+    ElMessage.warning('请至少选择2个文件')
+    return
+  }
+  // Build confirmation list
+  const fileList = [...selectedFileIds.value].map(id => {
+    const info = selectedFileInfo.value.get(id)
+    return info ? `${info.filename} — ${info.username || '未知用户'}` : `ID:${id}`
+  }).join('\n')
+
+  try {
+    await ElMessageBox.confirm(
+      `确认合并以下 ${selectedFileIds.value.size} 个文件？\n\n${fileList}`,
+      '合并确认',
+      { confirmButtonText: '确认合并', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch {
+    return
+  }
+
+  const ids = [...selectedFileIds.value]
+  try {
+    const blob = await mergeAndDownloadFiles(ids)
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `merged_${ids.length}files.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    ElMessage.success(`已合并${ids.length}个文件，下载中`)
+  } catch (err) {
+    const detail = err.response?.data?.detail || '合并下载失败'
+    ElMessage.error(detail)
+  }
+}
+
 async function handleDeleteFile(row) {
   try {
     await ElMessageBox.confirm(
@@ -433,6 +548,14 @@ function renderLatex(text) {
 
 function renderContent(text) {
   if (!text) return '<span class="empty-field">-</span>'
+  if (typeof text !== 'string') {
+    try {
+      const formatted = JSON.stringify(text, null, 2)
+      return '<pre class="knowledge-json">' + escapeHtml(formatted) + '</pre>'
+    } catch {
+      return String(text)
+    }
+  }
   let html = escapeHtml(text)
   html = renderLatex(html)
   html = html.replace(/\n/g, '<br>')

@@ -45,7 +45,7 @@ class DatasetUpdate(BaseModel):
     source_id: Optional[str] = None
     source_type: Optional[str] = None
     originContent: Optional[str] = None
-    knowledge: Optional[dict] = None
+    knowledge: Optional[str] = None
     difficulty: Optional[str] = None
     relevance: Optional[int] = None
     clarity: Optional[int] = None
@@ -73,7 +73,7 @@ class DatasetResponse(BaseModel):
     source_id: Optional[str] = None
     source_type: Optional[str] = None
     originContent: Optional[str] = None
-    knowledge: Optional[dict] = None
+    knowledge: Optional[str] = None
     difficulty: Optional[str] = None
     relevance: Optional[int] = None
     clarity: Optional[int] = None

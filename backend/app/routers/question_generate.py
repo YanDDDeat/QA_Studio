@@ -67,6 +67,7 @@ class TaskStatusResponse(BaseModel):
     progress_total: int
     generated_count: int = 0
     file_id: Optional[int] = None
+    filename: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +137,21 @@ async def _run_question_generate_task(
             db.commit()
 
         generated_count = 0
+
+        # 提前创建输出文件，点击开始后前端立即显示输出文件名
+        source_file = db.query(File).filter(File.id == source_file_id).first()
+        output_file = create_output_file(
+            db=db,
+            user_id=user_id,
+            source_file=source_file,
+            stage=StageEnum.QUESTION_GENERATE,
+            output_filename=output_filename,
+            username=username,
+        )
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.file_id = output_file.id
+            db.commit()
 
         for idx in range(start_index, total):
             record = data[idx]
@@ -238,9 +254,17 @@ async def _run_question_generate_task(
                 continue
 
             # Create Dataset records for each question
+            _QG_KNOWN_KEYS = {
+                "input", "question", "output", "answer", "cot", "reasoning",
+                "task_type", "type", "domain", "difficulty", "step_count",
+            }
+            step_count_global = str(llm_result.get("step_count", "")) if isinstance(llm_result, dict) else ""
             for q in questions:
                 if not isinstance(q, dict):
                     continue
+
+                step_count = str(q.get("step_count", step_count_global))
+                extra = {k: v for k, v in q.items() if k not in _QG_KNOWN_KEYS}
 
                 dataset = Dataset(
                     user_id=user_id,
@@ -248,14 +272,17 @@ async def _run_question_generate_task(
                     output=q.get("output", q.get("answer", "")),
                     cot=q.get("cot", q.get("reasoning", "")),
                     category=category,
-                    task_type=q.get("task_type", q.get("type", "")),
-                    domain=q.get("domain", ""),
-                    difficulty=q.get("difficulty", ""),
+                    task_type=q.get("task_type", q.get("type", ""))[:64],
+                    domain=q.get("domain", "")[:128],
+                    difficulty=q.get("difficulty", "")[:32],
+                    step_count=step_count if step_count else None,
+                    extra_fields=extra if extra else None,
                     corpus_cate=1,
                     source=effective_source,
                     source_id=effective_source_id,
                     source_type=source_type,
                     originContent=text_content,
+                    file_id=output_file.id,
                     Assessment="",
                     current_stage=StageEnum.QUESTION_GENERATE,
                 )
@@ -270,53 +297,23 @@ async def _run_question_generate_task(
             )
             _update_progress(db, task_id, idx + 1)
 
-        # All records processed - create output file and write datasets to disk
-        task = db.query(Task).filter(Task.id == task_id).first()
+        # Write all datasets for this output file to disk as JSON
+        write_datasets_to_file(db=db, file_id=output_file.id)
 
-        # Create a new output file and link all generated datasets to it
-        source_file = db.query(File).filter(File.id == source_file_id).first()
-        if source_file and task:
-            output_file = create_output_file(
-                db=db,
-                user_id=user_id,
-                source_file=source_file,
-                stage=StageEnum.QUESTION_GENERATE,
-                output_filename=output_filename,
-                username=username,
-            )
-
-            # Link all Dataset records created during this task to the output file
-            datasets = (
-                db.query(Dataset)
-                .filter(
-                    Dataset.user_id == user_id,
-                    Dataset.current_stage == StageEnum.QUESTION_GENERATE,
-                    Dataset.created_at >= task.created_at,
-                    Dataset.file_id == None,
-                )
-                .all()
-            )
-            for ds in datasets:
-                ds.file_id = output_file.id
-            db.commit()
-
-            # Write all datasets for this output file to disk as JSON
-            write_datasets_to_file(db=db, file_id=output_file.id)
-
-            _add_task_log(
-                db, task_id,
-                f"输出文件已生成: {output_file.filename}",
-            )
-            logger.info(
-                "Task %d: created output file %s (file_id=%d) with %d datasets",
-                task_id, output_file.filename, output_file.id, len(datasets),
-            )
+        _add_task_log(
+            db, task_id,
+            f"输出文件已生成: {output_file.filename}",
+        )
+        logger.info(
+            "Task %d: wrote output file %s (file_id=%d)",
+            task_id, output_file.filename, output_file.id,
+        )
 
         # Mark task as completed
+        task = db.query(Task).filter(Task.id == task_id).first()
         if task:
             task.status = TaskStatusEnum.COMPLETED
-            if output_file:
-                task.file_id = output_file.id
+            task.file_id = output_file.id
             db.commit()
 
         logger.info(
@@ -331,6 +328,7 @@ async def _run_question_generate_task(
         )
         # Mark task as failed
         try:
+            db.rollback()
             task = db.query(Task).filter(Task.id == task_id).first()
             if task:
                 task.status = TaskStatusEnum.FAILED
@@ -547,6 +545,7 @@ async def get_question_generate_status(
         progress_total=task.progress_total or 0,
         generated_count=generated_count,
         file_id=task.file_id,
+        filename=db.query(File).filter(File.id == task.file_id).first().filename if task.file_id else None,
     )
 
 

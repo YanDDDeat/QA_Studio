@@ -153,14 +153,14 @@
     <el-dialog v-model="sourceDetailVisible" title="源文件记录详情" width="700px" :append-to-body="true">
       <template v-if="sourceDetailRecord">
         <el-descriptions :column="2" border size="small">
-          <el-descriptions-item v-for="key in sourceMetaFields" :key="key" :label="FIELD_LABELS[key] || key">
-            {{ sourceDetailRecord[key] != null ? sourceDetailRecord[key] : '-' }}
+          <el-descriptions-item v-for="key in sourceMetaFields" :key="key" :label="key">
+            {{ sourceDetailFlatRecord[key] != null ? sourceDetailFlatRecord[key] : '-' }}
           </el-descriptions-item>
         </el-descriptions>
         <div class="detail-text-fields">
-          <div v-for="key in sourceLongTextFields" :key="key" class="text-field-block" v-if="sourceDetailRecord[key]">
-            <div class="field-label">{{ FIELD_LABELS[key] || key }}</div>
-            <div class="field-content" v-html="renderContent(sourceDetailRecord[key])"></div>
+          <div v-for="key in sourceLongTextFields" :key="key" class="text-field-block">
+            <div class="field-label">{{ key }}</div>
+            <div class="field-content" v-html="renderContent(sourceDetailFlatRecord[key])"></div>
           </div>
         </div>
       </template>
@@ -185,7 +185,6 @@ import {
 import FileSelector from '../components/FileSelector.vue'
 import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
-import { FIELD_LABELS } from '../utils/fieldLabels'
 
 const form = ref({
   file_id: null,
@@ -226,6 +225,7 @@ const {
   sourceColumns,
   sourceDetailVisible,
   sourceDetailRecord,
+  sourceDetailFlatRecord,
   sourceMetaFields,
   sourceLongTextFields,
   loadSourcePreview,
@@ -385,7 +385,7 @@ async function loadFilterResult() {
 
 async function fetchLogs() {
   if (!taskId.value) return
-  logLoading.value = true
+  if (logs.value.length === 0) logLoading.value = true
   try {
     const res = await getTaskLogs(taskId.value)
     logs.value = Array.isArray(res) ? res : []

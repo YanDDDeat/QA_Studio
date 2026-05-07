@@ -37,6 +37,7 @@ def _serialize_file(f: File) -> dict:
         "text_field": f.text_field,
         "file_size": _file_size(f.file_path),
         "created_at": f.created_at,
+        "username": f.user.username if f.user else "",
     }
 
 
@@ -50,11 +51,17 @@ async def list_managed_files(
     source_stage: str = None,
     page: int = 1,
     page_size: int = 10,
+    all_users: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all files for the current user, with search and sort."""
-    query = db.query(File).filter(File.user_id == current_user.id)
+    """List all files for the current user, with search and sort.
+    Admin users can set all_users=true to see all users' files."""
+    query = db.query(File)
+
+    # Admin can see all users' files when all_users flag is set
+    if not (all_users and current_user.username == "admin"):
+        query = query.filter(File.user_id == current_user.id)
 
     if search:
         query = query.filter(File.filename.like(f"%{search}%"))
@@ -91,12 +98,11 @@ async def get_managed_file(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get file details by ID (must belong to current user)."""
-    file_obj = (
-        db.query(File)
-        .filter(File.id == file_id, File.user_id == current_user.id)
-        .first()
-    )
+    """Get file details by ID (must belong to current user, or admin)."""
+    query = db.query(File).filter(File.id == file_id)
+    if current_user.username != "admin":
+        query = query.filter(File.user_id == current_user.id)
+    file_obj = query.first()
     if file_obj is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -116,13 +122,12 @@ async def get_file_content(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get JSON content preview for a file by ID (must belong to current user).
+    """Get JSON content preview for a file by ID (must belong to current user, or admin).
     Supports filtering by task_type, domain, difficulty."""
-    file_obj = (
-        db.query(File)
-        .filter(File.id == file_id, File.user_id == current_user.id)
-        .first()
-    )
+    query = db.query(File).filter(File.id == file_id)
+    if current_user.username != "admin":
+        query = query.filter(File.user_id == current_user.id)
+    file_obj = query.first()
     if file_obj is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -393,12 +398,11 @@ async def delete_managed_file(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete a file and its disk copy (must belong to current user)."""
-    file_obj = (
-        db.query(File)
-        .filter(File.id == file_id, File.user_id == current_user.id)
-        .first()
-    )
+    """Delete a file and its disk copy (must belong to current user, or admin)."""
+    query = db.query(File).filter(File.id == file_id)
+    if current_user.username != "admin":
+        query = query.filter(File.user_id == current_user.id)
+    file_obj = query.first()
     if file_obj is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -443,11 +447,10 @@ async def download_managed_file(
     db: Session = Depends(get_db),
 ):
     """Download a file by streaming it from disk."""
-    file_obj = (
-        db.query(File)
-        .filter(File.id == file_id, File.user_id == current_user.id)
-        .first()
-    )
+    query = db.query(File).filter(File.id == file_id)
+    if current_user.username != "admin":
+        query = query.filter(File.user_id == current_user.id)
+    file_obj = query.first()
     if file_obj is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -495,21 +498,21 @@ async def merge_and_download(
             detail="请至少选择2个文件进行合并",
         )
 
-    # Validate all files belong to user
-    files = (
-        db.query(File)
-        .filter(File.id.in_(file_ids), File.user_id == current_user.id)
-        .all()
-    )
+    # Validate all files (admin can access any files)
+    query = db.query(File).filter(File.id.in_(file_ids))
+    if current_user.username != "admin":
+        query = query.filter(File.user_id == current_user.id)
+    files = query.all()
     if len(files) != len(file_ids):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="部分文件不存在或无权访问",
         )
 
-    # Merge JSON contents
     merged = []
     skipped = []
+    # Track whether any files were successfully read
+    has_content = False
     for f in files:
         if not os.path.exists(f.file_path):
             skipped.append(f"{f.filename} (文件不存在)")
@@ -524,6 +527,7 @@ async def merge_and_download(
             skipped.append(f"{f.filename} (JSON解析失败)")
             continue
 
+        has_content = True
         if isinstance(content, list):
             merged.extend(content)
         elif isinstance(content, dict):
@@ -531,7 +535,7 @@ async def merge_and_download(
         else:
             skipped.append(f"{f.filename} (内容不是数组或对象)")
 
-    if not merged:
+    if not has_content:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="没有可合并的内容。请检查选择的文件是否为有效JSON数组",
