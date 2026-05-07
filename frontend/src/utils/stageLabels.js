@@ -14,15 +14,24 @@ export function getStageLabel(stageKey) {
   return STAGE_LABELS[stageKey] || stageKey
 }
 
-/** Strip previously appended stage suffixes to avoid cascading filename length.
+/** Strip ALL previously appended stage suffixes to avoid cascading filename length.
  *  Pattern: _阶段中文_username_14-digit-timestamp at end of base name.
+ *  Loops until no more suffixes remain, so multi-stage cascading is fully removed.
  */
 function stripStageSuffix(base) {
   const labels = Object.values(STAGE_LABELS)
-  for (const label of labels) {
-    const pattern = new RegExp(`_${label}_[^_]+_\\d{14}$`)
-    const match = base.match(pattern)
-    if (match) return base.slice(0, match.index)
+  let stripped = true
+  while (stripped) {
+    stripped = false
+    for (const label of labels) {
+      const pattern = new RegExp(`_${label}_[^_]+_\\d{14}$`)
+      const match = base.match(pattern)
+      if (match) {
+        base = base.slice(0, match.index)
+        stripped = true
+        break
+      }
+    }
   }
   return base
 }

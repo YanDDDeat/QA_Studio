@@ -191,7 +191,7 @@ def _build_output_filename(
 
 
 def _strip_stage_suffix(filename_base: str) -> str:
-    """Remove previously appended stage suffix from a filename base.
+    """Remove ALL previously appended stage suffixes from a filename base.
 
     Previous stages appended patterns like:
       _问题生成_username_20260507123456
@@ -199,28 +199,23 @@ def _strip_stage_suffix(filename_base: str) -> str:
       _COT过滤_username_20260507123456
       etc.
 
-    This strips all such suffixes, keeping only the original user-provided base name.
+    Strips all such suffixes in a loop, keeping only the original
+    user-provided base name.  This prevents filename length from
+    cascading across multiple pipeline stages.
     """
     labels = list(STAGE_LABELS.values()) + [s.value for s in StageEnum]
-    # Build regex: match _{label}_{anything}_{14-digit-timestamp} at end
-    for label in labels:
-        # Pattern: _label_*_<14 digits> at end of string
-        pattern = re.compile(rf'_{re.escape(label)}_[^_]+_\d{{14}}$')
-        match = pattern.search(filename_base)
-        if match:
-            return filename_base[:match.start()]
-    # Also handle cases where the suffix might have been stripped once already
-    # but there's still a trailing _username_timestamp pattern
-    pattern = re.compile(r'_[^_]+_\d{14}$')
-    # Only strip if the username part looks short enough (not the original base)
-    # We check by seeing if remaining base after stripping is still meaningful (>3 chars)
-    match = pattern.search(filename_base)
-    if match and len(filename_base[:match.start()]) > 3:
-        # Verify it's not just a coincidence — check if there's a stage label before
-        preceding = filename_base[:match.start()]
+    # Repeatedly strip the outermost stage suffix until none remain
+    while True:
+        stripped = False
         for label in labels:
-            if preceding.endswith(f'_{label}'):
-                return preceding[:preceding.rfind(f'_{label}')]
+            pattern = re.compile(rf'_{re.escape(label)}_[^_]+_\d{{14}}$')
+            match = pattern.search(filename_base)
+            if match:
+                filename_base = filename_base[:match.start()]
+                stripped = True
+                break  # restart outer loop with shortened base
+        if not stripped:
+            break
     return filename_base
 
 
