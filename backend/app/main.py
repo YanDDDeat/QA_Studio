@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # ---------------------------------------------------------------------------
-# Logging configuration: file (daily, keep all) + console
+# Logging configuration: error/info split files (daily rotation) + console
 # ---------------------------------------------------------------------------
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -20,32 +20,57 @@ _log_format = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# File handler: daily rotation, keep 90 days, DEBUG level (save everything)
-_file_handler = TimedRotatingFileHandler(
-    os.path.join(LOG_DIR, "qa_studio.log"),
+
+class _LevelFilter(logging.Filter):
+    """Only allow log records within a level range [low, high)."""
+    def __init__(self, low, high):
+        super().__init__()
+        self.low = low
+        self.high = high
+
+    def filter(self, record):
+        return self.low <= record.levelno < self.high
+
+
+# INFO file: DEBUG ~ WARNING (everything below ERROR)
+_info_handler = TimedRotatingFileHandler(
+    os.path.join(LOG_DIR, "info.log"),
     when="midnight",
     backupCount=90,
     encoding="utf-8",
 )
-_file_handler.setFormatter(_log_format)
-_file_handler.setLevel(logging.DEBUG)
+_info_handler.setFormatter(_log_format)
+_info_handler.setLevel(logging.DEBUG)
+_info_handler.addFilter(_LevelFilter(logging.DEBUG, logging.ERROR))
+
+# ERROR file: ERROR ~ CRITICAL only
+_error_handler = TimedRotatingFileHandler(
+    os.path.join(LOG_DIR, "error.log"),
+    when="midnight",
+    backupCount=90,
+    encoding="utf-8",
+)
+_error_handler.setFormatter(_log_format)
+_error_handler.setLevel(logging.ERROR)
 
 # Console handler (INFO only, avoid flooding terminal)
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_log_format)
 _console_handler.setLevel(logging.INFO)
 
-# Apply to qa_studio root logger — DEBUG so file captures everything
+# Apply to qa_studio root logger
 _root_logger = logging.getLogger("qa_studio")
 _root_logger.setLevel(logging.DEBUG)
-_root_logger.addHandler(_file_handler)
+_root_logger.addHandler(_info_handler)
+_root_logger.addHandler(_error_handler)
 _root_logger.addHandler(_console_handler)
 
-# Also route uvicorn logs to file
+# Also route uvicorn logs to both files
 for _uv_name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
     _uv_logger = logging.getLogger(_uv_name)
     _uv_logger.setLevel(logging.DEBUG)
-    _uv_logger.addHandler(_file_handler)
+    _uv_logger.addHandler(_info_handler)
+    _uv_logger.addHandler(_error_handler)
 
 from app.routers import (
     auth,
