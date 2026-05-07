@@ -20,8 +20,8 @@
 - [x] 分支3 `feature/file-merge-download`：详见 `docs/requirements/需求_JSON文件合并导出.md`
   - [x] 文件管理页多选JSON文件合并下载
 
-- [ ] 分支4 `feature/llm-fields-extension`：详见 `docs/requirements/10_需求_LLM返回字段扩展存储.md`
-  - [x] Dataset 新增 step_count (String) + extra_fields (JSON) 列（模型+迁移脚本已就绪，需执行迁移）
+- [x] 分支4 `feature/llm-fields-extension`：详见 `docs/requirements/10_需求_LLM返回字段扩展存储.md`
+  - [x] Dataset 新增 step_count (String) + extra_fields (JSON) 列
   - [x] 各阶段 LLM 处理取 step_count + 剩余字段存 extra_fields
   - [x] 前端 categorizeFields 展开 extra_fields 为独立字段显示
 
