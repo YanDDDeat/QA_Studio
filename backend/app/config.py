@@ -1,8 +1,14 @@
 """Application settings loaded from .env"""
 
+import os
+from pathlib import Path
 from typing import List
 
 from pydantic_settings import BaseSettings
+
+# Resolve .env path: project root (one level up from backend/)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _PROJECT_ROOT / ".env"
 
 
 # LLM provider presets — API keys removed, must be set via .env
@@ -70,7 +76,7 @@ class Settings(BaseSettings):
             f"?charset=utf8mb4"
         )
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
 
 
 settings = Settings()
