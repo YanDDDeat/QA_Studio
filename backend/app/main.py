@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # ---------------------------------------------------------------------------
-# Logging configuration: file + console
+# Logging configuration: file (daily, keep all) + console
 # ---------------------------------------------------------------------------
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -20,30 +20,31 @@ _log_format = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# File handler: daily rotation, keep 30 days
+# File handler: daily rotation, keep 90 days, DEBUG level (save everything)
 _file_handler = TimedRotatingFileHandler(
     os.path.join(LOG_DIR, "qa_studio.log"),
     when="midnight",
-    backupCount=30,
+    backupCount=90,
     encoding="utf-8",
 )
 _file_handler.setFormatter(_log_format)
-_file_handler.setLevel(logging.INFO)
+_file_handler.setLevel(logging.DEBUG)
 
-# Console handler
+# Console handler (INFO only, avoid flooding terminal)
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_log_format)
 _console_handler.setLevel(logging.INFO)
 
-# Apply to the qa_studio root logger and all children
+# Apply to qa_studio root logger — DEBUG so file captures everything
 _root_logger = logging.getLogger("qa_studio")
-_root_logger.setLevel(logging.INFO)
+_root_logger.setLevel(logging.DEBUG)
 _root_logger.addHandler(_file_handler)
 _root_logger.addHandler(_console_handler)
 
-# Also route uvicorn access logs to file
+# Also route uvicorn logs to file
 for _uv_name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
     _uv_logger = logging.getLogger(_uv_name)
+    _uv_logger.setLevel(logging.DEBUG)
     _uv_logger.addHandler(_file_handler)
 
 from app.routers import (
