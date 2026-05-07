@@ -157,6 +157,8 @@ async def call_llm(
             "LLM call success | %smodel=%s | elapsed=%.1fs | response_len=%d",
             user_tag + " | " if user_tag else "", model, elapsed, len(content),
         )
+        # Strip <thinking>...</thinking> blocks from response content
+        content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL).strip()
         return content
 
     except httpx.TimeoutException:
