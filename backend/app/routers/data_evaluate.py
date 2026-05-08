@@ -36,7 +36,7 @@ from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import (
     create_output_file, clone_single_dataset,
-    write_datasets_to_file,
+    write_datasets_to_file, STAGE_RETURN_FORMATS,
 )
 from app.services.validation_service import validate_file_fields
 
@@ -200,6 +200,7 @@ async def _run_data_evaluate_task(
         _add_task_log(db, task_id, f"输出文件已创建: {output_file.filename} (file_id={output_file.id})")
 
         evaluated_count = 0
+        consecutive_failures = 0
 
         for idx in range(start_index, total):
             dataset = source_datasets[idx]
@@ -217,7 +218,8 @@ async def _run_data_evaluate_task(
                 )
                 record_content += f"\n知识体系(knowledge): {knowledge_str}"
 
-            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
+            return_format = STAGE_RETURN_FORMATS.get(StageEnum.DATA_EVALUATE, "")
+            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}\n\n---\n\n**返回格式要求：**\n\n请严格按照以下JSON格式返回结果：\n\n{return_format}"
 
             # 检查任务是否被暂停
             task_check = db.query(Task).filter(Task.id == task_id).first()
@@ -236,6 +238,7 @@ async def _run_data_evaluate_task(
                     username=username,
                 )
             except LLMCallError as e:
+                consecutive_failures += 1
                 logger.error(
                     "Task %d: LLM call failed for record %d: %s",
                     task_id, idx, str(e),
@@ -244,12 +247,15 @@ async def _run_data_evaluate_task(
                     db, task_id,
                     f"记录 {idx + 1}: LLM调用失败 - {str(e)[:200]}",
                 )
+                if consecutive_failures >= 20:
+                    task = db.query(Task).filter(Task.id == task_id).first()
+                    if task:
+                        task.status = TaskStatusEnum.FAILED
+                        db.commit()
+                    _add_task_log(db, task_id, f"连续失败{consecutive_failures}次，任务终止")
+                    return
                 _update_progress(db, task_id, idx + 1)
-                task = db.query(Task).filter(Task.id == task_id).first()
-                if task:
-                    task.status = TaskStatusEnum.FAILED
-                    db.commit()
-                return
+                continue
 
             try:
                 relevance = _parse_int_score(llm_result, "relevance")
@@ -258,6 +264,7 @@ async def _run_data_evaluate_task(
                 terminology = _parse_int_score(llm_result, "terminology")
                 score = _parse_float_score(llm_result, "score")
             except (ValueError, TypeError) as e:
+                consecutive_failures += 1
                 logger.warning(
                     "Task %d: score parsing failed for record %d: %s",
                     task_id, idx, str(e),
@@ -266,6 +273,13 @@ async def _run_data_evaluate_task(
                     db, task_id,
                     f"记录 {idx + 1}: 评分解析失败 - {str(e)[:200]}",
                 )
+                if consecutive_failures >= 20:
+                    task = db.query(Task).filter(Task.id == task_id).first()
+                    if task:
+                        task.status = TaskStatusEnum.FAILED
+                        db.commit()
+                    _add_task_log(db, task_id, f"连续失败{consecutive_failures}次，任务终止")
+                    return
                 _update_progress(db, task_id, idx + 1)
                 continue
 
@@ -290,6 +304,7 @@ async def _run_data_evaluate_task(
             cloned_ds.extra_fields = extra if extra else None
             db.commit()
             evaluated_count += 1
+            consecutive_failures = 0
             _add_task_log(
                 db, task_id,
                 f"记录 {idx + 1}: 评估完成 - 综合评分 {score}",

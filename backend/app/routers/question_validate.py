@@ -39,6 +39,7 @@ from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import (
     create_output_file, clone_single_dataset,
     write_datasets_to_file, create_fail_file, serialize_dataset_to_dict,
+    STAGE_RETURN_FORMATS,
 )
 from app.services.validation_service import validate_file_fields
 
@@ -131,6 +132,7 @@ async def _run_question_validate_task(
         fail_records: list[dict] = []
         pass_count = 0
         fail_count = 0
+        consecutive_failures = 0
 
         for idx in range(start_index, total):
             dataset = source_datasets[idx]
@@ -144,7 +146,8 @@ async def _run_question_validate_task(
                 )
                 record_content += f"\n知识体系(knowledge): {knowledge_str}"
 
-            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
+            return_format = STAGE_RETURN_FORMATS.get(StageEnum.QUESTION_VALIDATE, "")
+            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}\n\n---\n\n**返回格式要求：**\n\n请严格按照以下JSON格式返回结果：\n\n{return_format}"
 
             # 检查任务是否被暂停
             task_check = db.query(Task).filter(Task.id == task_id).first()
@@ -162,6 +165,7 @@ async def _run_question_validate_task(
                     username=username,
                 )
             except LLMCallError as e:
+                consecutive_failures += 1
                 logger.error(
                     "Task %d: LLM call failed for record %d: %s",
                     task_id, idx, str(e),
@@ -170,12 +174,15 @@ async def _run_question_validate_task(
                     db, task_id,
                     f"记录 {idx + 1}: LLM调用失败 - {str(e)[:200]}",
                 )
+                if consecutive_failures >= 20:
+                    task = db.query(Task).filter(Task.id == task_id).first()
+                    if task:
+                        task.status = TaskStatusEnum.FAILED
+                        db.commit()
+                    _add_task_log(db, task_id, f"连续失败{consecutive_failures}次，任务终止")
+                    return
                 _update_progress(db, task_id, idx + 1)
-                task = db.query(Task).filter(Task.id == task_id).first()
-                if task:
-                    task.status = TaskStatusEnum.FAILED
-                    db.commit()
-                return
+                continue
 
             validation_result = llm_result.get("validation_result", "")
             reason = llm_result.get("reason", "")
@@ -210,6 +217,7 @@ async def _run_question_validate_task(
                 fail_count += 1
                 _add_task_log(db, task_id, f"记录 {idx + 1}: 校验失败 - {reason[:100]}")
 
+            consecutive_failures = 0
             _update_progress(db, task_id, idx + 1)
 
         if pass_count > 0:

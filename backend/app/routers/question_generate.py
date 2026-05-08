@@ -33,7 +33,7 @@ from app.models.models import (
 )
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
-from app.services.file_service import create_output_file, write_datasets_to_file
+from app.services.file_service import create_output_file, write_datasets_to_file, STAGE_RETURN_FORMATS
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.question_generate")
@@ -137,6 +137,7 @@ async def _run_question_generate_task(
             db.commit()
 
         generated_count = 0
+        consecutive_failures = 0
 
         # 提前创建输出文件，点击开始后前端立即显示输出文件名
         source_file = db.query(File).filter(File.id == source_file_id).first()
@@ -202,7 +203,8 @@ async def _run_question_generate_task(
 
             # Call LLM with the prompt + text content
             try:
-                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{text_content}"
+                return_format = STAGE_RETURN_FORMATS.get(StageEnum.QUESTION_GENERATE, "")
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{text_content}\n\n---\n\n**返回格式要求：**\n\n请严格按照以下JSON格式返回结果：\n\n{return_format}"
                 llm_result = await call_llm_json(
                     prompt=llm_prompt,
                     model=model,
@@ -212,6 +214,7 @@ async def _run_question_generate_task(
                     username=username,
                 )
             except LLMCallError as e:
+                consecutive_failures += 1
                 logger.error(
                     "Task %d: LLM call failed for record %d: %s",
                     task_id, idx, str(e),
@@ -220,13 +223,15 @@ async def _run_question_generate_task(
                     db, task_id,
                     f"记录 {idx + 1}: LLM调用失败 - {str(e)[:200]}",
                 )
+                if consecutive_failures >= 20:
+                    task = db.query(Task).filter(Task.id == task_id).first()
+                    if task:
+                        task.status = TaskStatusEnum.FAILED
+                        db.commit()
+                    _add_task_log(db, task_id, f"连续失败{consecutive_failures}次，任务终止")
+                    return
                 _update_progress(db, task_id, idx + 1)
-                # Mark task as failed
-                task = db.query(Task).filter(Task.id == task_id).first()
-                if task:
-                    task.status = TaskStatusEnum.FAILED
-                    db.commit()
-                return  # Stop processing on LLM failure
+                continue
 
             # Parse the LLM response as a list of question objects
             questions = []
@@ -243,6 +248,7 @@ async def _run_question_generate_task(
                     questions = [llm_result]
 
             if not questions:
+                consecutive_failures = 0
                 logger.warning(
                     "Task %d: no questions generated for record %d",
                     task_id, idx,
@@ -292,6 +298,7 @@ async def _run_question_generate_task(
 
             db.commit()
 
+            consecutive_failures = 0
             _add_task_log(
                 db, task_id,
                 f"记录 {idx + 1}: 生成 {len(questions)} 个问题",

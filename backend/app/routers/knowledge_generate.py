@@ -32,7 +32,7 @@ from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import (
     create_output_file, clone_single_dataset, write_datasets_to_file,
-    repair_file_on_disk,
+    repair_file_on_disk, STAGE_RETURN_FORMATS,
 )
 from app.services.validation_service import validate_file_fields
 
@@ -123,6 +123,7 @@ async def _run_knowledge_generate_task(
         _add_task_log(db, task_id, f"输出文件已创建: {output_file.filename} (file_id={output_file.id})")
 
         success_count = 0
+        consecutive_failures = 0
 
         for idx in range(start_index, total):
             dataset = source_datasets[idx]
@@ -143,7 +144,8 @@ async def _run_knowledge_generate_task(
                 return
 
             try:
-                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{input_text}"
+                return_format = STAGE_RETURN_FORMATS.get(StageEnum.KNOWLEDGE_GENERATE, "")
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{input_text}\n\n---\n\n**返回格式要求：**\n\n请严格按照以下JSON格式返回结果：\n\n{return_format}"
                 llm_result = await call_llm_json(
                     prompt=llm_prompt,
                     model=model,
@@ -153,6 +155,7 @@ async def _run_knowledge_generate_task(
                     username=username,
                 )
             except LLMCallError as e:
+                consecutive_failures += 1
                 logger.error(
                     "Task %d: LLM call failed for dataset %d: %s",
                     task_id, dataset.id, str(e),
@@ -161,12 +164,15 @@ async def _run_knowledge_generate_task(
                     db, task_id,
                     f"记录 {idx + 1}: LLM调用失败 - {str(e)[:200]}",
                 )
+                if consecutive_failures >= 20:
+                    task = db.query(Task).filter(Task.id == task_id).first()
+                    if task:
+                        task.status = TaskStatusEnum.FAILED
+                        db.commit()
+                    _add_task_log(db, task_id, f"连续失败{consecutive_failures}次，任务终止")
+                    return
                 _update_progress(db, task_id, idx + 1)
-                task = db.query(Task).filter(Task.id == task_id).first()
-                if task:
-                    task.status = TaskStatusEnum.FAILED
-                    db.commit()
-                return
+                continue
 
             if isinstance(llm_result, dict):
                 knowledge_value = llm_result.get("knowledge", "")
@@ -182,12 +188,14 @@ async def _run_knowledge_generate_task(
                 cloned_ds.extra_fields = extra if extra else None
                 db.commit()
                 success_count += 1
+                consecutive_failures = 0
 
                 _add_task_log(
                     db, task_id,
                     f"记录 {idx + 1}: 知识体系生成成功 (数据集ID {dataset.id})",
                 )
             else:
+                consecutive_failures = 0
                 logger.warning(
                     "Task %d: unexpected LLM result type for dataset %d: %s",
                     task_id, dataset.id, type(llm_result).__name__,
