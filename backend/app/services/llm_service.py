@@ -159,14 +159,32 @@ async def call_llm(
             )
 
         logger.info(
-            "LLM call success | %smodel=%s | elapsed=%.1fs | response_len=%d",
+            "LLM call success | %smodel=%s | elapsed=%.1fs | response_len=%d | first_chars=%s",
             user_tag + " | " if user_tag else "", model, elapsed, len(content),
+            repr(content[:80]),
         )
-        # Strip <thinking>...</thinking> blocks from response content
-        # Also handle unclosed <thinking> tags (strip everything after <thinking> if no closing tag)
-        content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL)
-        content = re.sub(r"<thinking>.*", "", content, flags=re.DOTALL)
-        content = content.strip()
+        # Strip thinking/reasoning blocks from response content
+        # Handles closed tags: <think>, <thinking>, <reasoning> (case-insensitive)
+        content = re.sub(
+            r"<(think|thinking|reasoning)>.*?</\1>", "",
+            content, flags=re.DOTALL | re.IGNORECASE,
+        )
+        # Handles unclosed tags: <think>... (no closing tag, strip to end)
+        content = re.sub(
+            r"<(think|thinking|reasoning)>.*", "",
+            content, flags=re.DOTALL | re.IGNORECASE,
+        )
+        # Format 2: qwen3 native thinking — uses <tag>...<tag>/AE format
+        #   e.g. "xAE\n思考内容\nxAE/AE\n\n实际回复"
+        #   Detect tag from first line, find closing marker, strip thinking block.
+        stripped = content.strip()
+        if stripped:
+            first_line = stripped.split('\n')[0].rstrip()
+            if first_line and len(first_line) <= 6:
+                closing = first_line + "/AE"
+                idx = content.find(closing)
+                if idx >= 0:
+                    content = content[idx + len(closing):].strip()
         return content
 
     except httpx.TimeoutException:
@@ -223,10 +241,26 @@ def parse_llm_json(text: str) -> dict:
     Raises:
         LLMCallError: If no valid JSON can be extracted.
     """
-    # Strip <thinking>...</thinking> blocks (qwen3 reasoning output)
-    # Also handle unclosed <thinking> tags
-    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
-    text = re.sub(r"<thinking>.*", "", text, flags=re.DOTALL)
+    # Strip thinking/reasoning blocks before JSON extraction
+    # Handles closed tags: <think>, <thinking>, <reasoning> (case-insensitive)
+    text = re.sub(
+        r"<(think|thinking|reasoning)>.*?</\1>", "",
+        text, flags=re.DOTALL | re.IGNORECASE,
+    )
+    # Handles unclosed tags: <think>... (no closing tag, strip to end)
+    text = re.sub(
+        r"<(think|thinking|reasoning)>.*", "",
+        text, flags=re.DOTALL | re.IGNORECASE,
+    )
+    # Format 2: qwen3 native thinking — same logic as call_llm
+    stripped = text.strip()
+    if stripped:
+        first_line = stripped.split('\n')[0].rstrip()
+        if first_line and len(first_line) <= 6:
+            closing = first_line + "/AE"
+            idx = text.find(closing)
+            if idx >= 0:
+                text = text[idx + len(closing):].strip()
     text = text.strip()
 
     # Strategy 1: Try direct parse first
