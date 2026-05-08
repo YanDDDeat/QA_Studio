@@ -205,12 +205,20 @@ export function deleteManagedFile(id) {
   return api.delete(`/file-manage/${id}`)
 }
 
-export function downloadManagedFile(id) {
-  return api.get(`/file-manage/download/${id}`, { responseType: 'blob' })
+export function downloadManagedFile(id, fields = null) {
+  const params = { responseType: 'blob' }
+  if (fields && fields.length > 0) {
+    params.params = { fields: fields.join(',') }
+  }
+  return api.get(`/file-manage/download/${id}`, params)
 }
 
-export function mergeAndDownloadFiles(fileIds) {
-  return api.post('/file-manage/merge-download', { file_ids: fileIds }, { responseType: 'blob' })
+export function mergeAndDownloadFiles(fileIds, fields = null) {
+  const data = { file_ids: fileIds }
+  if (fields && fields.length > 0) {
+    data.fields = fields
+  }
+  return api.post('/file-manage/merge-download', data, { responseType: 'blob' })
 }
 
 // LLM Config API

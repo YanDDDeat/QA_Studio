@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.models import File, Task, TaskStatusEnum, StageEnum, User
 from app.routers.auth import get_current_user
+from app.services.file_manage_service import filter_record_fields, filter_records_fields
 from app.services.md_parser import _split_by_section, _split_by_paragraph
 
 router = APIRouter()
@@ -443,10 +444,14 @@ async def delete_managed_file(
 @router.get("/download/{file_id}")
 async def download_managed_file(
     file_id: int,
+    fields: str = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Download a file by streaming it from disk."""
+    """Download a file by streaming it from disk.
+    If fields parameter is provided (comma-separated field names), filter JSON records
+    to only include selected fields. Top-level fields are plain names; extra sub-fields
+    are prefixed with 'extra.' (e.g. 'extra.options'). Without fields, returns full data."""
     query = db.query(File).filter(File.id == file_id)
     if current_user.username != "admin":
         query = query.filter(File.user_id == current_user.id)
@@ -463,6 +468,43 @@ async def download_managed_file(
             detail="File not found on disk",
         )
 
+    # If fields filtering requested and file is JSON, apply field filtering
+    if fields and file_obj.file_type == "json":
+        field_list = [f.strip() for f in fields.split(",") if f.strip()]
+        if field_list:
+            try:
+                with open(file_obj.file_path, "r", encoding="utf-8") as f:
+                    content = json.load(f)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to parse JSON: {str(e)}",
+                )
+
+            if isinstance(content, list):
+                filtered = filter_records_fields(content, field_list)
+            elif isinstance(content, dict):
+                filtered = [filter_record_fields(content, field_list)]
+            else:
+                filtered = content
+
+            # Write filtered data to a temp file for streaming
+            temp_dir = os.path.join("uploads", str(current_user.id))
+            os.makedirs(temp_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            filtered_filename = f"filtered_{file_obj.filename}_{timestamp}.json"
+            filtered_path = os.path.join(temp_dir, filtered_filename)
+
+            with open(filtered_path, "w", encoding="utf-8") as fh:
+                json.dump(filtered, fh, ensure_ascii=False, indent=2)
+
+            return FileResponse(
+                path=filtered_path,
+                filename=file_obj.filename,
+                media_type="application/json",
+            )
+
+    # No field filtering — return original file
     media_type_map = {
         "json": "application/json",
         "pdf": "application/pdf",
@@ -482,6 +524,7 @@ async def download_managed_file(
 
 class MergeDownloadRequest(BaseModel):
     file_ids: List[int]
+    fields: Optional[List[str]] = None
 
 
 @router.post("/merge-download")
@@ -490,8 +533,10 @@ async def merge_and_download(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Merge multiple JSON files into one and return as download."""
+    """Merge multiple JSON files into one and return as download.
+    If fields list is provided, filter records to only include selected fields."""
     file_ids = body.file_ids
+    field_list = body.fields
     if len(file_ids) < 2:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -540,6 +585,10 @@ async def merge_and_download(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="没有可合并的内容。请检查选择的文件是否为有效JSON数组",
         )
+
+    # Apply field filtering if requested
+    if field_list and len(field_list) > 0:
+        merged = filter_records_fields(merged, field_list)
 
     # Write temporary merged file
     temp_dir = os.path.join("uploads", str(current_user.id))

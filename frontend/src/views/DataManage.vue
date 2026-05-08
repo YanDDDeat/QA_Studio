@@ -142,7 +142,7 @@
       <div v-loading="previewLoading" class="preview-content">
         <template v-if="previewData && previewData.preview && previewData.preview.length">
           <el-table
-            :data="previewData.preview"
+            :data="flatPreviewData"
             stripe
             border
             size="small"
@@ -199,6 +199,15 @@
         </div>
       </div>
     </el-card>
+
+    <!-- Field selection dialog for export -->
+    <FieldSelectDialog
+      :visible="fieldSelectVisible"
+      :fields="availableFields"
+      :default-fields="DEFAULT_EXPORT_FIELDS"
+      @confirm="onFieldSelectConfirm"
+      @cancel="onFieldSelectCancel"
+    />
   </div>
 </template>
 
@@ -207,6 +216,7 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import katex from 'katex'
+import FieldSelectDialog from '../components/FieldSelectDialog.vue'
 import {
   getManagedFiles,
   getManagedFileContent,
@@ -259,20 +269,88 @@ const fileTableRef = ref(null)
 const showAllFiles = ref(false)
 const isAdmin = computed(() => localStorage.getItem('username') === 'admin')
 
+// Default fields for export selection (case-insensitive matching)
+const DEFAULT_EXPORT_FIELDS = [
+  'id', 'domain', 'category', 'task_type', 'input', 'output', 'cot',
+  'corpus_cate', 'scene', 'source', 'source_id', 'originContent', 'source_type',
+  'knowledge', 'difficulty', 'Relevance', 'Clarity', 'Scientific', 'Reasoning',
+  'Terminology', 'score',
+]
+
+// Field selection dialog state
+const fieldSelectVisible = ref(false)
+const availableFields = ref({ topLevel: [], extra: [] })
+const pendingDownloadTarget = ref(null) // { type: 'single', row } or { type: 'merge' }
+
+// Parse available fields from preview data
+function parseAvailableFields() {
+  if (!previewData.value?.preview?.length) {
+    return { topLevel: [], extra: [] }
+  }
+  const topLevelSet = new Set()
+  const extraSet = new Set()
+  for (const row of previewData.value.preview) {
+    if (!row || typeof row !== 'object') continue
+    for (const key of Object.keys(row)) {
+      if (key === 'extra_fields' || key === 'extra') {
+        const extra = row[key]
+        if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
+          for (const ek of Object.keys(extra)) extraSet.add(ek)
+        }
+      } else {
+        topLevelSet.add(key)
+      }
+    }
+  }
+  return {
+    topLevel: [...topLevelSet].sort(),
+    extra: [...extraSet].sort(),
+  }
+}
+
 // Dynamic preview columns from actual data
 const previewColumns = computed(() => {
   if (!previewData.value?.preview?.length) return []
-  const first = previewData.value.preview[0]
-  if (!first || typeof first !== 'object') return []
-  return Object.keys(first).map(key => {
-    const val = first[key]
-    const isLong = typeof val === 'string' && val.length > 200
-    return {
-      prop: key,
-      label: key,
-      width: key === 'id' ? 55 : undefined,
-      minWidth: isLong ? 80 : 100,
+  // Collect all unique keys across records, expanding extra_fields
+  const allKeys = new Set()
+  for (const row of previewData.value.preview) {
+    if (!row || typeof row !== 'object') continue
+    for (const key of Object.keys(row)) {
+      if (key === 'extra_fields') {
+        const extra = row[key]
+        if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
+          for (const ek of Object.keys(extra)) allKeys.add(ek)
+        }
+        // skip extra_fields itself
+      } else {
+        allKeys.add(key)
+      }
     }
+  }
+  return [...allKeys].map(key => ({
+    prop: key,
+    label: key,
+    width: key === 'id' ? 55 : undefined,
+    minWidth: 100,
+  }))
+})
+
+// Flatten preview rows: expand extra_fields into individual fields
+const flatPreviewData = computed(() => {
+  if (!previewData.value?.preview?.length) return []
+  return previewData.value.preview.map(row => {
+    if (!row || typeof row !== 'object') return row
+    const flat = { ...row }
+    const extra = flat.extra_fields
+    if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
+      delete flat.extra_fields
+      for (const [k, v] of Object.entries(extra)) {
+        if (!(k in flat)) flat[k] = v
+      }
+    } else {
+      delete flat.extra_fields
+    }
+    return flat
   })
 })
 
@@ -294,13 +372,13 @@ const detailFlatRecord = computed(() => {
 
 // Detail fields: split into meta (short) and long-text
 const detailMetaFields = computed(() => {
-  if (!selectedRecord.value) return []
-  return categorizeFields(selectedRecord.value).meta
+  if (!detailFlatRecord.value) return []
+  return categorizeFields(detailFlatRecord.value).meta
 })
 
 const detailLongTextFields = computed(() => {
-  if (!selectedRecord.value) return []
-  return categorizeFields(selectedRecord.value).longText
+  if (!detailFlatRecord.value) return []
+  return categorizeFields(detailFlatRecord.value).longText
 })
 
 function stageLabel(stage) {
@@ -425,19 +503,59 @@ function handleRecordSelect(row) {
 }
 
 async function handleDownload(row) {
+  // Parse available fields from preview data
+  availableFields.value = parseAvailableFields()
+  if (availableFields.value.topLevel.length === 0 && availableFields.value.extra.length === 0) {
+    // No preview data loaded yet — download full file directly
+    try {
+      const blob = await downloadManagedFile(row.id)
+      triggerDownload(blob, row.filename)
+    } catch (err) {
+      ElMessage.error('下载文件失败')
+    }
+    return
+  }
+  // Show field selection dialog
+  pendingDownloadTarget.value = { type: 'single', row }
+  fieldSelectVisible.value = true
+}
+
+function onFieldSelectConfirm(fields) {
+  fieldSelectVisible.value = false
+  const target = pendingDownloadTarget.value
+  if (!target) return
+  pendingDownloadTarget.value = null
+
+  if (target.type === 'single') {
+    doDownloadSingle(target.row, fields)
+  } else if (target.type === 'merge') {
+    doMergeDownload(fields)
+  }
+}
+
+function onFieldSelectCancel() {
+  fieldSelectVisible.value = false
+  pendingDownloadTarget.value = null
+}
+
+async function doDownloadSingle(row, fields) {
   try {
-    const blob = await downloadManagedFile(row.id)
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = row.filename
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
+    const blob = await downloadManagedFile(row.id, fields)
+    triggerDownload(blob, row.filename)
   } catch (err) {
     ElMessage.error('下载文件失败')
   }
+}
+
+function triggerDownload(blob, filename) {
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
 }
 
 function handleSelectionChange(selection) {
@@ -461,33 +579,25 @@ async function handleMergeDownload() {
     ElMessage.warning('请至少选择2个文件')
     return
   }
-  // Build confirmation list
-  const fileList = [...selectedFileIds.value].map(id => {
-    const info = selectedFileInfo.value.get(id)
-    return info ? `${info.filename} — ${info.username || '未知用户'}` : `ID:${id}`
-  }).join('\n')
 
-  try {
-    await ElMessageBox.confirm(
-      `确认合并以下 ${selectedFileIds.value.size} 个文件？\n\n${fileList}`,
-      '合并确认',
-      { confirmButtonText: '确认合并', cancelButtonText: '取消', type: 'info' }
-    )
-  } catch {
+  // Parse available fields from preview data
+  availableFields.value = parseAvailableFields()
+  if (availableFields.value.topLevel.length === 0 && availableFields.value.extra.length === 0) {
+    // No preview data — merge download directly without field selection
+    doMergeDownload(null)
     return
   }
 
+  // Show field selection dialog instead of ElMessageBox.confirm
+  pendingDownloadTarget.value = { type: 'merge' }
+  fieldSelectVisible.value = true
+}
+
+async function doMergeDownload(fields) {
   const ids = [...selectedFileIds.value]
   try {
-    const blob = await mergeAndDownloadFiles(ids)
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `merged_${ids.length}files.json`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
+    const blob = await mergeAndDownloadFiles(ids, fields)
+    triggerDownload(blob, `merged_${ids.length}files.json`)
     ElMessage.success(`已合并${ids.length}个文件，下载中`)
   } catch (err) {
     const detail = err.response?.data?.detail || '合并下载失败'
