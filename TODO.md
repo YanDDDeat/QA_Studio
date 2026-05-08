@@ -25,11 +25,11 @@
   - [x] 各阶段 LLM 处理取 step_count + 剩余字段存 extra_fields
   - [x] 前端 categorizeFields 展开 extra_fields 为独立字段显示
 
-- [ ] 分支5 `feature/export-field-select`：详见 `docs/requirements/10_需求_导出字段选择.md`
-  - [ ] 下载/合并下载前弹出字段选择 Dialog
-  - [ ] 默认勾选22个字段（忽略大小写匹配）
-  - [ ] extra 子字段解析与分组显示
-  - [ ] 后端下载接口支持 fields 参数过滤
+- [x] 分支5 `feature/export-field-select`：详见 `docs/requirements/10_需求_导出字段选择.md`
+  - [x] 下载/合并下载前弹出字段选择 Dialog
+  - [x] 默认勾选22个字段（忽略大小写匹配）
+  - [x] extra 子字段解析与分组显示
+  - [x] 后端下载接口支持 fields 参数过滤
 
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架

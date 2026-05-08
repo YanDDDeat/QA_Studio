@@ -274,7 +274,7 @@ const DEFAULT_EXPORT_FIELDS = [
   'id', 'domain', 'category', 'task_type', 'input', 'output', 'cot',
   'corpus_cate', 'scene', 'source', 'source_id', 'originContent', 'source_type',
   'knowledge', 'difficulty', 'Relevance', 'Clarity', 'Scientific', 'Reasoning',
-  'Terminology', 'score',
+  'Terminology', 'score', 'Assessment',
 ]
 
 // Field selection dialog state
@@ -283,6 +283,11 @@ const availableFields = ref({ topLevel: [], extra: [] })
 const pendingDownloadTarget = ref(null) // { type: 'single', row } or { type: 'merge' }
 
 // Parse available fields from preview data
+function normalizeFieldName(name, defaults) {
+  const lowerDefaults = new Map(defaults.map(f => [f.toLowerCase(), f]))
+  return lowerDefaults.get(name.toLowerCase()) || name
+}
+
 function parseAvailableFields() {
   if (!previewData.value?.preview?.length) {
     return { topLevel: [], extra: [] }
@@ -295,10 +300,10 @@ function parseAvailableFields() {
       if (key === 'extra_fields' || key === 'extra') {
         const extra = row[key]
         if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
-          for (const ek of Object.keys(extra)) extraSet.add(ek)
+          for (const ek of Object.keys(extra)) extraSet.add(normalizeFieldName(ek, DEFAULT_EXPORT_FIELDS))
         }
       } else {
-        topLevelSet.add(key)
+        topLevelSet.add(normalizeFieldName(key, DEFAULT_EXPORT_FIELDS))
       }
     }
   }
@@ -503,16 +508,21 @@ function handleRecordSelect(row) {
 }
 
 async function handleDownload(row) {
-  // Parse available fields from preview data
+  // If preview data not loaded for this file, fetch it to discover fields
+  if (!previewData.value || selectedFile.value?.id !== row.id) {
+    try {
+      const res = await getManagedFileContent(row.id, { page: 1, page_size: 5 })
+      previewData.value = res
+      selectedFile.value = row
+      filterOptions.value = res.filter_options || null
+    } catch (err) {
+      ElMessage.error('加载文件字段信息失败')
+      return
+    }
+  }
   availableFields.value = parseAvailableFields()
   if (availableFields.value.topLevel.length === 0 && availableFields.value.extra.length === 0) {
-    // No preview data loaded yet — download full file directly
-    try {
-      const blob = await downloadManagedFile(row.id)
-      triggerDownload(blob, row.filename)
-    } catch (err) {
-      ElMessage.error('下载文件失败')
-    }
+    ElMessage.warning('无法解析字段信息，请检查文件格式')
     return
   }
   // Show field selection dialog
@@ -580,15 +590,27 @@ async function handleMergeDownload() {
     return
   }
 
-  // Parse available fields from preview data
+  // If no preview data loaded, fetch from one selected file to discover fields
   availableFields.value = parseAvailableFields()
   if (availableFields.value.topLevel.length === 0 && availableFields.value.extra.length === 0) {
-    // No preview data — merge download directly without field selection
-    doMergeDownload(null)
+    const firstId = [...selectedFileIds.value][0]
+    try {
+      const res = await getManagedFileContent(firstId, { page: 1, page_size: 5 })
+      previewData.value = res
+      filterOptions.value = res.filter_options || null
+    } catch (err) {
+      ElMessage.error('加载文件字段信息失败')
+      return
+    }
+    availableFields.value = parseAvailableFields()
+  }
+
+  if (availableFields.value.topLevel.length === 0 && availableFields.value.extra.length === 0) {
+    ElMessage.warning('无法解析字段信息，请检查文件格式')
     return
   }
 
-  // Show field selection dialog instead of ElMessageBox.confirm
+  // Show field selection dialog
   pendingDownloadTarget.value = { type: 'merge' }
   fieldSelectVisible.value = true
 }

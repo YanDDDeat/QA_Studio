@@ -57,6 +57,7 @@
     </div>
 
     <template #footer>
+      <span class="selected-count">已选 {{ selectedFields.length }} 个字段</span>
       <el-button @click="$emit('cancel')">取消</el-button>
       <el-button type="primary" @click="$emit('confirm', selectedFields)">确认导出</el-button>
     </template>
@@ -202,5 +203,11 @@ function toggleField(field, val) {
 
 .checkbox-grid .el-checkbox {
   min-width: 120px;
+}
+
+.selected-count {
+  color: #909399;
+  font-size: 13px;
+  margin-right: 16px;
 }
 </style>

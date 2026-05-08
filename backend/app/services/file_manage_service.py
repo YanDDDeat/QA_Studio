@@ -4,6 +4,9 @@
 def filter_record_fields(record: dict, fields: list[str]) -> dict:
     """Filter a single record to only include selected fields.
 
+    Selected fields that don't exist in the record are included with empty string "".
+    Extra sub-fields that don't exist in the record's extra object are also included as "".
+
     Args:
         record: The original data record (dict).
         fields: List of selected field names. Top-level fields are plain names
@@ -11,20 +14,18 @@ def filter_record_fields(record: dict, fields: list[str]) -> dict:
                 (e.g. "extra.options", "extra.confidence"). Matching is case-insensitive.
 
     Returns:
-        A new dict with only the selected fields. If some extra sub-fields are
-        selected, the "extra" (or "extra_fields") key keeps only those sub-fields.
-        If no extra sub-fields are selected, the "extra"/"extra_fields" key is removed.
+        A new dict with only the selected fields. Missing fields get "".
+        If some extra sub-fields are selected, the "extra" (or "extra_fields") key
+        keeps only those sub-fields. If no extra sub-fields are selected, extra key is omitted.
     """
     if not fields:
         return record
 
-    # Build case-insensitive lookup sets
+    # Build case-insensitive lookup: desired lowercase → original field name from selection
     lower_top_level = {f.lower(): f for f in fields if not f.startswith("extra.")}
     lower_extra = {f[len("extra."):].lower(): f[len("extra."):] for f in fields if f.startswith("extra.")}
 
-    result = {}
-
-    # The extra field may be stored as "extra" or "extra_fields" depending on the pipeline stage
+    # Find the extra key in the record (could be "extra" or "extra_fields")
     extra_key = None
     extra_data = None
     for candidate in ("extra", "extra_fields"):
@@ -33,24 +34,32 @@ def filter_record_fields(record: dict, fields: list[str]) -> dict:
             extra_data = record[candidate]
             break
 
-    # Keep selected top-level fields (case-insensitive match against actual record keys)
-    for key, value in record.items():
-        if key == extra_key:
-            continue  # handle extra separately below
-        if key.lower() in lower_top_level:
-            # Use the actual record key name (preserve original casing)
-            result[key] = value
+    # Build a reverse map: actual record key lowercase → actual record key (preserve casing)
+    record_key_map = {k.lower(): k for k in record.keys() if k != extra_key}
 
-    # Handle extra sub-fields
-    if extra_key and extra_data:
+    # Top-level fields: always present, "" if missing; output key name follows user selection
+    result = {}
+    for desired_lower, desired_name in lower_top_level.items():
+        if desired_lower in record_key_map:
+            result[desired_name] = record[record_key_map[desired_lower]]
+        else:
+            result[desired_name] = ""
+
+    # Extra sub-fields: always present if any extra sub-field is selected; output key name follows user selection
+    if lower_extra:
+        # Determine which extra key to use in output
+        output_extra_key = extra_key or "extra"
         filtered_extra = {}
-        for sub_key, sub_value in extra_data.items():
-            if sub_key.lower() in lower_extra:
-                # Preserve actual sub-key casing from the data
-                filtered_extra[sub_key] = sub_value
-        if filtered_extra:
-            result[extra_key] = filtered_extra
-        # If no extra sub-fields selected, extra key is simply omitted
+        # Build a reverse map for extra sub-keys
+        extra_key_map = {}
+        if extra_data:
+            extra_key_map = {k.lower(): k for k in extra_data.keys()}
+        for desired_lower, desired_name in lower_extra.items():
+            if desired_lower in extra_key_map:
+                filtered_extra[desired_name] = extra_data[extra_key_map[desired_lower]]
+            else:
+                filtered_extra[desired_name] = ""
+        result[output_extra_key] = filtered_extra
 
     return result
 
