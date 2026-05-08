@@ -202,7 +202,7 @@ async def _run_question_generate_task(
 
             # Call LLM with the prompt + text content
             try:
-                llm_prompt = f"{prompt_content}\n\n{text_content}"
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{text_content}"
                 llm_result = await call_llm_json(
                     prompt=llm_prompt,
                     model=model,

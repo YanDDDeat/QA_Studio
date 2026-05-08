@@ -140,7 +140,7 @@ async def _run_answer_generate_task(
             if origin_content:
                 record_content += f"\n原文(originContent): {origin_content}"
 
-            llm_prompt = f"{prompt_content}\n\n{record_content}"
+            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
 
             # 检查任务是否被暂停
             task_check = db.query(Task).filter(Task.id == task_id).first()

@@ -143,7 +143,7 @@ async def _run_knowledge_generate_task(
                 return
 
             try:
-                llm_prompt = f"{prompt_content}\n\n{input_text}"
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{input_text}"
                 llm_result = await call_llm_json(
                     prompt=llm_prompt,
                     model=model,

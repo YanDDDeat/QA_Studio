@@ -217,7 +217,7 @@ async def _run_data_evaluate_task(
                 )
                 record_content += f"\n知识体系(knowledge): {knowledge_str}"
 
-            llm_prompt = f"{prompt_content}\n\n{record_content}"
+            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
 
             # 检查任务是否被暂停
             task_check = db.query(Task).filter(Task.id == task_id).first()
