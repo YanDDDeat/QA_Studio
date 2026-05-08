@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.models import File, Task, TaskStatusEnum, StageEnum, User
+from app.models.models import Dataset, File, Task, TaskStatusEnum, StageEnum, User
 from app.routers.auth import get_current_user
 from app.services.file_manage_service import filter_record_fields, filter_records_fields
 from app.services.md_parser import _split_by_section, _split_by_paragraph
@@ -520,6 +520,56 @@ async def download_managed_file(
         filename=file_obj.filename,
         media_type=media_type,
     )
+
+
+@router.post("/sync/{file_id}")
+async def sync_file_to_disk(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """将 DB 中该文件关联的 Dataset 数据全量同步到磁盘 JSON 文件（覆盖写入）。"""
+    query = db.query(File).filter(File.id == file_id)
+    if current_user.username != "admin":
+        query = query.filter(File.user_id == current_user.id)
+    file_obj = query.first()
+    if file_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文件不存在",
+        )
+
+    if file_obj.file_type != "json":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="仅支持同步JSON文件",
+        )
+
+    datasets_count = (
+        db.query(Dataset)
+        .filter(Dataset.file_id == file_id)
+        .count()
+    )
+
+    if datasets_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该文件下无Dataset数据可同步",
+        )
+
+    try:
+        from app.services.file_service import write_datasets_to_file
+        write_datasets_to_file(db=db, file_id=file_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"同步失败: {str(e)[:200]}",
+        )
+
+    return {
+        "synced_count": datasets_count,
+        "filename": file_obj.filename,
+    }
 
 
 class MergeDownloadRequest(BaseModel):

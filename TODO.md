@@ -31,6 +31,12 @@
   - [x] extra 子字段解析与分组显示
   - [x] 后端下载接口支持 fields 参数过滤
 
+## 数据持久化改进
+- [ ] 分支 `feature/data-flush-and-sync`
+  - [x] 任务暂停/停止时自动刷盘：各 `_run_*_task()` 检测到 PAUSED 状态退出前调用 `write_datasets_to_file()` 写入已有数据，避免中途暂停后 JSON 文件为空
+  - [x] 数据中心文件列表新增"同步到文件"按钮：`POST /file-manage/sync/{file_id}`，从 DB 全量重写磁盘 JSON，覆盖写入让文件与 DB 一致
+  - [ ] 详见 `docs/requirements/11_需求_数据持久化与手动同步.md`
+
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
 - [x] 用户管理：管理员创建账号 + 登录认证 + 数据隔离

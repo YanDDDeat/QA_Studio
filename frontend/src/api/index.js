@@ -213,6 +213,10 @@ export function downloadManagedFile(id, fields = null) {
   return api.get(`/file-manage/download/${id}`, params)
 }
 
+export function syncFileToDisk(fileId) {
+  return api.post(`/file-manage/sync/${fileId}`)
+}
+
 export function mergeAndDownloadFiles(fileIds, fields = null) {
   const data = { file_ids: fileIds }
   if (fields && fields.length > 0) {

@@ -198,7 +198,12 @@ async def _run_question_generate_task(
             # 检查任务是否被暂停
             task_check = db.query(Task).filter(Task.id == task_id).first()
             if task_check and task_check.status == TaskStatusEnum.PAUSED:
-                _add_task_log(db, task_id, f"任务已暂停 (已处理 {idx}/{total} 条)")
+                # 暂停前将已有数据刷写到磁盘文件
+                try:
+                    write_datasets_to_file(db=db, file_id=output_file.id)
+                    _add_task_log(db, task_id, f"任务已暂停，已将 {idx} 条数据写入文件")
+                except Exception as flush_err:
+                    _add_task_log(db, task_id, f"任务已暂停，刷写文件失败: {str(flush_err)[:200]}")
                 return
 
             # Call LLM with the prompt + text content
@@ -223,11 +228,16 @@ async def _run_question_generate_task(
                     f"记录 {idx + 1}: LLM调用失败 - {str(e)[:200]}",
                 )
                 if consecutive_failures >= 20:
+                    # 连续失败终止前将已有数据刷写到磁盘文件
+                    try:
+                        write_datasets_to_file(db=db, file_id=output_file.id)
+                        _add_task_log(db, task_id, f"连续失败{consecutive_failures}次终止，已将已有数据写入文件")
+                    except Exception as flush_err:
+                        _add_task_log(db, task_id, f"连续失败{consecutive_failures}次终止，刷写文件失败: {str(flush_err)[:200]}")
                     task = db.query(Task).filter(Task.id == task_id).first()
                     if task:
                         task.status = TaskStatusEnum.FAILED
                         db.commit()
-                    _add_task_log(db, task_id, f"连续失败{consecutive_failures}次，任务终止")
                     return
                 _update_progress(db, task_id, idx + 1)
                 continue
@@ -340,6 +350,13 @@ async def _run_question_generate_task(
             if task:
                 task.status = TaskStatusEnum.FAILED
                 db.commit()
+            # 异常退出时尝试将已有数据刷写到磁盘
+            if output_file:
+                try:
+                    write_datasets_to_file(db=db, file_id=output_file.id)
+                    logger.info("Task %d: flushed partial data to file on exception exit", task_id)
+                except Exception:
+                    pass
         except Exception:
             pass
     finally:

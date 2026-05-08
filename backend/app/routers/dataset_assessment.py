@@ -26,6 +26,7 @@ from app.models.models import (
 )
 from app.routers.auth import get_current_user
 from app.services.assessment_service import run_assessment_job
+from app.services.file_service import write_datasets_to_file
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.dataset_assessment")
@@ -128,6 +129,13 @@ async def _run_assessment_task(
                 task.status = TaskStatusEnum.FAILED
                 db.commit()
             _add_task_log(db, task_id, f"评分生成失败: {str(e)[:200]}")
+            # 异常退出时尝试将已有数据刷写到磁盘
+            if task and task.file_id:
+                try:
+                    write_datasets_to_file(db=db, file_id=task.file_id)
+                    logger.info("Task %d: flushed partial data to file on exception exit", task_id)
+                except Exception:
+                    pass
         except Exception:
             pass
     finally:

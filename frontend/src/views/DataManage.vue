@@ -67,13 +67,23 @@
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click.stop="handleFileSelect(row)">
               查看
             </el-button>
             <el-button type="success" link size="small" @click.stop="handleDownload(row)">
               下载
+            </el-button>
+            <el-button
+              :icon="Refresh"
+              type="warning"
+              link
+              size="small"
+              :loading="syncLoading"
+              @click.stop="handleSync(row)"
+            >
+              同步
             </el-button>
             <el-button type="danger" link size="small" @click.stop="handleDeleteFile(row)">
               删除
@@ -215,6 +225,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import katex from 'katex'
 import FieldSelectDialog from '../components/FieldSelectDialog.vue'
 import {
@@ -223,6 +234,7 @@ import {
   downloadManagedFile,
   deleteManagedFile,
   mergeAndDownloadFiles,
+  syncFileToDisk,
 } from '../api'
 import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
@@ -264,6 +276,7 @@ const selectedRecord = ref(null)
 const selectedFileIds = ref(new Set())
 const selectedFileInfo = ref(new Map()) // fileId → {filename, username}
 const fileTableRef = ref(null)
+const syncLoading = ref(false)
 
 // Admin toggle
 const showAllFiles = ref(false)
@@ -650,6 +663,32 @@ async function handleDeleteFile(row) {
   } catch (err) {
     const detail = err.response?.data?.detail || '删除失败'
     ElMessage.error(detail)
+  }
+}
+
+async function handleSync(row) {
+  try {
+    await ElMessageBox.confirm(
+      '确定要将数据库中的数据同步到文件吗？这将覆盖文件当前内容。',
+      '同步确认',
+      { confirmButtonText: '同步', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  syncLoading.value = true
+  try {
+    const res = await syncFileToDisk(row.id)
+    ElMessage.success(`已同步 ${res.synced_count} 条记录到文件`)
+    // Auto refresh preview if the synced file is currently selected
+    if (selectedFile.value && selectedFile.value.id === row.id) {
+      loadPreview()
+    }
+  } catch (err) {
+    const detail = err.response?.data?.detail || '同步失败'
+    ElMessage.error(detail)
+  } finally {
+    syncLoading.value = false
   }
 }
 
