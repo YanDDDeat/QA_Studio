@@ -226,41 +226,6 @@
                 </div>
               </div>
 
-              <!-- Format hint for current stage -->
-              <div class="config-row format-hint" v-if="currentFormatHint">
-                <el-collapse>
-                  <el-collapse-item title="本阶段期望的LLM返回格式" name="format">
-                    <div class="hint-content">
-                      <div class="hint-type">
-                        <el-tag size="small" type="warning">{{ currentFormatHint.type }}</el-tag>
-                        <span class="hint-type-desc">{{ currentFormatHint.typeDesc }}</span>
-                      </div>
-                      <div class="hint-fields">
-                        <table class="hint-table">
-                          <thead>
-                            <tr><th>字段名</th><th>说明</th><th>是否必须</th></tr>
-                          </thead>
-                          <tbody>
-                            <tr v-for="f in currentFormatHint.fields" :key="f.name">
-                              <td class="field-name">{{ f.name }}</td>
-                              <td>{{ f.desc }}</td>
-                              <td>
-                                <el-tag v-if="f.required" size="small" type="danger">必须</el-tag>
-                                <el-tag v-else size="small" type="info">可选</el-tag>
-                              </td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                      <div class="hint-example" v-if="currentFormatHint.example">
-                        <span class="hint-label">示例：</span>
-                        <pre class="hint-code">{{ currentFormatHint.example }}</pre>
-                      </div>
-                    </div>
-                  </el-collapse-item>
-                </el-collapse>
-              </div>
-
               <!-- Prompt editor -->
               <div class="config-row prompt-editor">
                 <span class="config-label">Prompt内容</span>
@@ -367,86 +332,6 @@ import {
 
 // ----- Admin detection -----
 const isAdmin = computed(() => localStorage.getItem('username') === 'admin')
-
-// ----- Stage format hints -----
-const STAGE_FORMAT_HINTS = {
-  question_generate: {
-    type: 'JSON数组',
-    typeDesc: '模型应返回一个列表，每条包含至少一个问答对',
-    fields: [
-      { name: 'input', desc: '问题内容', required: true },
-      { name: 'output', desc: '标准答案', required: true },
-      { name: 'domain', desc: '学科领域', required: false },
-      { name: 'category', desc: '知识类别', required: false },
-      { name: 'task_type', desc: '题目类型（简答/判断等）', required: false },
-      { name: 'cot', desc: '推理/思维链过程', required: false },
-    ],
-    example: '[\n  {"input": "什么是人工智能?", "output": "人工智能是...", "domain": "计算机", "task_type": "简答"}\n]',
-  },
-  knowledge_generate: {
-    type: 'JSON对象',
-    typeDesc: '模型应返回单个对象，包含结构化知识体系',
-    fields: [
-      { name: 'knowledge', desc: '知识体系（嵌套结构或列表）', required: true },
-      { name: 'domain', desc: '学科领域', required: false },
-      { name: 'category', desc: '知识类别', required: false },
-    ],
-    example: '{"knowledge": [{"topic": "AI基础", "points": ["定义", "分类", "应用"]}], "domain": "计算机"}',
-  },
-  question_validate: {
-    type: 'JSON对象',
-    typeDesc: '模型应返回单个对象，判断问题是否合格',
-    fields: [
-      { name: 'passed', desc: '是否通过（"是" 或 "否"）', required: true },
-      { name: 'reason', desc: '校验原因说明', required: true },
-      { name: 'validation_result', desc: '校验结果详情', required: false },
-    ],
-    example: '{"passed": "是", "reason": "问题表述清晰，符合要求"}',
-  },
-  answer_generate: {
-    type: 'JSON对象',
-    typeDesc: '模型应返回单个对象，包含生成的答案',
-    fields: [
-      { name: 'output', desc: '标准答案内容', required: true },
-      { name: 'cot', desc: '推理/思维链过程', required: false },
-      { name: 'step_count', desc: '推理步骤数', required: false },
-    ],
-    example: '{"output": "人工智能是计算机科学的一个分支...", "cot": "首先...然后...", "step_count": 3}',
-  },
-  answer_validate: {
-    type: 'JSON对象',
-    typeDesc: '模型应返回单个对象，判断答案是否合格',
-    fields: [
-      { name: 'passed', desc: '是否通过（"是" 或 "否"）', required: true },
-      { name: 'reason', desc: '校验原因说明', required: true },
-      { name: 'validation_result', desc: '校验结果详情', required: false },
-    ],
-    example: '{"passed": "是", "reason": "答案完整准确"}',
-  },
-  data_evaluate: {
-    type: 'JSON对象',
-    typeDesc: '模型应返回单个对象，包含各项评分',
-    fields: [
-      { name: 'score', desc: '综合评分（0-100）', required: true },
-      { name: 'difficulty', desc: '难度等级', required: false },
-      { name: 'relevance', desc: '相关性评分', required: false },
-      { name: 'clarity', desc: '清晰度评分', required: false },
-      { name: 'reasoning', desc: '推理质量评分', required: false },
-      { name: 'terminology', desc: '术语准确性评分', required: false },
-    ],
-    example: '{"score": 85, "difficulty": "中等", "relevance": 90, "clarity": 80}',
-  },
-  dataset_assessment: {
-    type: 'JSON对象',
-    typeDesc: '模型应返回单个对象，包含评分标准',
-    fields: [
-      { name: 'Assessment', desc: '评分细则字符串（总分100分）', required: true },
-    ],
-    example: '{"Assessment": "评分点1(30分): 满分标准xxx / 失分规则xxx\\n评分点2(70分): ..."}',
-  },
-}
-
-const currentFormatHint = computed(() => STAGE_FORMAT_HINTS[activeStage.value])
 
 // ----- Main tab state -----
 const mainTab = ref('llm')
@@ -956,65 +841,6 @@ onMounted(async () => {
 }
 .prompt-editor .config-label {
   margin-bottom: 6px;
-}
-.format-hint .el-collapse {
-  border: none;
-}
-.format-hint .el-collapse-item__header {
-  font-size: 13px;
-  color: #e6a23c;
-  font-weight: 600;
-}
-.hint-content {
-  font-size: 13px;
-  color: #606266;
-}
-.hint-type {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.hint-type-desc {
-  color: #909399;
-}
-.hint-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 10px;
-}
-.hint-table th {
-  background: #f5f7fa;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: #909399;
-  text-align: left;
-  border-bottom: 1px solid #ebeef5;
-}
-.hint-table td {
-  padding: 4px 10px;
-  font-size: 13px;
-  border-bottom: 1px solid #ebeef5;
-}
-.hint-table .field-name {
-  font-weight: 600;
-  color: #303133;
-  font-family: 'Consolas', monospace;
-}
-.hint-label {
-  color: #909399;
-  margin-bottom: 4px;
-}
-.hint-code {
-  background: #f5f7fa;
-  border-radius: 4px;
-  padding: 8px;
-  font-size: 12px;
-  font-family: 'Consolas', monospace;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  margin: 4px 0 0 0;
-  color: #303133;
 }
 .actions {
   display: flex;
