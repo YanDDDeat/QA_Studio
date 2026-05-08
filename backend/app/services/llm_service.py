@@ -163,7 +163,10 @@ async def call_llm(
             user_tag + " | " if user_tag else "", model, elapsed, len(content),
         )
         # Strip <thinking>...</thinking> blocks from response content
-        content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL).strip()
+        # Also handle unclosed <thinking> tags (strip everything after <thinking> if no closing tag)
+        content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL)
+        content = re.sub(r"<thinking>.*", "", content, flags=re.DOTALL)
+        content = content.strip()
         return content
 
     except httpx.TimeoutException:
@@ -221,7 +224,10 @@ def parse_llm_json(text: str) -> dict:
         LLMCallError: If no valid JSON can be extracted.
     """
     # Strip <thinking>...</thinking> blocks (qwen3 reasoning output)
-    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL).strip()
+    # Also handle unclosed <thinking> tags
+    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<thinking>.*", "", text, flags=re.DOTALL)
+    text = text.strip()
 
     # Strategy 1: Try direct parse first
     try:
