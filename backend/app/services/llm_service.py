@@ -118,8 +118,8 @@ async def call_llm(
 
     try:
         client_kwargs = {"timeout": timeout}
-        if settings.LLM_PROXY:
-            client_kwargs["proxy"] = settings.LLM_PROXY
+        if settings.effective_llm_proxy:
+            client_kwargs["proxy"] = settings.effective_llm_proxy
         async with httpx.AsyncClient(**client_kwargs) as client:
             response = await client.post(url, json=payload, headers=headers)
 

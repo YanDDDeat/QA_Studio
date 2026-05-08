@@ -46,8 +46,9 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = ""
     LLM_MODEL: str = ""
 
-    # LLM proxy (optional, for environments where LLM APIs need a proxy)
-    LLM_PROXY: str = ""  # e.g. "http://proxy-host:port" or "socks5://proxy-host:port"
+    # LLM proxy (optional)
+    LLM_PROXY: str = ""       # 全局代理：填了则所有LLM请求都走代理
+    SWUST_PROXY: str = ""     # SWUST专属代理：仅swust provider使用（dashscope不走）
 
     # Auth — must be set in .env, no hardcoded secrets
     JWT_SECRET: str
@@ -81,6 +82,15 @@ class Settings(BaseSettings):
     @property
     def effective_llm_models(self) -> List[str]:
         return LLM_PROVIDERS[self.LLM_PROVIDER]["models"]
+
+    @property
+    def effective_llm_proxy(self) -> str:
+        # LLM_PROXY 全局覆盖 > per-provider proxy
+        if self.LLM_PROXY:
+            return self.LLM_PROXY
+        if self.LLM_PROVIDER == "swust":
+            return self.SWUST_PROXY
+        return ""
 
     @property
     def DATABASE_URL(self) -> str:
