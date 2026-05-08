@@ -45,67 +45,6 @@ STAGE_LABELS = {
 
 
 # ---------------------------------------------------------------------------
-# Stage return format hints (for LLM prompt + frontend display)
-# ---------------------------------------------------------------------------
-
-STAGE_RETURN_FORMATS = {
-    StageEnum.QUESTION_GENERATE: (
-        "返回一个JSON数组，每个元素包含以下字段：\n"
-        "- input：问题内容（必填）\n"
-        "- output：标准答案（必填）\n"
-        "- cot：推理/思考过程（可选）\n"
-        "- task_type：题型分类（可选）\n"
-        "- domain：知识领域（可选）\n"
-        "- difficulty：难度等级（可选）\n\n"
-        "示例：\n"
-        "[\n"
-        "  {\"input\": \"什么是机器学习？\", \"output\": \"机器学习是人工智能的一个分支...\", "
-        "\"cot\": \"先理解概念再组织答案\", \"task_type\": \"简答\", \"domain\": \"计算机科学\", \"difficulty\": \"中等\"}\n"
-        "]"
-    ),
-    StageEnum.KNOWLEDGE_GENERATE: (
-        "返回一个JSON对象，包含以下字段：\n"
-        "- knowledge：知识体系内容（必填，可以是字符串或嵌套结构）\n"
-        "- domain：知识领域名称（可选）\n\n"
-        "示例：\n"
-        "{\"knowledge\": \"一、基础概念：...\\n二、核心方法：...\", \"domain\": \"计算机科学\"}"
-    ),
-    StageEnum.QUESTION_VALIDATE: (
-        "返回一个JSON对象，包含以下字段：\n"
-        "- validation_result：校验结果，值为 \"PASS\" 或 \"FAIL\"（必填）\n"
-        "- reason：校验原因说明（必填）\n\n"
-        "示例：\n"
-        "{\"validation_result\": \"PASS\", \"reason\": \"问题表述清晰，答案准确完整\"}"
-    ),
-    StageEnum.ANSWER_GENERATE: (
-        "返回一个JSON对象，包含以下字段：\n"
-        "- output：生成的答案内容（必填）\n"
-        "- cot：推理/思考过程（可选）\n"
-        "- step_count：步骤数（可选）\n\n"
-        "示例：\n"
-        "{\"output\": \"机器学习是一种通过数据训练模型的方法...\", \"cot\": \"先定义概念，再举例说明\", \"step_count\": 3}"
-    ),
-    StageEnum.ANSWER_VALIDATE: (
-        "返回一个JSON对象，包含以下字段：\n"
-        "- validation_result：校验结果，值为 \"PASS\" 或 \"FAIL\"（必填）\n"
-        "- reason：校验原因说明（必填）\n\n"
-        "示例：\n"
-        "{\"validation_result\": \"FAIL\", \"reason\": \"答案缺少关键概念的解释\"}"
-    ),
-    StageEnum.DATA_EVALUATE: (
-        "返回一个JSON对象，包含以下字段：\n"
-        "- relevance：相关性评分，整数1-10（必填）\n"
-        "- clarity：清晰度评分，整数1-10（必填）\n"
-        "- reasoning：推理质量评分，整数1-10（必填）\n"
-        "- terminology：术语准确性评分，整数1-10（必填）\n"
-        "- score：综合评分，浮点数0-10（必填）\n\n"
-        "示例：\n"
-        "{\"relevance\": 8, \"clarity\": 7, \"reasoning\": 9, \"terminology\": 8, \"score\": 8.0}"
-    ),
-}
-
-
-# ---------------------------------------------------------------------------
 # Dataset serialization
 # ---------------------------------------------------------------------------
 

@@ -135,7 +135,6 @@
             :content-changed="drawerContentChanged"
             :next-version="nextVersion"
             :save-loading="saveLoading"
-            stage="question_generate"
             @update:content="drawerContent = $event"
             @save="saveAsNewVersion"
           />

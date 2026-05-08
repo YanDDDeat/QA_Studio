@@ -163,7 +163,7 @@
         </div>
 
         <div class="config-preview">
-          <PromptPreview :version="assessDrawerVersion" :content="assessDrawerContent" :time-label="formatTime(assessDrawerCreatedAt)" :content-changed="assessDrawerContentChanged" :next-version="assessNextVersion" :save-loading="assessSaveLoading" stage="dataset_assessment" @update:content="assessDrawerContent = $event" @save="assessSaveAsNewVersion" />
+          <PromptPreview :version="assessDrawerVersion" :content="assessDrawerContent" :time-label="formatTime(assessDrawerCreatedAt)" :content-changed="assessDrawerContentChanged" :next-version="assessNextVersion" :save-loading="assessSaveLoading" @update:content="assessDrawerContent = $event" @save="assessSaveAsNewVersion" />
         </div>
       </div>
 
