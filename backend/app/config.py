@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = ""
     LLM_MODEL: str = ""
 
+    # LLM proxy (optional, for environments where LLM APIs need a proxy)
+    LLM_PROXY: str = ""  # e.g. "http://proxy-host:port" or "socks5://proxy-host:port"
+
     # Auth — must be set in .env, no hardcoded secrets
     JWT_SECRET: str
     JWT_ALGORITHM: str = "HS256"
@@ -87,7 +90,7 @@ class Settings(BaseSettings):
             f"?charset=utf8mb4"
         )
 
-    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
+    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()
