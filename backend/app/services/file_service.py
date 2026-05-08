@@ -178,7 +178,7 @@ def _build_output_filename(
     先剥离这些后缀再重新追加，避免文件名越来越长。
     """
     if output_filename:
-        base = output_filename
+        base = _strip_stage_suffix(output_filename)
     else:
         raw_base = os.path.splitext(source_filename or "output")[0]
         # Strip previously appended stage suffixes to avoid cascading length
