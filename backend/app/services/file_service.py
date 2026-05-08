@@ -52,6 +52,7 @@ STAGE_LABELS = {
 # Internal columns (id, user_id, file_id, created_at, updated_at) are excluded.
 
 _SERIALIZABLE_FIELDS = [
+    "id",
     "domain",
     "category",
     "task_type",

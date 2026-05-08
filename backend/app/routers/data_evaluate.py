@@ -278,11 +278,11 @@ async def _run_data_evaluate_task(
             cloned_ds.score = score
             # 提取 step_count 和 extra_fields
             _DE_KNOWN_KEYS = {
-                "relevance", "relevant", "相关性",
-                "clarity", "clear", "清晰度",
-                "reasoning", "reasoning_quality", "推理",
-                "terminology", "terminology_accuracy", "术语",
-                "score", "综合评分", "overall_score", "total_score", "总分",
+                "relevance", "relevant", "相关性", "Relevance",
+                "clarity", "clear", "清晰度", "Clarity",
+                "reasoning", "reasoning_quality", "推理", "Reasoning",
+                "terminology", "terminology_accuracy", "术语", "Terminology",
+                "score", "综合评分", "overall_score", "total_score", "总分", "Score",
                 "step_count",
             }
             cloned_ds.step_count = str(llm_result.get("step_count", "")) if llm_result.get("step_count") else None

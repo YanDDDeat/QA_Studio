@@ -117,7 +117,10 @@ async def call_llm(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        client_kwargs = {"timeout": timeout}
+        if settings.LLM_PROXY:
+            client_kwargs["proxy"] = settings.LLM_PROXY
+        async with httpx.AsyncClient(**client_kwargs) as client:
             response = await client.post(url, json=payload, headers=headers)
 
         elapsed = time.time() - start_time
