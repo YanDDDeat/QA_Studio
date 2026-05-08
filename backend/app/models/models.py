@@ -56,6 +56,7 @@ class LLMConfig(Base):
     name = Column(String(128), nullable=False)
     base_url = Column(String(512), nullable=False)
     api_key = Column(String(512), nullable=False)  # 明文存储(开发环境)
+    proxy = Column(String(512), nullable=True, default=None)  # 可选代理，如 http://host:port
     models = Column(JSON, nullable=False)  # 模型名列表，如["qwen3-max","qwen3-turbo"]
     default_model = Column(String(128), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

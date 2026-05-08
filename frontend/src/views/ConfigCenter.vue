@@ -143,6 +143,9 @@
             <el-form-item label="API Key">
               <el-input v-model="configForm.api_key" placeholder="请输入API Key" show-password />
             </el-form-item>
+            <el-form-item label="代理地址">
+              <el-input v-model="configForm.proxy" placeholder="可选，如 http://host:port（无需代理请留空）" />
+            </el-form-item>
             <el-form-item label="模型列表">
               <div class="model-list-editor">
                 <div class="model-list-inputs">
@@ -358,6 +361,7 @@ const configForm = ref({
   name: '',
   base_url: '',
   api_key: '',
+  proxy: '',
   models: [],
   default_model: '',
   is_global: false,
@@ -469,6 +473,7 @@ function openCreateDialog() {
     name: '',
     base_url: '',
     api_key: '',
+    proxy: '',
     models: [],
     default_model: '',
     is_global: false,
@@ -483,6 +488,7 @@ function openEditDialog(cfg) {
     name: cfg.name,
     base_url: cfg.base_url,
     api_key: cfg.api_key || '',
+    proxy: cfg.proxy || '',
     models: [...(cfg.models || [])],
     default_model: cfg.default_model,
     is_global: cfg.is_global || false,
@@ -532,6 +538,7 @@ async function handleSaveLLMConfig() {
       name: configForm.value.name.trim(),
       base_url: configForm.value.base_url.trim(),
       api_key: configForm.value.api_key.trim(),
+      proxy: configForm.value.proxy.trim() || null,
       models: validModels,
       default_model: configForm.value.default_model,
       is_global: configForm.value.is_global,

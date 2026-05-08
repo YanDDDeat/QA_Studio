@@ -79,6 +79,7 @@ class LLMConfigCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128, description="配置名称")
     base_url: str = Field(..., min_length=1, max_length=512, description="API endpoint URL")
     api_key: str = Field(..., min_length=1, max_length=512, description="API key")
+    proxy: Optional[str] = Field(None, max_length=512, description="代理地址，如 http://host:port")
     models: List[str] = Field(..., min_length=1, description="支持的模型名列表")
     default_model: str = Field(..., min_length=1, max_length=128, description="默认模型名")
     is_global: bool = Field(False, description="是否创建全局配置(仅admin可用)")
@@ -88,6 +89,7 @@ class LLMConfigUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=128)
     base_url: Optional[str] = Field(None, min_length=1, max_length=512)
     api_key: Optional[str] = Field(None, min_length=1, max_length=512)
+    proxy: Optional[str] = Field(None, max_length=512)
     models: Optional[List[str]] = Field(None, min_length=1)
     default_model: Optional[str] = Field(None, min_length=1, max_length=128)
 
@@ -98,6 +100,7 @@ class LLMConfigResponse(BaseModel):
     name: str
     base_url: str
     api_key: str
+    proxy: Optional[str] = None
     models: List[str]
     default_model: str
     is_global: bool
@@ -138,6 +141,7 @@ async def list_llm_configs(
             name=c.name,
             base_url=c.base_url,
             api_key=c.api_key,
+            proxy=c.proxy,
             models=c.models if isinstance(c.models, list) else [],
             default_model=c.default_model,
             is_global=c.user_id is None,
@@ -181,6 +185,7 @@ async def create_llm_config(
         name=data.name,
         base_url=data.base_url,
         api_key=data.api_key,
+        proxy=data.proxy,
         models=data.models,
         default_model=data.default_model,
     )
@@ -194,6 +199,7 @@ async def create_llm_config(
         name=config.name,
         base_url=config.base_url,
         api_key=config.api_key,
+        proxy=config.proxy,
         models=config.models if isinstance(config.models, list) else [],
         default_model=config.default_model,
         is_global=config.user_id is None,
@@ -252,6 +258,7 @@ async def update_llm_config(
         name=config.name,
         base_url=config.base_url,
         api_key=config.api_key,
+        proxy=config.proxy,
         models=config.models if isinstance(config.models, list) else [],
         default_model=config.default_model,
         is_global=config.user_id is None,
@@ -309,6 +316,7 @@ async def test_llm_config(
             model=config.default_model,
             api_key=config.api_key,
             base_url=config.base_url,
+            proxy_override=config.proxy or None,
             temperature=0.1,
             max_tokens=64,
             timeout=30.0,

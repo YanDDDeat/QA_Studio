@@ -55,6 +55,7 @@ async def call_llm(
     base_url_override: str = None,
     api_key_override: str = None,
     model_override: str = None,
+    proxy_override: str = None,
     username: str = None,
 ) -> str:
     """Call an OpenAI-compatible LLM endpoint and return the text response.
@@ -118,8 +119,9 @@ async def call_llm(
 
     try:
         client_kwargs = {"timeout": timeout}
-        if settings.effective_llm_proxy:
-            client_kwargs["proxy"] = settings.effective_llm_proxy
+        effective_proxy = proxy_override or settings.effective_llm_proxy
+        if effective_proxy:
+            client_kwargs["proxy"] = effective_proxy
         async with httpx.AsyncClient(**client_kwargs) as client:
             response = await client.post(url, json=payload, headers=headers)
 
