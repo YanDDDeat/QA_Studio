@@ -35,7 +35,6 @@ from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import (
     create_output_file, clone_single_dataset,
     write_datasets_to_file, create_fail_file, serialize_dataset_to_dict,
-    STAGE_RETURN_FORMATS,
 )
 from app.services.validation_service import validate_file_fields
 
@@ -146,9 +145,7 @@ async def _run_answer_validate_task(
                     else str(dataset.knowledge)
                 )
                 record_content += f"\n知识体系(knowledge): {knowledge_str}"
-
-            return_format = STAGE_RETURN_FORMATS.get(StageEnum.ANSWER_VALIDATE, "")
-            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}\n\n---\n\n**返回格式要求：**\n\n请严格按照以下JSON格式返回结果：\n\n{return_format}"
+            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
 
             # 检查任务是否被暂停
             task_check = db.query(Task).filter(Task.id == task_id).first()

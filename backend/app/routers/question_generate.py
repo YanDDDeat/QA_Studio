@@ -33,7 +33,7 @@ from app.models.models import (
 )
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
-from app.services.file_service import create_output_file, write_datasets_to_file, STAGE_RETURN_FORMATS
+from app.services.file_service import create_output_file, write_datasets_to_file
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.question_generate")
@@ -203,8 +203,7 @@ async def _run_question_generate_task(
 
             # Call LLM with the prompt + text content
             try:
-                return_format = STAGE_RETURN_FORMATS.get(StageEnum.QUESTION_GENERATE, "")
-                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{text_content}\n\n---\n\n**返回格式要求：**\n\n请严格按照以下JSON格式返回结果：\n\n{return_format}"
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{text_content}"
                 llm_result = await call_llm_json(
                     prompt=llm_prompt,
                     model=model,

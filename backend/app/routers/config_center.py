@@ -11,6 +11,7 @@ from app.database import get_db
 from app.config import settings
 from app.models.models import Prompt, StageEnum, User, LLMConfig
 from app.routers.auth import get_current_user
+from app.services.file_service import STAGE_RETURN_FORMATS
 
 router = APIRouter()
 
@@ -84,6 +85,15 @@ async def list_stages():
         for s in StageEnum
         if s.value in PROMPT_REQUIRED_STAGES
     ]
+
+
+@router.get("/return-formats")
+async def get_return_formats():
+    """Return the expected LLM response format hints for each pipeline stage."""
+    return {
+        stage.value: format_hint
+        for stage, format_hint in STAGE_RETURN_FORMATS.items()
+    }
 
 
 @router.get("/prompts", response_model=List[PromptConfigResponse])

@@ -32,7 +32,7 @@ from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.file_service import (
     create_output_file, clone_single_dataset, write_datasets_to_file,
-    repair_file_on_disk, STAGE_RETURN_FORMATS,
+    repair_file_on_disk,
 )
 from app.services.validation_service import validate_file_fields
 
@@ -144,8 +144,7 @@ async def _run_knowledge_generate_task(
                 return
 
             try:
-                return_format = STAGE_RETURN_FORMATS.get(StageEnum.KNOWLEDGE_GENERATE, "")
-                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{input_text}\n\n---\n\n**返回格式要求：**\n\n请严格按照以下JSON格式返回结果：\n\n{return_format}"
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{input_text}"
                 llm_result = await call_llm_json(
                     prompt=llm_prompt,
                     model=model,
