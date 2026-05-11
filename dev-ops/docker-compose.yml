@@ -1,0 +1,102 @@
+services:
+  # MySQL Database
+  db:
+    image: mysql:8.0
+    container_name: qa-studio-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # 数据库初始化脚本（首次启动自动执行）
+      # - ./init-db:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qa-studio-network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ..
+      dockerfile: dev-ops/Dockerfile.backend
+    container_name: qa-studio-backend
+    restart: unless-stopped
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - SWUST_API_KEY=${SWUST_API_KEY}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_MODEL=${LLM_MODEL}
+      - LLM_PROXY=${LLM_PROXY}
+      - SWUST_PROXY=${SWUST_PROXY}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_INIT_PASSWORD=${ADMIN_INIT_PASSWORD:-admin123}
+    volumes:
+      - backend-logs:/app/logs
+      - backend-uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - qa-studio-network
+
+  # Vue Frontend (构建静态文件)
+  frontend:
+    build:
+      context: ..
+      dockerfile: dev-ops/Dockerfile.frontend
+    container_name: qa-studio-frontend
+    restart: unless-stopped
+    volumes:
+      - frontend-dist:/app/dist
+    depends_on:
+      - backend
+    networks:
+      - qa-studio-network
+
+  # Nginx (反向代理 + 静态文件服务)
+  nginx:
+    build:
+      context: ..
+      dockerfile: dev-ops/Dockerfile.nginx
+    container_name: qa-studio-nginx
+    restart: unless-stopped
+    volumes:
+      - frontend-dist:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - qa-studio-network
+
+volumes:
+  mysql_data:
+  backend-logs:
+  backend-uploads:
+  frontend-dist:
+
+networks:
+  qa-studio-network:
+    driver: bridge
