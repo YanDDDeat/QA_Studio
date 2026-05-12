@@ -1,18 +1,10 @@
-这是完整建表sql，你把刚刚的PRompt字段长度超限改了传到 git上去。/*
- Navicat Premium Data Transfer
+-- QA_Studio Database Schema
+-- Target: MySQL 8.x (Aliyun RDS)
+-- Database: qa_gen
+-- MySQL connection: 117.72.57.125:13306, root/swust
+-- Generated from SQLAlchemy ORM models
 
- Source Server         : localhost
- Source Server Type    : MySQL
- Source Server Version : 80037
- Source Host           : localhost:3306
- Source Schema         : qa_gen
-
- Target Server Type    : MySQL
- Target Server Version : 80037
- File Encoding         : 65001
-
- Date: 11/05/2026 23:34:48
-*/
+-- 删除旧数据库并重新创建（全新部署）
 DROP DATABASE IF EXISTS qa_gen;
 CREATE DATABASE IF NOT EXISTS qa_gen
     DEFAULT CHARACTER SET utf8mb4
@@ -20,162 +12,130 @@ CREATE DATABASE IF NOT EXISTS qa_gen
 
 USE qa_gen;
 
-SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
--- ----------------------------
--- Table structure for datasets
--- ----------------------------
-DROP TABLE IF EXISTS `datasets`;
-CREATE TABLE `datasets`  (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `user_id` int NOT NULL,
-  `domain` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `category` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `task_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `input` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
-  `output` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
-  `cot` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
-  `corpus_cate` int NOT NULL,
-  `scene` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
-  `Assessment` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `source` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `source_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `source_type` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `originContent` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
-  `knowledge` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
-  `step_count` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `extra_fields` json NULL,
-  `difficulty` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `relevance` int NULL DEFAULT NULL,
-  `clarity` int NULL DEFAULT NULL,
-  `reasoning` int NULL DEFAULT NULL,
-  `terminology` int NULL DEFAULT NULL,
-  `score` float NULL DEFAULT NULL,
-  `passed` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `current_stage` enum('question_generate','knowledge_generate','question_validate','answer_generate','answer_validate','data_evaluate','cot_filter','dataset_split','dataset_assessment') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT 'question_generate',
-  `created_at` datetime(0) NULL DEFAULT NULL,
-  `updated_at` datetime(0) NULL DEFAULT NULL,
-  `file_id` int NULL DEFAULT NULL,
-  PRIMARY KEY (`id`) USING BTREE,
-  INDEX `ix_datasets_user_id`(`user_id`) USING BTREE,
-  INDEX `ix_datasets_file_id`(`file_id`) USING BTREE,
-  CONSTRAINT `datasets_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `fk_datasets_file_id` FOREIGN KEY (`file_id`) REFERENCES `files` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 224 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+-- ============================================================
+-- 1. 用户表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `users` (
+    `id`         INT          NOT NULL AUTO_INCREMENT,
+    `username`   VARCHAR(64)  NOT NULL,
+    `password_hash` VARCHAR(256) NOT NULL,
+    `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_username` (`username`),
+    KEY `idx_username` (`username`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ----------------------------
--- Table structure for files
--- ----------------------------
-DROP TABLE IF EXISTS `files`;
-CREATE TABLE `files`  (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `user_id` int NOT NULL,
-  `filename` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `file_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `file_path` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `source_stage` enum('question_generate','knowledge_generate','question_validate','answer_generate','answer_validate','data_evaluate','cot_filter','dataset_split','dataset_assessment') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '来源阶段',
-  `text_field` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `created_at` datetime(0) NULL DEFAULT NULL,
-  PRIMARY KEY (`id`) USING BTREE,
-  INDEX `ix_files_user_id`(`user_id`) USING BTREE,
-  CONSTRAINT `files_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 98 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+-- ============================================================
+-- 2. 数据集表（QA问答数据）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `datasets` (
+    `id`            INT          NOT NULL AUTO_INCREMENT,
+    `user_id`       INT          NOT NULL,
+    `domain`        VARCHAR(128) DEFAULT NULL,
+    `category`      VARCHAR(32)  DEFAULT NULL COMMENT '枚举: 知识问答, 逻辑生成',
+    `task_type`     VARCHAR(64)  DEFAULT NULL,
+    `input`         TEXT         DEFAULT NULL COMMENT '问题文本',
+    `output`        TEXT         DEFAULT NULL COMMENT '答案文本',
+    `cot`           TEXT         DEFAULT NULL COMMENT '推理过程',
+    `corpus_cate`   INT          NOT NULL DEFAULT 1,
+    `scene`         TEXT         DEFAULT NULL COMMENT '与knowledge相同',
+    `Assessment`    VARCHAR(256) NOT NULL DEFAULT '' COMMENT '评估备注，固定为空',
+    `source`        VARCHAR(128) DEFAULT NULL COMMENT '来源名称',
+    `source_id`     VARCHAR(128) DEFAULT NULL COMMENT '来源ID',
+    `source_type`   VARCHAR(32)  DEFAULT '图书' COMMENT '枚举: 图书,专利,文献,其他',
+    `originContent` TEXT         DEFAULT NULL COMMENT '原始文本内容(来自输入text)',
+    `knowledge`     JSON         DEFAULT NULL COMMENT '知识体系(LLM生成)',
+    `difficulty`    VARCHAR(32)  DEFAULT NULL COMMENT '难度等级',
+    `relevance`     INT          DEFAULT NULL COMMENT '相关性评分',
+    `clarity`       INT          DEFAULT NULL COMMENT '清晰度评分',
+    `reasoning`     INT          DEFAULT NULL COMMENT '推理评分',
+    `terminology`   INT          DEFAULT NULL COMMENT '术语评分',
+    `score`         FLOAT        DEFAULT NULL COMMENT '综合评分',
+    `passed`        VARCHAR(16)  NOT NULL DEFAULT '是' COMMENT '校验通过状态',
+    `current_stage` ENUM('question_generate','knowledge_generate','question_validate','answer_generate','answer_validate','data_evaluate','cot_filter','dataset_split','dataset_assessment') DEFAULT 'question_generate',
+    `created_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_current_stage` (`current_stage`),
+    KEY `idx_passed` (`passed`),
+    CONSTRAINT `fk_datasets_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ----------------------------
--- Table structure for llm_configs
--- ----------------------------
-DROP TABLE IF EXISTS `llm_configs`;
-CREATE TABLE `llm_configs`  (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `user_id` int NULL DEFAULT NULL,
-  `name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `base_url` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `api_key` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `proxy` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `models` json NOT NULL,
-  `default_model` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `created_at` datetime(0) NULL DEFAULT NULL,
-  `updated_at` datetime(0) NULL DEFAULT NULL,
-  PRIMARY KEY (`id`) USING BTREE,
-  INDEX `ix_llm_configs_user_id`(`user_id`) USING BTREE,
-  CONSTRAINT `fk_llm_configs_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 11 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+-- ============================================================
+-- 3. 文件表（上传文件 + 校验失败文件）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `files` (
+    `id`            INT          NOT NULL AUTO_INCREMENT,
+    `user_id`       INT          NOT NULL,
+    `filename`      VARCHAR(256) NOT NULL,
+    `file_type`     VARCHAR(64)  DEFAULT NULL,
+    `file_path`     VARCHAR(512) NOT NULL,
+    `source_stage`  ENUM('question_generate','knowledge_generate','question_validate','answer_generate','answer_validate','data_evaluate','cot_filter','dataset_split','dataset_assessment') DEFAULT NULL COMMENT '来源阶段',
+    `text_field`    VARCHAR(128) NOT NULL DEFAULT 'text' COMMENT 'JSON中文本块字段名',
+    `created_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_user_id` (`user_id`),
+    CONSTRAINT `fk_files_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ----------------------------
--- Table structure for prompts
--- ----------------------------
-DROP TABLE IF EXISTS `prompts`;
-CREATE TABLE `prompts`  (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `user_id` int NULL DEFAULT NULL,
-  `stage` enum('question_generate','knowledge_generate','question_validate','answer_generate','answer_validate','data_evaluate','cot_filter','dataset_split','dataset_assessment') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `version` int NOT NULL,
-  `content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `model` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `created_at` datetime(0) NULL DEFAULT NULL,
-  `llm_config_id` int NULL DEFAULT NULL,
-  `is_default` tinyint(1) NOT NULL DEFAULT 0,
-  PRIMARY KEY (`id`) USING BTREE,
-  INDEX `ix_prompts_user_id`(`user_id`) USING BTREE,
-  INDEX `ix_prompts_llm_config_id`(`llm_config_id`) USING BTREE,
-  CONSTRAINT `fk_prompts_llm_config_id` FOREIGN KEY (`llm_config_id`) REFERENCES `llm_configs` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `prompts_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 44 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+-- ============================================================
+-- 4. 提示词表（每个阶段独立配置，版本化管理）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `prompts` (
+    `id`         INT          NOT NULL AUTO_INCREMENT,
+    `user_id`    INT          NOT NULL,
+    `stage`      ENUM('question_generate','knowledge_generate','question_validate','answer_generate','answer_validate','data_evaluate','cot_filter','dataset_split','dataset_assessment') NOT NULL,
+    `version`    INT          NOT NULL DEFAULT 1 COMMENT '版本号，修改时自增',
+    `content`    MEDIUMTEXT  NOT NULL COMMENT '提示词内容',
+    `model`      VARCHAR(128) DEFAULT NULL COMMENT '选择的模型',
+    `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_stage` (`stage`),
+    CONSTRAINT `fk_prompts_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ----------------------------
--- Table structure for task_logs
--- ----------------------------
-DROP TABLE IF EXISTS `task_logs`;
-CREATE TABLE `task_logs`  (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `task_id` int NOT NULL,
-  `log_content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
-  `created_at` datetime(0) NULL DEFAULT NULL,
-  PRIMARY KEY (`id`) USING BTREE,
-  INDEX `ix_task_logs_task_id`(`task_id`) USING BTREE,
-  CONSTRAINT `task_logs_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 413 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+-- ============================================================
+-- 5. 任务表（Pipeline各阶段执行任务）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `tasks` (
+    `id`              INT          NOT NULL AUTO_INCREMENT,
+    `user_id`         INT          NOT NULL,
+    `stage`           ENUM('question_generate','knowledge_generate','question_validate','answer_generate','answer_validate','data_evaluate','cot_filter','dataset_split','dataset_assessment') NOT NULL,
+    `dataset_id`      INT          DEFAULT NULL,
+    `file_id`         INT          DEFAULT NULL,
+    `model`           VARCHAR(128) DEFAULT NULL,
+    `prompt_id`       INT          DEFAULT NULL,
+    `status`          ENUM('pending','running','completed','failed') NOT NULL DEFAULT 'pending',
+    `progress_current` INT         DEFAULT 0 COMMENT '当前已完成数量',
+    `progress_total`  INT          DEFAULT 0 COMMENT '总数量',
+    `created_at`      DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`      DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_stage` (`stage`),
+    KEY `idx_status` (`status`),
+    CONSTRAINT `fk_tasks_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_tasks_dataset_id` FOREIGN KEY (`dataset_id`) REFERENCES `datasets` (`id`) ON DELETE SET NULL,
+    CONSTRAINT `fk_tasks_file_id` FOREIGN KEY (`file_id`) REFERENCES `files` (`id`) ON DELETE SET NULL,
+    CONSTRAINT `fk_tasks_prompt_id` FOREIGN KEY (`prompt_id`) REFERENCES `prompts` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ----------------------------
--- Table structure for tasks
--- ----------------------------
-DROP TABLE IF EXISTS `tasks`;
-CREATE TABLE `tasks`  (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `user_id` int NOT NULL,
-  `stage` enum('question_generate','knowledge_generate','question_validate','answer_generate','answer_validate','data_evaluate','cot_filter','dataset_split','dataset_assessment') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `dataset_id` int NULL DEFAULT NULL,
-  `file_id` int NULL DEFAULT NULL,
-  `model` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
-  `prompt_id` int NULL DEFAULT NULL,
-  `status` enum('PENDING','RUNNING','PAUSED','COMPLETED','FAILED') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'PENDING',
-  `progress_current` int NULL DEFAULT NULL,
-  `progress_total` int NULL DEFAULT NULL,
-  `created_at` datetime(0) NULL DEFAULT NULL,
-  `updated_at` datetime(0) NULL DEFAULT NULL,
-  PRIMARY KEY (`id`) USING BTREE,
-  INDEX `dataset_id`(`dataset_id`) USING BTREE,
-  INDEX `file_id`(`file_id`) USING BTREE,
-  INDEX `prompt_id`(`prompt_id`) USING BTREE,
-  INDEX `ix_tasks_user_id`(`user_id`) USING BTREE,
-  CONSTRAINT `tasks_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `tasks_ibfk_2` FOREIGN KEY (`dataset_id`) REFERENCES `datasets` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `tasks_ibfk_3` FOREIGN KEY (`file_id`) REFERENCES `files` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `tasks_ibfk_4` FOREIGN KEY (`prompt_id`) REFERENCES `prompts` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 73 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+-- ============================================================
+-- 6. 任务日志表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `task_logs` (
+    `id`          INT          NOT NULL AUTO_INCREMENT,
+    `task_id`     INT          NOT NULL,
+    `log_content` TEXT         DEFAULT NULL,
+    `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_task_id` (`task_id`),
+    CONSTRAINT `fk_task_logs_task_id` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ----------------------------
--- Table structure for users
--- ----------------------------
-DROP TABLE IF EXISTS `users`;
-CREATE TABLE `users`  (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `username` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `password_hash` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `created_at` datetime(0) NULL DEFAULT NULL,
-  PRIMARY KEY (`id`) USING BTREE,
-  UNIQUE INDEX `ix_users_username`(`username`) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 7 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
-
-SET FOREIGN_KEY_CHECKS = 1;
+-- admin账号由服务启动时自动初始化（bcrypt生成真实密码hash）
+-- 不要手动INSERT，否则密码hash无效
