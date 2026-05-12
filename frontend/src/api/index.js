@@ -235,7 +235,7 @@ export function createLLMConfig(data) {
 }
 
 export function updateLLMConfig(id, data) {
-  return api.put(`/llm-configs/${id}`, data)
+  return api.post(`/llm-configs/${id}/update`, data)
 }
 
 export function deleteLLMConfig(id) {

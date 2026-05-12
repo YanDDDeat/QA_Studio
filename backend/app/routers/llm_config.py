@@ -208,7 +208,7 @@ async def create_llm_config(
     )
 
 
-@router.put("/{config_id}", response_model=LLMConfigResponse)
+@router.post("/{config_id}/update", response_model=LLMConfigResponse)
 async def update_llm_config(
     config_id: int,
     data: LLMConfigUpdate,
