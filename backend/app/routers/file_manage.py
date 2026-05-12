@@ -393,7 +393,7 @@ async def upload_md_files(
     return {"uploaded": results, "errors": errors}
 
 
-@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{file_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_managed_file(
     file_id: int,
     current_user: User = Depends(get_current_user),

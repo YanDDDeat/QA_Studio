@@ -31,11 +31,11 @@ export function createDataset(data) {
 }
 
 export function updateDataset(id, data) {
-  return api.put(`/datasets/${id}`, data)
+  return api.post(`/datasets/${id}/update`, data)
 }
 
 export function deleteDataset(id) {
-  return api.delete(`/datasets/${id}`)
+  return api.post(`/datasets/${id}/delete`)
 }
 
 // Tasks API
@@ -139,7 +139,7 @@ export function getFiles(params) {
 }
 
 export function deleteFile(id) {
-  return api.delete(`/files/${id}`)
+  return api.post(`/files/${id}/delete`)
 }
 
 // Prompts API
@@ -152,7 +152,7 @@ export function createPrompt(data) {
 }
 
 export function updatePrompt(id, data) {
-  return api.put(`/prompts/${id}`, data)
+  return api.post(`/prompts/${id}/update`, data)
 }
 
 // Config API

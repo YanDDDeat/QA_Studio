@@ -156,7 +156,7 @@ async def create_dataset(
     return dataset
 
 
-@router.put("/{dataset_id}", response_model=DatasetResponse)
+@router.post("/{dataset_id}/update", response_model=DatasetResponse)
 async def update_dataset(
     dataset_id: int,
     data: DatasetUpdate,
@@ -186,7 +186,7 @@ async def update_dataset(
     return dataset
 
 
-@router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{dataset_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_dataset(
     dataset_id: int,
     current_user: User = Depends(get_current_user),

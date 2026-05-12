@@ -123,7 +123,7 @@ async def create_prompt(
     return prompt
 
 
-@router.put("/{prompt_id}", response_model=PromptResponse)
+@router.post("/{prompt_id}/update", response_model=PromptResponse)
 async def update_prompt(
     prompt_id: int,
     data: PromptUpdate,

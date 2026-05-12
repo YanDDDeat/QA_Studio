@@ -199,7 +199,7 @@ async def get_managed_data(
     return _serialize_dataset_detail(dataset)
 
 
-@router.put("/{dataset_id}")
+@router.post("/{dataset_id}/update")
 async def update_managed_data(
     dataset_id: int,
     body: DatasetUpdateRequest,
@@ -245,7 +245,7 @@ async def update_managed_data(
     return _serialize_dataset_detail(dataset)
 
 
-@router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{dataset_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_managed_data(
     dataset_id: int,
     current_user: User = Depends(get_current_user),

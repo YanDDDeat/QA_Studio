@@ -146,7 +146,7 @@ async def create_prompt_config(
     return prompt
 
 
-@router.delete("/prompts/{prompt_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/prompts/{prompt_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_prompt_config(
     prompt_id: int,
     current_user: User = Depends(get_current_user),
@@ -240,7 +240,7 @@ async def list_model_configs(
     }
 
 
-@router.put("/models", response_model=PromptConfigResponse)
+@router.post("/models/update", response_model=PromptConfigResponse)
 async def update_model_config(
     data: ModelConfigUpdate,
     current_user: User = Depends(get_current_user),

@@ -155,7 +155,7 @@ async def create_task(
     return task
 
 
-@router.put("/{task_id}", response_model=TaskResponse)
+@router.post("/{task_id}/update", response_model=TaskResponse)
 async def update_task(
     task_id: int,
     data: TaskUpdate,
@@ -193,7 +193,7 @@ async def update_task(
     return task
 
 
-@router.delete("/{task_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+@router.post("/{task_id}/delete", status_code=http_status.HTTP_204_NO_CONTENT)
 async def delete_task(
     task_id: int,
     current_user: User = Depends(get_current_user),
