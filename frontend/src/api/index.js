@@ -173,11 +173,11 @@ export function createPromptConfig(data) {
 }
 
 export function deletePromptConfig(id) {
-  return api.delete(`/config-center/prompts/${id}`)
+  return api.post(`/config-center/prompts/${id}/delete`)
 }
 
 export function updateModelConfig(data) {
-  return api.put('/config-center/models', data)
+  return api.post('/config-center/models/update', data)
 }
 
 // File Manage API
@@ -202,7 +202,7 @@ export function uploadMdFile(data) {
 }
 
 export function deleteManagedFile(id) {
-  return api.delete(`/file-manage/${id}`)
+  return api.post(`/file-manage/${id}/delete`)
 }
 
 export function downloadManagedFile(id, fields = null) {
@@ -239,7 +239,7 @@ export function updateLLMConfig(id, data) {
 }
 
 export function deleteLLMConfig(id) {
-  return api.delete(`/llm-configs/${id}`)
+  return api.post(`/llm-configs/${id}/delete`)
 }
 
 export function testLLMConfig(id) {
