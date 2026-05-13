@@ -150,12 +150,14 @@ async def call_llm(
 
         if not content:
             logger.warning(
-                "LLM call returned empty content | %smodel=%s | elapsed=%.1fs",
+                "LLM call returned empty content | %smodel=%s | elapsed=%.1fs | raw_response=%s",
                 user_tag + " | " if user_tag else "", model, elapsed,
+                json.dumps(result, ensure_ascii=False)[:500],
             )
             raise LLMCallError(
                 "LLM returned empty response",
                 status_code=response.status_code,
+                detail=json.dumps(result, ensure_ascii=False)[:500],
             )
 
         logger.info(
@@ -165,6 +167,7 @@ async def call_llm(
         )
         # Strip thinking/reasoning blocks from response content
         # Handles closed tags: <think>, <thinking>, <reasoning> (case-insensitive)
+        original_content = content
         content = re.sub(
             r"<(think|thinking|reasoning)>.*?</\1>", "",
             content, flags=re.DOTALL | re.IGNORECASE,
@@ -185,6 +188,17 @@ async def call_llm(
                 idx = content.find(closing)
                 if idx >= 0:
                     content = content[idx + len(closing):].strip()
+        # 检查剥离思考标签后是否为空（原始内容不为空但剥离后空了 → 模型只返回了思考内容）
+        if not content.strip() and original_content.strip():
+            logger.warning(
+                "LLM content became empty after stripping thinking tags | model=%s | original_len=%d | first_chars=%s",
+                model, len(original_content), repr(original_content[:200]),
+            )
+            raise LLMCallError(
+                "LLM response contained only thinking tags, no actual content",
+                status_code=200,
+                detail=original_content[:500],
+            )
         return content
 
     except httpx.TimeoutException:
