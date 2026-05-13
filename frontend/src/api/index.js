@@ -193,6 +193,10 @@ export function getManagedFileContent(id, params) {
   return api.get(`/file-manage/content/${id}`, { params })
 }
 
+export function getFileFields(id) {
+  return api.get(`/file-manage/fields/${id}`)
+}
+
 export function uploadManagedFile(data) {
   return api.post('/file-manage/upload', data)
 }

@@ -131,7 +131,7 @@
 
             <el-form-item v-if="assessForm.file_id" label="参考字段">
               <el-checkbox
-                v-for="f in assessAvailableRefFields"
+                v-for="f in assessFileFields"
                 :key="f"
                 :model-value="assessReferenceFields.includes(f)"
                 size="small"
@@ -284,7 +284,7 @@ import {
   startDatasetSplit, getDatasetSplitStatus, getDatasetSplitSourceFiles,
   startDatasetAssessment, getDatasetAssessmentStatus, getDatasetAssessmentSourceFiles,
   getTaskLogs, getTaskList, getPromptConfigs, getLLMConfigs,
-  downloadManagedFile,
+  downloadManagedFile, getFileFields,
   stopTask, resumeTask,
 } from '../api'
 import FileSelector from '../components/FileSelector.vue'
@@ -368,9 +368,25 @@ const splitStatusLabel = computed(() => {
 
 // ---- Assessment state ----
 const assessForm = ref({ file_id: null, output_name: '', prompt_id: null, model: '' })
-// 参考字段（选文件后出现）
-const assessAvailableRefFields = ['input', 'output', 'cot', 'knowledge', 'domain', 'difficulty', 'task_type', 'originContent', 'scene', 'source', 'source_type', 'step_count']
+// 参考字段（选文件后出现，动态加载文件字段）
+const assessFileFields = ref([])
 const assessReferenceFields = ref([])
+
+watch(() => assessForm.value.file_id, async (fileId) => {
+  if (!fileId) {
+    assessFileFields.value = []
+    assessReferenceFields.value = ['input', 'output', 'cot', 'knowledge', 'domain', 'difficulty', 'task_type', 'originContent', 'scene', 'source', 'source_type', 'step_count']
+    return
+  }
+  try {
+    const res = await getFileFields(fileId)
+    assessFileFields.value = res.fields || []
+    const defaults = ['input', 'output', 'cot', 'knowledge']
+    assessReferenceFields.value = defaults.filter(f => assessFileFields.value.includes(f))
+  } catch {
+    assessFileFields.value = []
+  }
+}, { immediate: true })
 
 function toggleAssessRefField(field, checked) {
   assessReferenceFields.value = checked

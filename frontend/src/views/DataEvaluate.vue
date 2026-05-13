@@ -16,7 +16,7 @@
 
             <el-form-item v-if="form.file_id" label="参考字段">
               <el-checkbox
-                v-for="f in availableRefFields"
+                v-for="f in fileFields"
                 :key="f"
                 :model-value="referenceFields.includes(f)"
                 size="small"
@@ -341,6 +341,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   startDataEvaluate,
+  getFileFields,
   stopTask,
   resumeTask,
   getStageStatus,
@@ -361,7 +362,23 @@ import { buildDefaultOutputFilename } from '../utils/stageLabels'
 import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
 // ----- Form state -----
-const availableRefFields = ['input', 'output', 'cot', 'knowledge', 'domain', 'difficulty', 'task_type', 'originContent', 'scene', 'source', 'source_type', 'step_count']
+const fileFields = ref([])
+
+watch(() => form.value.file_id, async (fileId) => {
+  if (!fileId) {
+    fileFields.value = []
+    referenceFields.value = ['input', 'output', 'cot', 'knowledge']
+    return
+  }
+  try {
+    const res = await getFileFields(fileId)
+    fileFields.value = res.fields || []
+    // 只保留文件里存在的默认字段
+    referenceFields.value = ['input', 'output', 'cot', 'knowledge'].filter(f => fileFields.value.includes(f))
+  } catch {
+    fileFields.value = []
+  }
+}, { immediate: true })
 
 function toggleRefField(field, checked) {
   referenceFields.value = checked

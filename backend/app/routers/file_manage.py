@@ -202,6 +202,36 @@ async def get_file_content(
     }
 
 
+@router.get("/fields/{file_id}")
+async def get_file_fields(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the field names (keys) of the first record in a JSON file."""
+    query = db.query(File).filter(File.id == file_id)
+    if current_user.username != "admin":
+        query = query.filter(File.user_id == current_user.id)
+    file_obj = query.first()
+    if file_obj is None:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not os.path.exists(file_obj.file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    try:
+        with open(file_obj.file_path, "r", encoding="utf-8") as f:
+            content = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse JSON: {str(e)}")
+
+    records = content if isinstance(content, list) else [content]
+    first = records[0] if records else {}
+    fields = list(first.keys()) if isinstance(first, dict) else []
+
+    return {"file_id": file_id, "fields": fields, "total_records": len(records)}
+
+
 @router.post("/upload")
 async def upload_managed_files(
     files: List[UploadFile] = FastAPIFile(...),
