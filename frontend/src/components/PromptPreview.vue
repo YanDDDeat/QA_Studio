@@ -12,6 +12,21 @@
         class="preview-textarea"
         @update:model-value="$emit('update:content', $event)"
       />
+      <!-- 附加参考字段选择 -->
+      <div class="reference-fields">
+        <span class="reference-label">附加参考字段：</span>
+        <el-checkbox-group
+          :model-value="referenceFields"
+          size="small"
+          @update:model-value="$emit('update:referenceFields', $event)"
+        >
+          <el-checkbox
+            v-for="f in availableFields"
+            :key="f.value"
+            :label="f.value"
+          >{{ f.label }}</el-checkbox>
+        </el-checkbox-group>
+      </div>
       <div class="preview-footer">
         <el-button
           type="primary"
@@ -34,6 +49,21 @@
 <script setup>
 import { Document } from '@element-plus/icons-vue'
 
+const availableFields = [
+  { value: 'input', label: '问题(input)' },
+  { value: 'output', label: '答案(output)' },
+  { value: 'cot', label: '推理过程(cot)' },
+  { value: 'knowledge', label: '知识体系(knowledge)' },
+  { value: 'domain', label: '领域(domain)' },
+  { value: 'difficulty', label: '难度(difficulty)' },
+  { value: 'task_type', label: '任务类型(task_type)' },
+  { value: 'originContent', label: '原文(originContent)' },
+  { value: 'scene', label: '场景(scene)' },
+  { value: 'source', label: '来源(source)' },
+  { value: 'source_type', label: '来源类型(source_type)' },
+  { value: 'step_count', label: '步骤数(step_count)' },
+]
+
 defineProps({
   version: { type: Number, default: null },
   content: { type: String, default: '' },
@@ -41,9 +71,10 @@ defineProps({
   contentChanged: { type: Boolean, default: false },
   saveLoading: { type: Boolean, default: false },
   nextVersion: { type: Number, default: 1 },
+  referenceFields: { type: Array, default: () => [] },
 })
 
-defineEmits(['update:content', 'save'])
+defineEmits(['update:content', 'save', 'update:referenceFields'])
 </script>
 
 <style scoped>
@@ -89,6 +120,21 @@ defineEmits(['update:content', 'save'])
   justify-content: flex-end;
   padding-top: 8px;
   border-top: 1px solid #e4e7ed;
+}
+
+.reference-fields {
+  padding: 8px 0;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.reference-label {
+  font-size: 13px;
+  color: #606266;
+  margin-right: 8px;
+}
+
+.reference-fields :deep(.el-checkbox) {
+  margin-right: 16px;
 }
 
 .preview-empty {

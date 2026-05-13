@@ -17,6 +17,7 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
   const drawerVersion = ref(null)
   const drawerCreatedAt = ref(null)
   const drawerOriginalContent = ref('')
+  const drawerReferenceFields = ref([])
   const saveLoading = ref(false)
 
   const drawerContentChanged = computed(
@@ -34,11 +35,13 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
       drawerVersion.value = selectedPrompt.version
       drawerCreatedAt.value = selectedPrompt.created_at
       drawerOriginalContent.value = selectedPrompt.content || ''
+      drawerReferenceFields.value = selectedPrompt.reference_fields || []
     } else {
       drawerContent.value = ''
       drawerVersion.value = null
       drawerCreatedAt.value = null
       drawerOriginalContent.value = ''
+      drawerReferenceFields.value = []
     }
   }
 
@@ -79,6 +82,7 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
         content: drawerContent.value,
         model: formRef.value.model,
         llm_config_id: selectedLLMConfigIdRef.value || null,
+        reference_fields: drawerReferenceFields.value,
       }
       const res = await createPromptConfig(payload)
 
@@ -104,6 +108,7 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
     drawerVersion,
     drawerCreatedAt,
     drawerContentChanged,
+    drawerReferenceFields,
     nextVersion,
     saveLoading,
     saveAsNewVersion,

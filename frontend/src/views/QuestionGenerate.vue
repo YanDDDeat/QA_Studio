@@ -136,6 +136,8 @@
             :next-version="nextVersion"
             :save-loading="saveLoading"
             @update:content="drawerContent = $event"
+            :reference-fields="drawerReferenceFields"
+            @update:referenceFields="drawerReferenceFields = $event"
             @save="saveAsNewVersion"
           />
         </div>
