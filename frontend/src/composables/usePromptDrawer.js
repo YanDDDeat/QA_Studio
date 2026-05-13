@@ -2,6 +2,16 @@ import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { createPromptConfig, getPromptConfigs } from '../api'
 
+// 各阶段默认参考字段（与后端 _STAGE_DEFAULT_FIELDS 保持一致）
+const STAGE_DEFAULT_FIELDS = {
+  question_generate: [],
+  knowledge_generate: ['input'],
+  question_validate: ['input', 'knowledge'],
+  answer_generate: ['input', 'originContent'],
+  answer_validate: ['input', 'output', 'cot', 'knowledge'],
+  data_evaluate: ['input', 'output', 'cot', 'knowledge'],
+}
+
 /**
  * Reusable composable for the prompt preview + inline-edit drawer.
  *
@@ -35,13 +45,15 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
       drawerVersion.value = selectedPrompt.version
       drawerCreatedAt.value = selectedPrompt.created_at
       drawerOriginalContent.value = selectedPrompt.content || ''
-      drawerReferenceFields.value = selectedPrompt.reference_fields || []
+      drawerReferenceFields.value = selectedPrompt.reference_fields?.length
+        ? selectedPrompt.reference_fields
+        : (STAGE_DEFAULT_FIELDS[stage] || [])
     } else {
       drawerContent.value = ''
       drawerVersion.value = null
       drawerCreatedAt.value = null
       drawerOriginalContent.value = ''
-      drawerReferenceFields.value = []
+      drawerReferenceFields.value = STAGE_DEFAULT_FIELDS[stage] || []
     }
   }
 
