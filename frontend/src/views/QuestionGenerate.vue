@@ -379,8 +379,16 @@ import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
 // ----- Form state -----
 const router = useRouter()
-
+// 参考字段（选文件后动态加载）
+const fileFields = ref([])
 const referenceFields = ref([])
+
+
+function toggleRefField(field, checked) {
+  referenceFields.value = checked
+    ? [...referenceFields.value, field]
+    : referenceFields.value.filter(f => f !== field)
+}
 
 watch(() => form.value.file_id, async (fileId) => {
   if (!fileId) {
@@ -391,18 +399,11 @@ watch(() => form.value.file_id, async (fileId) => {
   try {
     const res = await getFileFields(fileId)
     fileFields.value = res.fields || []
-    // 只保留文件里存在的默认字段
     referenceFields.value = [].filter(f => fileFields.value.includes(f))
   } catch {
     fileFields.value = []
   }
 }, { immediate: true })
-
-function toggleRefField(field, checked) {
-  referenceFields.value = checked
-    ? [...referenceFields.value, field]
-    : referenceFields.value.filter(f => f !== field)
-}
 
 const form = ref({
   file_id: null,

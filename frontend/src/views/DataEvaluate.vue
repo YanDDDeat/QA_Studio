@@ -366,6 +366,15 @@ const fileFields = ref([])
 
 const referenceFields = ref(['input', 'output', 'cot', 'knowledge'])
 
+
+function toggleRefField(field, checked) {
+  referenceFields.value = checked
+    ? [...referenceFields.value, field]
+    : referenceFields.value.filter(f => f !== field)
+}
+
+const router = useRouter()
+
 watch(() => form.value.file_id, async (fileId) => {
   if (!fileId) {
     fileFields.value = []
@@ -381,14 +390,6 @@ watch(() => form.value.file_id, async (fileId) => {
     fileFields.value = []
   }
 }, { immediate: true })
-
-function toggleRefField(field, checked) {
-  referenceFields.value = checked
-    ? [...referenceFields.value, field]
-    : referenceFields.value.filter(f => f !== field)
-}
-
-const router = useRouter()
 
 const form = ref({
   file_id: null,

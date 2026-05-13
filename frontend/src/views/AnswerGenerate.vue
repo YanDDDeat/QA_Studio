@@ -326,6 +326,15 @@ const fileFields = ref([])
 
 const referenceFields = ref(['input', 'originContent'])
 
+
+function toggleRefField(field, checked) {
+  referenceFields.value = checked
+    ? [...referenceFields.value, field]
+    : referenceFields.value.filter(f => f !== field)
+}
+
+const router = useRouter()
+
 watch(() => form.value.file_id, async (fileId) => {
   if (!fileId) {
     fileFields.value = []
@@ -335,20 +344,11 @@ watch(() => form.value.file_id, async (fileId) => {
   try {
     const res = await getFileFields(fileId)
     fileFields.value = res.fields || []
-    // 只保留文件里存在的默认字段
     referenceFields.value = ['input', 'originContent'].filter(f => fileFields.value.includes(f))
   } catch {
     fileFields.value = []
   }
 }, { immediate: true })
-
-function toggleRefField(field, checked) {
-  referenceFields.value = checked
-    ? [...referenceFields.value, field]
-    : referenceFields.value.filter(f => f !== field)
-}
-
-const router = useRouter()
 
 const form = ref({
   file_id: null,
