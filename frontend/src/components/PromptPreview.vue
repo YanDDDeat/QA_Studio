@@ -16,15 +16,15 @@
       <div class="reference-fields">
         <span class="reference-label">附加参考字段：</span>
         <el-checkbox-group
-          :model-value="referenceFields"
+          v-model="referenceFieldsModel"
           size="small"
-          @update:model-value="$emit('update:referenceFields', $event)"
         >
           <el-checkbox
             v-for="f in availableFields"
             :key="f.value"
             :label="f.value"
-          >{{ f.label }}</el-checkbox>
+            :value="f.value"
+          >{{ f.value }}</el-checkbox>
         </el-checkbox-group>
       </div>
       <div class="preview-footer">
@@ -48,6 +48,7 @@
 
 <script setup>
 import { Document } from '@element-plus/icons-vue'
+import { computed } from 'vue'
 
 const availableFields = [
   { value: 'input', label: '问题(input)' },
@@ -64,7 +65,7 @@ const availableFields = [
   { value: 'step_count', label: '步骤数(step_count)' },
 ]
 
-defineProps({
+const props = defineProps({
   version: { type: Number, default: null },
   content: { type: String, default: '' },
   timeLabel: { type: String, default: '' },
@@ -74,7 +75,12 @@ defineProps({
   referenceFields: { type: Array, default: () => [] },
 })
 
-defineEmits(['update:content', 'save', 'update:referenceFields'])
+const emit = defineEmits(['update:content', 'save', 'update:referenceFields'])
+
+const referenceFieldsModel = computed({
+  get: () => props.referenceFields,
+  set: (val) => emit('update:referenceFields', val),
+})
 </script>
 
 <style scoped>
