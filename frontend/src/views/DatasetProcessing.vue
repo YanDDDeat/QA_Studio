@@ -129,7 +129,7 @@
               />
             </el-form-item>
 
-            <el-form-item v-if="assessForm.file_id" label="输入字段（与提示词一起输入到LLM）">
+            <el-form-item v-if="assessForm.file_id" label="输入字段">
               <el-checkbox
                 v-for="f in assessFileFields"
                 :key="f"
