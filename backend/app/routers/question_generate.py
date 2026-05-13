@@ -23,7 +23,7 @@ import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import List, Optional
 
 from app.database import get_db, SessionLocal
 from sqlalchemy import or_
@@ -56,6 +56,7 @@ class QuestionGenerateStartRequest(BaseModel):
     prompt_id: int = Field(..., description="ID of the prompt to use")
     model: str = Field(..., description="Model name to use for LLM calls")
     llm_config_id: Optional[int] = Field(None, description="ID of the LLM config to use")
+    reference_fields: Optional[List[str]] = Field(None, description="参考字段列表，为空时使用 Prompt 默认值")
     output_filename: str = Field(..., description="User-specified base name for the output file")
 
 

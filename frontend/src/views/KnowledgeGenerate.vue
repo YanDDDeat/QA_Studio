@@ -14,6 +14,16 @@
               <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" expected-stage="question_generate" :disabled="taskRunning" />
             </el-form-item>
 
+            <el-form-item v-if="form.file_id" label="参考字段">
+              <el-checkbox
+                v-for="f in availableRefFields"
+                :key="f"
+                :model-value="referenceFields.includes(f)"
+                size="small"
+                @update:model-value="toggleRefField(f, $event)"
+              >{{ f }}</el-checkbox>
+            </el-form-item>
+
             <el-form-item label="选择Prompt">
               <el-select v-model="form.prompt_id" placeholder="请选择知识体系生成阶段的Prompt" style="width: 100%" filterable>
                 <el-option v-for="p in promptOptions" :key="p.id" :label="`v${p.version}`" :value="p.id">
@@ -311,7 +321,18 @@ import { buildDefaultOutputFilename } from '../utils/stageLabels'
 import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
 // ----- Form state -----
+const availableRefFields = ['input', 'output', 'cot', 'knowledge', 'domain', 'difficulty', 'task_type', 'originContent', 'scene', 'source', 'source_type', 'step_count']
+
+function toggleRefField(field, checked) {
+  referenceFields.value = checked
+    ? [...referenceFields.value, field]
+    : referenceFields.value.filter(f => f !== field)
+}
+
 const router = useRouter()
+// 参考字段（选文件后出现）
+const referenceFields = ref(['input'])
+
 const form = ref({
   file_id: null,
   prompt_id: null,
@@ -552,6 +573,7 @@ async function handleStart() {
       model: form.value.model,
       llm_config_id: selectedLLMConfigId.value || null,
       output_filename: form.value.output_filename || undefined,
+      reference_fields: referenceFields.value.length ? referenceFields.value : undefined,
     }
     const res = await startKnowledgeGenerate(payload)
     taskId.value = res.task_id

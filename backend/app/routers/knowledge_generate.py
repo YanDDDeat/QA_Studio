@@ -21,7 +21,7 @@ import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import List, Optional
 
 from app.database import get_db, SessionLocal
 from sqlalchemy import or_
@@ -53,6 +53,7 @@ class KnowledgeGenerateStartRequest(BaseModel):
     prompt_id: int = Field(..., description="ID of the prompt to use")
     model: str = Field(..., description="Model name to use for LLM calls")
     llm_config_id: Optional[int] = Field(None, description="ID of the LLM config to use")
+    reference_fields: Optional[List[str]] = Field(None, description="参考字段列表，为空时使用 Prompt 默认值")
     output_filename: Optional[str] = Field(None, description="可选输出文件名 base，留空则按源文件派生")
 
 
@@ -391,7 +392,7 @@ async def start_knowledge_generate(
             model=data.model,
             user_id=current_user.id,
             username=current_user.username,
-            reference_fields=prompt_obj.reference_fields,
+            reference_fields=data.reference_fields or prompt_obj.reference_fields,
             output_filename=data.output_filename,
             base_url_override=base_url_override,
             api_key_override=api_key_override,

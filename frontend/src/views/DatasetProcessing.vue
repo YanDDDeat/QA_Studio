@@ -129,6 +129,16 @@
               />
             </el-form-item>
 
+            <el-form-item v-if="assessForm.file_id" label="参考字段">
+              <el-checkbox
+                v-for="f in assessAvailableRefFields"
+                :key="f"
+                :model-value="assessReferenceFields.includes(f)"
+                size="small"
+                @update:model-value="toggleAssessRefField(f, $event)"
+              >{{ f }}</el-checkbox>
+            </el-form-item>
+
             <el-form-item label="输出名称">
               <el-input v-model="assessForm.output_name" placeholder="系统自动追加后缀" clearable />
             </el-form-item>
@@ -358,6 +368,15 @@ const splitStatusLabel = computed(() => {
 
 // ---- Assessment state ----
 const assessForm = ref({ file_id: null, output_name: '', prompt_id: null, model: '' })
+// 参考字段（选文件后出现）
+const assessAvailableRefFields = ['input', 'output', 'cot', 'knowledge', 'domain', 'difficulty', 'task_type', 'originContent', 'scene', 'source', 'source_type', 'step_count']
+const assessReferenceFields = ref([])
+
+function toggleAssessRefField(field, checked) {
+  assessReferenceFields.value = checked
+    ? [...assessReferenceFields.value, field]
+    : assessReferenceFields.value.filter(f => f !== field)
+}
 const assessFileOptions = ref([])
 const assessPromptOptions = ref([])
 const assessLLMConfigs = ref([])
@@ -622,6 +641,7 @@ async function handleStartAssess() {
       prompt_id: assessForm.value.prompt_id,
       model: assessForm.value.model,
       llm_config_id: selectedAssessLLMConfigId.value || null,
+      reference_fields: assessReferenceFields.value.length ? assessReferenceFields.value : undefined,
     })
     assessTaskId.value = res.task_id
     assessTaskRunning.value = true

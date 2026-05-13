@@ -18,6 +18,16 @@
               />
             </el-form-item>
 
+            <el-form-item v-if="form.file_id" label="参考字段">
+              <el-checkbox
+                v-for="f in availableRefFields"
+                :key="f"
+                :model-value="referenceFields.includes(f)"
+                size="small"
+                @update:model-value="toggleRefField(f, $event)"
+              >{{ f }}</el-checkbox>
+            </el-form-item>
+
             <el-form-item label="输出文件名">
               <el-input
                 v-model="form.output_filename"
@@ -368,6 +378,17 @@ import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
 // ----- Form state -----
 const router = useRouter()
+// 参考字段（选文件后出现）
+const availableRefFields = ['input', 'output', 'cot', 'knowledge', 'domain', 'difficulty', 'task_type', 'originContent', 'scene', 'source', 'source_type', 'step_count']
+
+function toggleRefField(field, checked) {
+  referenceFields.value = checked
+    ? [...referenceFields.value, field]
+    : referenceFields.value.filter(f => f !== field)
+}
+
+const referenceFields = ref([])
+
 const form = ref({
   file_id: null,
   category: '知识问答',
@@ -619,6 +640,7 @@ async function handleStart() {
       model: form.value.model,
       llm_config_id: selectedLLMConfigId.value || null,
       output_filename: form.value.output_filename,
+      reference_fields: referenceFields.value.length ? referenceFields.value : undefined,
     }
     const res = await startQuestionGenerate(payload)
     taskId.value = res.task_id
