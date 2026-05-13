@@ -82,8 +82,8 @@
           </el-form>
         </div>
         <div class="config-preview">
-          <PromptPreview :version="drawerVersion" :content="drawerContent" :time-label="formatTime(drawerCreatedAt)" :content-changed="drawerContentChanged" :next-version="nextVersion" :save-loading="saveLoading" @update:content="drawerContent = $event" :reference-fields="drawerReferenceFields"
-            :reference-fields-changed="drawerReferenceFieldsChanged" @update:referenceFields="onReferenceFieldsChange" @save="saveAsNewVersion" />
+          <PromptPreview :version="drawerVersion" :content="drawerContent" :time-label="formatTime(drawerCreatedAt)" :content-changed="drawerContentChanged" :next-version="nextVersion" :save-loading="saveLoading" @update:content="drawerContent = $event"
+            :reference-fields-changed="drawerReferenceFieldsChanged" @save="saveAsNewVersion" />
         </div>
       </div>
     </el-card>
@@ -349,9 +349,7 @@ const {
   drawerVersion,
   drawerCreatedAt,
   drawerContentChanged,
-  drawerReferenceFields,
   drawerReferenceFieldsChanged,
-  onReferenceFieldsChange,
   nextVersion,
   saveLoading,
   saveAsNewVersion,
