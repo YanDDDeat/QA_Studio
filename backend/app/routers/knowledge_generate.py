@@ -31,7 +31,7 @@ from app.models.models import (
 )
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
-from app.services.field_mapper import apply_llm_fields_to_dataset
+from app.services.field_mapper import apply_llm_fields_to_dataset, build_record_content
 from app.services.file_service import (
     create_output_file, clone_single_dataset, write_datasets_to_file,
     repair_file_on_disk,
@@ -80,6 +80,7 @@ async def _run_knowledge_generate_task(
     model: str,
     user_id: int,
     username: str,
+    reference_fields = None,
     output_filename: Optional[str] = None,
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
@@ -129,13 +130,13 @@ async def _run_knowledge_generate_task(
 
         for idx in range(start_index, total):
             dataset = source_datasets[idx]
-            input_text = dataset.input or ""
-            if not input_text:
+            record_content = build_record_content(dataset, reference_fields, "knowledge_generate")
+            if not record_content:
                 logger.warning(
-                    "Task %d: dataset %d has no input text, skipping",
+                    "Task %d: dataset %d has no reference content, skipping",
                     task_id, dataset.id,
                 )
-                _add_task_log(db, task_id, f"记录 {idx + 1}: 数据集ID {dataset.id} 无问题文本，跳过")
+                _add_task_log(db, task_id, f"记录 {idx + 1}: 数据集ID {dataset.id} 无参考内容，跳过")
                 _update_progress(db, task_id, idx + 1)
                 continue
 
@@ -151,7 +152,7 @@ async def _run_knowledge_generate_task(
                 return
 
             try:
-                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{input_text}"
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
                 llm_result = await call_llm_json(
                     prompt=llm_prompt,
                     model=model,
@@ -390,6 +391,7 @@ async def start_knowledge_generate(
             model=data.model,
             user_id=current_user.id,
             username=current_user.username,
+            reference_fields=prompt_obj.reference_fields,
             output_filename=data.output_filename,
             base_url_override=base_url_override,
             api_key_override=api_key_override,

@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS `prompts` (
     `version`    INT          NOT NULL DEFAULT 1 COMMENT '版本号，修改时自增',
     `content`    MEDIUMTEXT  NOT NULL COMMENT '提示词内容',
     `model`      VARCHAR(128) DEFAULT NULL COMMENT '选择的模型',
+    `reference_fields` JSON DEFAULT NULL COMMENT '附加参考字段列表，如 ["input","output","domain"]',
     `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     KEY `idx_user_id` (`user_id`),

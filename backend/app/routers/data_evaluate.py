@@ -38,7 +38,7 @@ from app.services.file_service import (
     create_output_file, clone_single_dataset,
     write_datasets_to_file,
 )
-from app.services.field_mapper import apply_llm_fields_to_dataset
+from app.services.field_mapper import apply_llm_fields_to_dataset, build_record_content
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.data_evaluate")
@@ -156,6 +156,7 @@ async def _run_data_evaluate_task(
     model: str,
     user_id: int,
     username: str,
+    reference_fields = None,
     output_filename: Optional[str] = None,
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
@@ -206,18 +207,7 @@ async def _run_data_evaluate_task(
         for idx in range(start_index, total):
             dataset = source_datasets[idx]
 
-            record_content = f"问题(input): {dataset.input or ''}"
-            if dataset.output:
-                record_content += f"\n答案(output): {dataset.output or ''}"
-            if dataset.cot:
-                record_content += f"\n推理过程(cot): {dataset.cot or ''}"
-            if dataset.knowledge:
-                knowledge_str = (
-                    json.dumps(dataset.knowledge, ensure_ascii=False)
-                    if isinstance(dataset.knowledge, (dict, list))
-                    else str(dataset.knowledge)
-                )
-                record_content += f"\n知识体系(knowledge): {knowledge_str}"
+            record_content = build_record_content(dataset, reference_fields, "data_evaluate")
             llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
 
             # 检查任务是否被暂停
@@ -480,6 +470,7 @@ async def start_data_evaluate(
             model=data.model,
             user_id=current_user.id,
             username=current_user.username,
+            reference_fields=prompt_obj.reference_fields,
             output_filename=data.output_filename,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
@@ -726,6 +717,7 @@ async def retry_data_evaluate(
             model=task.model,
             user_id=current_user.id,
             username=current_user.username,
+            reference_fields=prompt_obj.reference_fields,
         )
     )
 
@@ -782,6 +774,7 @@ def resume_data_evaluate_task(task: Task, db: Session):
             prompt_content=prompt_obj.content,
             model=task.model,
             user_id=task.user_id,
+            reference_fields=prompt_obj.reference_fields,
             start_index=start_index,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
