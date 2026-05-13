@@ -31,6 +31,7 @@ from app.models.models import (
 )
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
+from app.services.field_mapper import apply_llm_fields_to_dataset
 from app.services.file_service import (
     create_output_file, clone_single_dataset, write_datasets_to_file,
 )
@@ -194,10 +195,8 @@ async def _run_answer_generate_task(
                 cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.ANSWER_GENERATE)
                 cloned_ds.output = output_text
                 cloned_ds.cot = cot_text
-                # 提取 step_count 和 extra_fields
-                _AG_KNOWN_KEYS = {"output", "answer", "cot", "reasoning", "step_count"}
-                cloned_ds.step_count = str(llm_result.get("step_count", "")) if llm_result.get("step_count") else None
-                extra = {k: v for k, v in llm_result.items() if k not in _AG_KNOWN_KEYS}
+                # 自动映射 LLM 返回字段到数据库列
+                extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
                 cloned_ds.extra_fields = extra if extra else None
                 db.commit()
                 success_count += 1

@@ -17,10 +17,10 @@
   - [x] FileSelector 加 expectedStage 过滤 + 「显示全部」开关，默认仅显示上一阶段
 
 ## 小需求
-- [x] 分支3 `feature/file-merge-download`：详见 `docs/requirements/需求_JSON文件合并导出.md`
+- [x] 分支3 `feature/file-merge-download`：详见 `docs/requirements/08_需求_JSON文件合并导出.md`
   - [x] 文件管理页多选JSON文件合并下载
 
-- [x] 分支4 `feature/llm-fields-extension`：详见 `docs/requirements/10_需求_LLM返回字段扩展存储.md`
+- [x] 分支4 `feature/llm-fields-extension`：详见 `docs/requirements/09_需求_LLM返回字段扩展存储.md`
   - [x] Dataset 新增 step_count (String) + extra_fields (JSON) 列
   - [x] 各阶段 LLM 处理取 step_count + 剩余字段存 extra_fields
   - [x] 前端 categorizeFields 展开 extra_fields 为独立字段显示
@@ -30,6 +30,13 @@
   - [x] 默认勾选22个字段（忽略大小写匹配）
   - [x] extra 子字段解析与分组显示
   - [x] 后端下载接口支持 fields 参数过滤
+
+## 新需求
+- [ ] 分支 `feature/llm-field-auto-mapping`：详见 `docs/requirements/12_需求_LLM返回字段自动映射到数据库列.md`
+  - [ ] 新建 `field_mapper.py`：动态映射 LLM 字段到数据库列
+  - [ ] 改造 6 个管线阶段：替换硬编码白名单为自动映射
+  - [ ] 支持忽略大小写匹配（如 `Relevance` → `relevance`）
+  - [ ] 新增字段只需 `ALTER TABLE` + 改 Prompt，代码无需改动
 
 ## 数据持久化改进
 - [ ] 分支 `feature/data-flush-and-sync`

@@ -31,6 +31,7 @@ from app.models.models import (
 )
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
+from app.services.field_mapper import apply_llm_fields_to_dataset
 from app.services.file_service import (
     create_output_file, clone_single_dataset, write_datasets_to_file,
     repair_file_on_disk,
@@ -185,23 +186,15 @@ async def _run_knowledge_generate_task(
                 continue
 
             if isinstance(llm_result, dict):
-                knowledge_value = llm_result.get("knowledge", "")
                 # 立即克隆到输出文件，让前端能实时加载结果
                 cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.KNOWLEDGE_GENERATE)
-                # 处理 domain 字段：支持字符串或列表
-                domain_value = llm_result.get("domain", "")
-                if isinstance(domain_value, list):
-                    domain_value = json.dumps(domain_value, ensure_ascii=False)
-                cloned_ds.domain = domain_value
-                # 处理 knowledge/scene 字段：支持字符串或列表
-                if isinstance(knowledge_value, list):
-                    knowledge_value = json.dumps(knowledge_value, ensure_ascii=False)
-                cloned_ds.scene = knowledge_value
-                cloned_ds.knowledge = knowledge_value
-                # 提取 step_count 和 extra_fields
-                _KG_KNOWN_KEYS = {"knowledge", "domain", "step_count"}
-                cloned_ds.step_count = str(llm_result.get("step_count", "")) if llm_result.get("step_count") else None
-                extra = {k: v for k, v in llm_result.items() if k not in _KG_KNOWN_KEYS}
+                # scene 字段始终与 knowledge 保持一致
+                knowledge_raw = llm_result.get("knowledge", "")
+                if isinstance(knowledge_raw, list):
+                    knowledge_raw = json.dumps(knowledge_raw, ensure_ascii=False)
+                cloned_ds.scene = knowledge_raw
+                # 自动映射 LLM 返回字段到数据库列
+                extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
                 cloned_ds.extra_fields = extra if extra else None
                 db.commit()
                 success_count += 1

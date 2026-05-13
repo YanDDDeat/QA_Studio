@@ -36,6 +36,7 @@ from app.services.file_service import (
     create_output_file, clone_single_dataset,
     write_datasets_to_file, create_fail_file, serialize_dataset_to_dict,
 )
+from app.services.field_mapper import apply_llm_fields_to_dataset
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.answer_validate")
@@ -196,19 +197,13 @@ async def _run_answer_validate_task(
             reason = llm_result.get("reason", "")
             validation_result_upper = str(validation_result).upper().strip()
 
-            # 提取 step_count 和 extra_fields
-            _AV_KNOWN_KEYS = {"validation_result", "reason", "step_count"}
-            step_count = str(llm_result.get("step_count", "")) if llm_result.get("step_count") else None
-            extra = {k: v for k, v in llm_result.items() if k not in _AV_KNOWN_KEYS} if isinstance(llm_result, dict) else None
-
+            # 自动映射 LLM 返回字段到数据库列
             if validation_result_upper == "PASS":
                 # 立即克隆到输出文件，让前端能实时加载结果
                 cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.ANSWER_VALIDATE)
                 cloned_ds.passed = "是"
-                if step_count:
-                    cloned_ds.step_count = step_count
-                if extra:
-                    cloned_ds.extra_fields = extra
+                extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
+                cloned_ds.extra_fields = extra if extra else None
                 db.commit()
                 pass_count += 1
                 _add_task_log(db, task_id, f"记录 {idx + 1}: 校验通过")
@@ -217,10 +212,6 @@ async def _run_answer_validate_task(
                 fail_dict["passed"] = "否"
                 fail_dict["validation_result"] = validation_result
                 fail_dict["reason"] = reason
-                if step_count:
-                    fail_dict["step_count"] = step_count
-                if extra:
-                    fail_dict["extra_fields"] = extra
                 fail_records.append(fail_dict)
                 fail_count += 1
                 _add_task_log(db, task_id, f"记录 {idx + 1}: 校验失败 - {reason[:100]}")

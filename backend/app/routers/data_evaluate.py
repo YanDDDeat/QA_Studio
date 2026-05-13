@@ -38,6 +38,7 @@ from app.services.file_service import (
     create_output_file, clone_single_dataset,
     write_datasets_to_file,
 )
+from app.services.field_mapper import apply_llm_fields_to_dataset
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.data_evaluate")
@@ -298,22 +299,14 @@ async def _run_data_evaluate_task(
 
             # 立即克隆到输出文件，让前端能实时加载结果
             cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.DATA_EVALUATE)
+            # 手动设置数值型评分字段（覆盖自动映射的字符串值，保留 int/float 类型）
             cloned_ds.relevance = relevance
             cloned_ds.clarity = clarity
             cloned_ds.reasoning = reasoning
             cloned_ds.terminology = terminology
             cloned_ds.score = score
-            # 提取 step_count 和 extra_fields
-            _DE_KNOWN_KEYS = {
-                "relevance", "relevant", "相关性", "Relevance",
-                "clarity", "clear", "清晰度", "Clarity",
-                "reasoning", "reasoning_quality", "推理", "Reasoning",
-                "terminology", "terminology_accuracy", "术语", "Terminology",
-                "score", "综合评分", "overall_score", "total_score", "总分", "Score",
-                "step_count",
-            }
-            cloned_ds.step_count = str(llm_result.get("step_count", "")) if llm_result.get("step_count") else None
-            extra = {k: v for k, v in llm_result.items() if k not in _DE_KNOWN_KEYS} if isinstance(llm_result, dict) else None
+            # 自动映射 LLM 返回的其他字段到数据库列
+            extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
             cloned_ds.extra_fields = extra if extra else None
             db.commit()
             evaluated_count += 1

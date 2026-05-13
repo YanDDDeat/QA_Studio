@@ -33,19 +33,13 @@ from app.models.models import (
 )
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
+from app.services.field_mapper import apply_llm_fields_to_dataset
 from app.services.file_service import create_output_file, write_datasets_to_file
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.question_generate")
 
 router = APIRouter()
-
-
-def _serialize_field(value):
-    """将字段值序列化为字符串。支持字符串或列表，列表转为 JSON 字符串。"""
-    if isinstance(value, list):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value) if value else ""
 
 
 # ---------------------------------------------------------------------------
@@ -277,29 +271,13 @@ async def _run_question_generate_task(
                 continue
 
             # Create Dataset records for each question
-            _QG_KNOWN_KEYS = {
-                "input", "question", "output", "answer", "cot", "reasoning",
-                "task_type", "type", "domain", "difficulty", "step_count",
-            }
-            step_count_global = str(llm_result.get("step_count", "")) if isinstance(llm_result, dict) else ""
             for q in questions:
                 if not isinstance(q, dict):
                     continue
 
-                step_count = str(q.get("step_count", step_count_global))
-                extra = {k: v for k, v in q.items() if k not in _QG_KNOWN_KEYS}
-
                 dataset = Dataset(
                     user_id=user_id,
-                    input=q.get("input", q.get("question", "")),
-                    output=q.get("output", q.get("answer", "")),
-                    cot=q.get("cot", q.get("reasoning", "")),
                     category=category,
-                    task_type=q.get("task_type", q.get("type", ""))[:64],
-                    domain=_serialize_field(q.get("domain", "")),
-                    difficulty=q.get("difficulty", "")[:32],
-                    step_count=step_count if step_count else None,
-                    extra_fields=extra if extra else None,
                     corpus_cate=1,
                     source=effective_source,
                     source_id=effective_source_id,
@@ -309,6 +287,17 @@ async def _run_question_generate_task(
                     Assessment="",
                     current_stage=StageEnum.QUESTION_GENERATE,
                 )
+                # 自动映射 LLM 返回字段到数据库列
+                # 对于 input/output/cot 需要处理别名（question/answer/reasoning）
+                q_normalized = dict(q)
+                if "question" in q_normalized and "input" not in q_normalized:
+                    q_normalized["input"] = q_normalized["question"]
+                if "answer" in q_normalized and "output" not in q_normalized:
+                    q_normalized["output"] = q_normalized["answer"]
+                if "reasoning" in q_normalized and "cot" not in q_normalized:
+                    q_normalized["cot"] = q_normalized["reasoning"]
+                extra = apply_llm_fields_to_dataset(dataset, q_normalized)
+                dataset.extra_fields = extra if extra else None
                 db.add(dataset)
                 generated_count += 1
 
