@@ -14,7 +14,7 @@
               <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" expected-stage="knowledge_generate" :disabled="taskRunning" />
             </el-form-item>
 
-            <el-form-item v-if="form.file_id" label="参考字段">
+            <el-form-item v-if="form.file_id" label="输入字段（与提示词一起输入到LLM）">
               <el-checkbox
                 v-for="f in fileFields"
                 :key="f"
