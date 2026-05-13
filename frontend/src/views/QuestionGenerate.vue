@@ -137,7 +137,8 @@
             :save-loading="saveLoading"
             @update:content="drawerContent = $event"
             :reference-fields="drawerReferenceFields"
-            @update:referenceFields="drawerReferenceFields = $event"
+            :reference-fields-changed="drawerReferenceFieldsChanged"
+            @update:referenceFields="onReferenceFieldsChange"
             @save="saveAsNewVersion"
           />
         </div>
@@ -414,6 +415,9 @@ const {
   drawerVersion,
   drawerCreatedAt,
   drawerContentChanged,
+  drawerReferenceFields,
+  drawerReferenceFieldsChanged,
+  onReferenceFieldsChange,
   nextVersion,
   saveLoading,
   saveAsNewVersion,

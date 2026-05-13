@@ -28,13 +28,27 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
   const drawerCreatedAt = ref(null)
   const drawerOriginalContent = ref('')
   const drawerReferenceFields = ref([])
+  const drawerOriginalReferenceFields = ref([])
   const saveLoading = ref(false)
 
   const drawerContentChanged = computed(
     () => drawerContent.value !== drawerOriginalContent.value
   )
 
+  const drawerReferenceFieldsChanged = computed(() => {
+    const orig = drawerOriginalReferenceFields.value
+    const curr = drawerReferenceFields.value
+    if (orig.length !== curr.length) return true
+    const origSet = new Set(orig)
+    return curr.some(f => !origSet.has(f))
+  })
+
   const nextVersion = computed(() => (drawerVersion.value ?? 0) + 1)
+
+  // 显式 setter —— 避免模板内联 ref 赋值可能不触发响应式的问题
+  function onReferenceFieldsChange(val) {
+    drawerReferenceFields.value = val
+  }
 
   // Sync drawer with the currently selected prompt
   function syncDrawerContent() {
@@ -48,12 +62,14 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
       drawerReferenceFields.value = selectedPrompt.reference_fields?.length
         ? selectedPrompt.reference_fields
         : (STAGE_DEFAULT_FIELDS[stage] || [])
+      drawerOriginalReferenceFields.value = [...drawerReferenceFields.value]
     } else {
       drawerContent.value = ''
       drawerVersion.value = null
       drawerCreatedAt.value = null
       drawerOriginalContent.value = ''
       drawerReferenceFields.value = STAGE_DEFAULT_FIELDS[stage] || []
+      drawerOriginalReferenceFields.value = [...drawerReferenceFields.value]
     }
   }
 
@@ -121,8 +137,10 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
     drawerCreatedAt,
     drawerContentChanged,
     drawerReferenceFields,
+    drawerReferenceFieldsChanged,
     nextVersion,
     saveLoading,
     saveAsNewVersion,
+    onReferenceFieldsChange,
   }
 }

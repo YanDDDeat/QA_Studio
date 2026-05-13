@@ -163,7 +163,7 @@
         </div>
 
         <div class="config-preview">
-          <PromptPreview :version="assessDrawerVersion" :content="assessDrawerContent" :time-label="formatTime(assessDrawerCreatedAt)" :content-changed="assessDrawerContentChanged" :next-version="assessNextVersion" :save-loading="assessSaveLoading" :reference-fields="assessDrawerReferenceFields" @update:content="assessDrawerContent = $event" @update:referenceFields="assessDrawerReferenceFields = $event" @save="assessSaveAsNewVersion" />
+          <PromptPreview :version="assessDrawerVersion" :content="assessDrawerContent" :time-label="formatTime(assessDrawerCreatedAt)" :content-changed="assessDrawerContentChanged" :next-version="assessNextVersion" :save-loading="assessSaveLoading" :reference-fields="assessDrawerReferenceFields" @update:content="assessDrawerContent = $event" @update:referenceFields="assessOnReferenceFieldsChange" @save="assessSaveAsNewVersion" />
         </div>
       </div>
 
@@ -377,6 +377,8 @@ const {
   drawerContent: assessDrawerContent,
   drawerCreatedAt: assessDrawerCreatedAt,
   drawerContentChanged: assessDrawerContentChanged,
+  drawerReferenceFields: assessDrawerReferenceFields,
+  onReferenceFieldsChange: assessOnReferenceFieldsChange,
   nextVersion: assessNextVersion,
   saveLoading: assessSaveLoading,
   saveAsNewVersion: assessSaveAsNewVersion,

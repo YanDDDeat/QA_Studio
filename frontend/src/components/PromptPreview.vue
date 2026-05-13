@@ -27,7 +27,7 @@
         <el-button
           type="primary"
           :loading="saveLoading"
-          :disabled="!contentChanged"
+          :disabled="!contentChanged && !referenceFieldsChanged"
           size="small"
           @click="$emit('save')"
         >
@@ -68,6 +68,7 @@ const props = defineProps({
   saveLoading: { type: Boolean, default: false },
   nextVersion: { type: Number, default: 1 },
   referenceFields: { type: Array, default: () => [] },
+  referenceFieldsChanged: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['update:content', 'save', 'update:referenceFields'])
