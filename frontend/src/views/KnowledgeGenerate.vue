@@ -335,6 +335,13 @@ function toggleRefField(field, checked) {
 
 const router = useRouter()
 
+const form = ref({
+  file_id: null,
+  prompt_id: null,
+  model: '',
+  output_filename: '',
+})
+
 watch(() => form.value.file_id, async (fileId) => {
   if (!fileId) {
     fileFields.value = []
@@ -349,13 +356,6 @@ watch(() => form.value.file_id, async (fileId) => {
     fileFields.value = []
   }
 }, { immediate: true })
-
-const form = ref({
-  file_id: null,
-  prompt_id: null,
-  model: '',
-  output_filename: '',
-})
 
 const fileOptions = ref([])
 const promptOptions = ref([])
