@@ -85,7 +85,7 @@ class Dataset(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    domain = Column(String(128), nullable=True)
+    domain = Column(Text, nullable=True)
     category = Column(String(32), nullable=True)  # 枚举: 知识问答, 逻辑生成
     task_type = Column(String(64), nullable=True)
     input = Column(Text, nullable=True)

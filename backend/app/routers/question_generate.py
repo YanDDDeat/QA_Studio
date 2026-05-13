@@ -41,6 +41,13 @@ logger = logging.getLogger("qa_studio.question_generate")
 router = APIRouter()
 
 
+def _serialize_field(value):
+    """将字段值序列化为字符串。支持字符串或列表，列表转为 JSON 字符串。"""
+    if isinstance(value, list):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value) if value else ""
+
+
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
 # ---------------------------------------------------------------------------
@@ -289,7 +296,7 @@ async def _run_question_generate_task(
                     cot=q.get("cot", q.get("reasoning", "")),
                     category=category,
                     task_type=q.get("task_type", q.get("type", ""))[:64],
-                    domain=q.get("domain", "")[:128],
+                    domain=_serialize_field(q.get("domain", "")),
                     difficulty=q.get("difficulty", "")[:32],
                     step_count=step_count if step_count else None,
                     extra_fields=extra if extra else None,

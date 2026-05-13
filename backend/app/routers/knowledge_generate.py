@@ -14,6 +14,7 @@ Key design:
 """
 
 import asyncio
+import json
 import logging
 import traceback
 
@@ -187,7 +188,14 @@ async def _run_knowledge_generate_task(
                 knowledge_value = llm_result.get("knowledge", "")
                 # 立即克隆到输出文件，让前端能实时加载结果
                 cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.KNOWLEDGE_GENERATE)
-                cloned_ds.domain = llm_result.get("domain", "")
+                # 处理 domain 字段：支持字符串或列表
+                domain_value = llm_result.get("domain", "")
+                if isinstance(domain_value, list):
+                    domain_value = json.dumps(domain_value, ensure_ascii=False)
+                cloned_ds.domain = domain_value
+                # 处理 knowledge/scene 字段：支持字符串或列表
+                if isinstance(knowledge_value, list):
+                    knowledge_value = json.dumps(knowledge_value, ensure_ascii=False)
                 cloned_ds.scene = knowledge_value
                 cloned_ds.knowledge = knowledge_value
                 # 提取 step_count 和 extra_fields

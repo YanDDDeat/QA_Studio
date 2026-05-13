@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS `users` (
 CREATE TABLE IF NOT EXISTS `datasets` (
     `id`            INT          NOT NULL AUTO_INCREMENT,
     `user_id`       INT          NOT NULL,
-    `domain`        VARCHAR(128) DEFAULT NULL,
+    `domain`        TEXT         DEFAULT NULL COMMENT '领域（支持JSON数组）',
     `category`      VARCHAR(32)  DEFAULT NULL COMMENT '枚举: 知识问答, 逻辑生成',
     `task_type`     VARCHAR(64)  DEFAULT NULL,
     `input`         TEXT         DEFAULT NULL COMMENT '问题文本',
