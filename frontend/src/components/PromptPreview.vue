@@ -15,17 +15,13 @@
       <!-- 附加参考字段选择 -->
       <div class="reference-fields">
         <span class="reference-label">附加参考字段：</span>
-        <el-checkbox-group
-          v-model="referenceFieldsModel"
+        <el-checkbox
+          v-for="f in availableFields"
+          :key="f.value"
+          :model-value="referenceFields.includes(f.value)"
           size="small"
-        >
-          <el-checkbox
-            v-for="f in availableFields"
-            :key="f.value"
-            :label="f.value"
-            :value="f.value"
-          >{{ f.value }}</el-checkbox>
-        </el-checkbox-group>
+          @update:model-value="toggleField(f.value, $event)"
+        >{{ f.value }}</el-checkbox>
       </div>
       <div class="preview-footer">
         <el-button
@@ -48,7 +44,6 @@
 
 <script setup>
 import { Document } from '@element-plus/icons-vue'
-import { computed } from 'vue'
 
 const availableFields = [
   { value: 'input', label: '问题(input)' },
@@ -77,10 +72,12 @@ const props = defineProps({
 
 const emit = defineEmits(['update:content', 'save', 'update:referenceFields'])
 
-const referenceFieldsModel = computed({
-  get: () => props.referenceFields,
-  set: (val) => emit('update:referenceFields', val),
-})
+function toggleField(field, checked) {
+  const next = checked
+    ? [...props.referenceFields, field]
+    : props.referenceFields.filter(f => f !== field)
+  emit('update:referenceFields', next)
+}
 </script>
 
 <style scoped>
