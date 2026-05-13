@@ -324,6 +324,8 @@ import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 // ----- Form state -----
 const fileFields = ref([])
 
+const referenceFields = ref(['input'])
+
 watch(() => form.value.file_id, async (fileId) => {
   if (!fileId) {
     fileFields.value = []
@@ -347,8 +349,6 @@ function toggleRefField(field, checked) {
 }
 
 const router = useRouter()
-// 参考字段（选文件后出现）
-const referenceFields = ref(['input'])
 
 const form = ref({
   file_id: null,
