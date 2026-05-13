@@ -299,14 +299,13 @@ async def _run_data_evaluate_task(
 
             # 立即克隆到输出文件，让前端能实时加载结果
             cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.DATA_EVALUATE)
-            # 手动设置数值型评分字段（覆盖自动映射的字符串值，保留 int/float 类型）
+            # 先自动映射 LLM 字段（会用字符串覆盖），再手动覆盖回 int/float 类型
+            extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
             cloned_ds.relevance = relevance
             cloned_ds.clarity = clarity
             cloned_ds.reasoning = reasoning
             cloned_ds.terminology = terminology
             cloned_ds.score = score
-            # 自动映射 LLM 返回的其他字段到数据库列
-            extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
             cloned_ds.extra_fields = extra if extra else None
             db.commit()
             evaluated_count += 1
