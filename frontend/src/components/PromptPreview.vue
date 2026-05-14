@@ -5,6 +5,16 @@
         <el-tag size="small" type="primary">版本 v{{ version }}</el-tag>
         <span class="preview-time">{{ timeLabel }}</span>
       </div>
+      <div v-if="recommendedFields.length" class="preview-fields">
+        <span class="fields-label">建议返回字段：</span>
+        <el-tag
+          v-for="f in recommendedFields"
+          :key="f.key"
+          size="small"
+          type="success"
+          class="field-tag"
+        >{{ f.label }}</el-tag>
+      </div>
       <el-input
         type="textarea"
         :model-value="content"
@@ -32,15 +42,51 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { Document } from '@element-plus/icons-vue'
 
-defineProps({
+const FIELD_LABELS = {
+  input: '问题',
+  output: '答案',
+  cot: '推理过程',
+  knowledge: '知识体系',
+  scene: '场景',
+  difficulty: '难度',
+  task_type: '任务类型',
+  step_count: '步骤数',
+  relevance: '相关性',
+  clarity: '清晰度',
+  reasoning: '推理评分',
+  terminology: '术语评分',
+  score: '综合评分',
+  Assessment: '评分标准',
+  validation_result: '校验结果',
+  reason: '理由',
+}
+
+const RECOMMENDED = {
+  question_generate: ['input', 'difficulty', 'task_type'],
+  knowledge_generate: ['knowledge', 'scene'],
+  question_validate: ['validation_result', 'reason'],
+  answer_generate: ['output', 'cot', 'step_count'],
+  answer_validate: ['validation_result', 'reason'],
+  data_evaluate: ['relevance', 'clarity', 'reasoning', 'terminology', 'score'],
+  dataset_assessment: ['Assessment'],
+}
+
+const props = defineProps({
   version: { type: Number, default: null },
   content: { type: String, default: '' },
   timeLabel: { type: String, default: '' },
   contentChanged: { type: Boolean, default: false },
   saveLoading: { type: Boolean, default: false },
   nextVersion: { type: Number, default: 1 },
+  stage: { type: String, default: '' },
+})
+
+const recommendedFields = computed(() => {
+  const keys = RECOMMENDED[props.stage] || []
+  return keys.map(k => ({ key: k, label: FIELD_LABELS[k] || k }))
 })
 
 defineEmits(['update:content', 'save'])
@@ -73,6 +119,25 @@ defineEmits(['update:content', 'save'])
 .preview-time {
   color: #909399;
   font-size: 13px;
+}
+
+.preview-fields {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.fields-label {
+  color: #606266;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.field-tag {
+  font-size: 11px;
 }
 
 .preview-textarea :deep(.el-textarea__inner) {

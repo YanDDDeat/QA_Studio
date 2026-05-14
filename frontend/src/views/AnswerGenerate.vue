@@ -92,7 +92,7 @@
           </el-form>
         </div>
         <div class="config-preview">
-          <PromptPreview :version="drawerVersion" :content="drawerContent" :time-label="formatTime(drawerCreatedAt)" :content-changed="drawerContentChanged" :next-version="nextVersion" :save-loading="saveLoading" @update:content="drawerContent = $event"
+          <PromptPreview stage="answer_generate" :version="drawerVersion" :content="drawerContent" :time-label="formatTime(drawerCreatedAt)" :content-changed="drawerContentChanged" :next-version="nextVersion" :save-loading="saveLoading" @update:content="drawerContent = $event"
             :reference-fields-changed="drawerReferenceFieldsChanged" @save="saveAsNewVersion" />
         </div>
       </div>

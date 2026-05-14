@@ -139,6 +139,7 @@
         </div>
         <div class="config-preview">
           <PromptPreview
+            stage="question_generate"
             :version="drawerVersion"
             :content="drawerContent"
             :time-label="formatTime(drawerCreatedAt)"

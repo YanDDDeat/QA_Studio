@@ -90,10 +90,10 @@ class EvaluationReportResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _parse_int_score(llm_result: dict, key: str) -> int:
+def _parse_int_score(llm_result: dict, key: str) -> int | None:
     """Parse an integer score field from the LLM result.
 
-    Handles cases where the LLM returns a float, a string, or a nested key.
+    Returns None when the field is missing or unparseable (instead of raising).
     """
     value = llm_result.get(key)
     if value is None:
@@ -102,19 +102,25 @@ def _parse_int_score(llm_result: dict, key: str) -> int:
             if value is not None:
                 break
     if value is None:
-        raise ValueError(f"Missing score field: {key}")
+        return None
 
     if isinstance(value, str):
         match = re.search(r'[-+]?\d+', value)
         if match:
             return int(match.group())
-        raise ValueError(f"Cannot parse integer from '{value}' for key '{key}'")
+        return None
 
-    return int(float(value))
+    try:
+        return int(float(value))
+    except (ValueError, TypeError):
+        return None
 
 
-def _parse_float_score(llm_result: dict, key: str) -> float:
-    """Parse a float score field from the LLM result."""
+def _parse_float_score(llm_result: dict, key: str) -> float | None:
+    """Parse a float score field from the LLM result.
+
+    Returns None when the field is missing or unparseable (instead of raising).
+    """
     value = llm_result.get(key)
     if value is None:
         for alt_key in _alternate_keys(key):
@@ -122,15 +128,18 @@ def _parse_float_score(llm_result: dict, key: str) -> float:
             if value is not None:
                 break
     if value is None:
-        raise ValueError(f"Missing score field: {key}")
+        return None
 
     if isinstance(value, str):
         match = re.search(r'[-+]?\d+\.?\d*', value)
         if match:
             return float(match.group())
-        raise ValueError(f"Cannot parse float from '{value}' for key '{key}'")
+        return None
 
-    return float(value)
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
 
 
 def _alternate_keys(key: str) -> list:
@@ -257,53 +266,34 @@ async def _run_data_evaluate_task(
                 _update_progress(db, task_id, idx + 1)
                 continue
 
-            try:
-                relevance = _parse_int_score(llm_result, "relevance")
-                clarity = _parse_int_score(llm_result, "clarity")
-                reasoning = _parse_int_score(llm_result, "reasoning")
-                terminology = _parse_int_score(llm_result, "terminology")
-                score = _parse_float_score(llm_result, "score")
-            except (ValueError, TypeError) as e:
-                consecutive_failures += 1
-                logger.warning(
-                    "Task %d: score parsing failed for record %d: %s",
-                    task_id, idx, str(e),
-                )
-                _add_task_log(
-                    db, task_id,
-                    f"记录 {idx + 1}: 评分解析失败 - {str(e)[:200]}",
-                )
-                if consecutive_failures >= 20:
-                    # 连续失败终止前将已有数据刷写到磁盘文件
-                    try:
-                        write_datasets_to_file(db=db, file_id=output_file.id)
-                        _add_task_log(db, task_id, f"连续失败{consecutive_failures}次终止，已将已有数据写入文件")
-                    except Exception as flush_err:
-                        _add_task_log(db, task_id, f"连续失败{consecutive_failures}次终止，刷写文件失败: {str(flush_err)[:200]}")
-                    task = db.query(Task).filter(Task.id == task_id).first()
-                    if task:
-                        task.status = TaskStatusEnum.FAILED
-                        db.commit()
-                    return
-                _update_progress(db, task_id, idx + 1)
-                continue
+            relevance = _parse_int_score(llm_result, "relevance")
+            clarity = _parse_int_score(llm_result, "clarity")
+            reasoning = _parse_int_score(llm_result, "reasoning")
+            terminology = _parse_int_score(llm_result, "terminology")
+            score = _parse_float_score(llm_result, "score")
 
             # 立即克隆到输出文件，让前端能实时加载结果
             cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.DATA_EVALUATE)
             # 先自动映射 LLM 字段（会用字符串覆盖），再手动覆盖回 int/float 类型
             extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
-            cloned_ds.relevance = relevance
-            cloned_ds.clarity = clarity
-            cloned_ds.reasoning = reasoning
-            cloned_ds.terminology = terminology
-            cloned_ds.score = score
+            if relevance is not None:
+                cloned_ds.relevance = relevance
+            if clarity is not None:
+                cloned_ds.clarity = clarity
+            if reasoning is not None:
+                cloned_ds.reasoning = reasoning
+            if terminology is not None:
+                cloned_ds.terminology = terminology
+            if score is not None:
+                cloned_ds.score = score
             cloned_ds.extra_fields = extra if extra else None
             db.commit()
             evaluated_count += 1
             consecutive_failures = 0
+            score_msg = f"综合评分 {score}" if score is not None else "无评分"
             _add_task_log(
                 db, task_id,
-                f"记录 {idx + 1}: 评估完成 - 综合评分 {score}",
+                f"记录 {idx + 1}: 评估完成 - {score_msg}",
             )
             _update_progress(db, task_id, idx + 1)
 
