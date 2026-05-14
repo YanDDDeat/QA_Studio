@@ -5,15 +5,9 @@
         <el-tag size="small" type="primary">版本 v{{ version }}</el-tag>
         <span class="preview-time">{{ timeLabel }}</span>
       </div>
-      <div v-if="recommendedFields.length" class="preview-fields">
-        <span class="fields-label">建议返回字段：</span>
-        <el-tag
-          v-for="f in recommendedFields"
-          :key="f.key"
-          size="small"
-          type="success"
-          class="field-tag"
-        >{{ f.label }}</el-tag>
+      <div v-if="recommendedJson" class="preview-fields">
+        <span class="fields-label">建议返回字段包括 </span>
+        <code class="fields-json">{{ recommendedJson }}</code>
       </div>
       <el-input
         type="textarea"
@@ -45,25 +39,6 @@
 import { computed } from 'vue'
 import { Document } from '@element-plus/icons-vue'
 
-const FIELD_LABELS = {
-  input: '问题',
-  output: '答案',
-  cot: '推理过程',
-  knowledge: '知识体系',
-  scene: '场景',
-  difficulty: '难度',
-  task_type: '任务类型',
-  step_count: '步骤数',
-  relevance: '相关性',
-  clarity: '清晰度',
-  reasoning: '推理评分',
-  terminology: '术语评分',
-  score: '综合评分',
-  Assessment: '评分标准',
-  validation_result: '校验结果',
-  reason: '理由',
-}
-
 const RECOMMENDED = {
   question_generate: ['input', 'difficulty', 'task_type'],
   knowledge_generate: ['knowledge', 'scene'],
@@ -73,6 +48,8 @@ const RECOMMENDED = {
   data_evaluate: ['relevance', 'clarity', 'reasoning', 'terminology', 'score'],
   dataset_assessment: ['Assessment'],
 }
+
+const LIST_STAGES = new Set(['question_generate'])
 
 const props = defineProps({
   version: { type: Number, default: null },
@@ -84,9 +61,13 @@ const props = defineProps({
   stage: { type: String, default: '' },
 })
 
-const recommendedFields = computed(() => {
-  const keys = RECOMMENDED[props.stage] || []
-  return keys.map(k => ({ key: k, label: FIELD_LABELS[k] || k }))
+const recommendedJson = computed(() => {
+  const keys = RECOMMENDED[props.stage]
+  if (!keys || keys.length === 0) return ''
+  const obj = {}
+  keys.forEach(k => { obj[k] = '' })
+  const json = JSON.stringify(obj)
+  return LIST_STAGES.has(props.stage) ? `[${json}]` : json
 })
 
 defineEmits(['update:content', 'save'])
@@ -125,7 +106,6 @@ defineEmits(['update:content', 'save'])
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
   padding-bottom: 8px;
   border-bottom: 1px solid #e4e7ed;
 }
@@ -136,8 +116,14 @@ defineEmits(['update:content', 'save'])
   white-space: nowrap;
 }
 
-.field-tag {
-  font-size: 11px;
+.fields-json {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  color: #67c23a;
+  background: #f0f9eb;
+  padding: 2px 6px;
+  border-radius: 3px;
+  word-break: break-all;
 }
 
 .preview-textarea :deep(.el-textarea__inner) {
