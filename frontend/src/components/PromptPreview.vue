@@ -6,7 +6,7 @@
         <span class="preview-time">{{ timeLabel }}</span>
       </div>
       <div v-if="recommendedJson" class="preview-fields">
-        <span class="fields-label">建议返回字段包括 </span>
+        <span class="fields-label">建议返回字段至少包括 </span>
         <code class="fields-json">{{ recommendedJson }}</code>
       </div>
       <el-input
