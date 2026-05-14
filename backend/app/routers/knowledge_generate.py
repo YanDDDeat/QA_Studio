@@ -9,7 +9,6 @@ Key design:
   at the question_generate stage
 - Per-record LLM calls with structured JSON parsing
 - After completion, results are written back to the same JSON file
-- scene field is always set to the same value as knowledge
 - Retry re-processes remaining unprocessed records
 """
 
@@ -90,6 +89,7 @@ async def _run_knowledge_generate_task(
     """Background coroutine: 读源 Dataset → LLM 生成 knowledge/scene → 克隆到新输出文件。
 
     原 file_id 下的 Dataset 与磁盘文件保持不变，新文件带 source_stage=KNOWLEDGE_GENERATE。
+    LLM 返回什么字段就写什么字段，不再将 scene 硬编码为 knowledge 的副本。
     """
     db = SessionLocal()
     try:
@@ -190,12 +190,7 @@ async def _run_knowledge_generate_task(
             if isinstance(llm_result, dict):
                 # 立即克隆到输出文件，让前端能实时加载结果
                 cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.KNOWLEDGE_GENERATE)
-                # scene 字段始终与 knowledge 保持一致
-                knowledge_raw = llm_result.get("knowledge", "")
-                if isinstance(knowledge_raw, list):
-                    knowledge_raw = json.dumps(knowledge_raw, ensure_ascii=False)
-                cloned_ds.scene = knowledge_raw
-                # 自动映射 LLM 返回字段到数据库列
+                # 自动映射 LLM 返回字段到数据库列（包括 knowledge、scene 等）
                 extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
                 cloned_ds.extra_fields = extra if extra else None
                 db.commit()
