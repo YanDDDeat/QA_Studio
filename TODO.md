@@ -1,11 +1,5 @@
 # QA_Studio TODO
 完成一个勾选一个，勾选后检查指导当前任务完成。
-## 整体验证（待完成）
-- [ ] COT过滤：上传JSON → 过滤 → 查看统计 → 下载两个结果文件
-- [ ] 数据集切分：上传JSON → 选择策略 → 切分 → 查看统计 → 确认train/test文件生成
-- [ ] 评分标准生成：上传测试集 → 选择Prompt和模型 → 生成 → 查看统计 → 确认Assessment字段写入
-- [ ] 全流程串联：问题生成 → 知识体系 → 问题校验 → 答案生成 → 答案校验 → 数据评估 → COT过滤 → 切分 → 评分
-
 ## LLM调用流程改进（新需求，分两批）
 - [x] 分支1 `feature/llm-task-improvements`：详见 `docs/requirements/需求_LLM任务改进.md`
   - [x] 修复 Prompt not found（全局共享 prompt 在 `/start` 校验时被漏掉）
@@ -43,6 +37,15 @@
   - [x] 任务暂停/停止时自动刷盘：各 `_run_*_task()` 检测到 PAUSED 状态退出前调用 `write_datasets_to_file()` 写入已有数据，避免中途暂停后 JSON 文件为空
   - [x] 数据中心文件列表新增"同步到文件"按钮：`POST /file-manage/sync/{file_id}`，从 DB 全量重写磁盘 JSON，覆盖写入让文件与 DB 一致
   - [ ] 详见 `docs/requirements/11_需求_数据持久化与手动同步.md`
+
+## LLM 并发调用优化
+- [ ] 分支 `feature/llm-concurrent`：详见 `docs/requirements/13_需求_LLM并发调用优化.md`
+  - [x] `llm_service.py` 抽出公共逻辑，新增 `call_llm_sync` / `call_llm_json_sync`
+  - [x] 新建 `thread_pool.py`：全局线程池 + 活跃任务计数器 + 动态批大小
+  - [x] 6 个 Pipeline 阶段改造为分批并发（run_in_executor + gather）
+  - [x] 适配进度追踪（每批更新）、暂停检查（每批检查）、失败处理（连续整批失败）
+  - [x] 管理员前端配置线程池大小
+  - [x] 配置项：`LLM_THREAD_POOL_SIZE`（默认20）
 
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架

@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     LLM_PROXY: str = ""       # 全局代理：填了则所有LLM请求都走代理
     SWUST_PROXY: str = ""     # SWUST专属代理：仅swust provider使用（dashscope不走）
 
+    # LLM concurrency
+    LLM_THREAD_POOL_SIZE: int = 20
+
     # Auth — must be set in .env, no hardcoded secrets
     JWT_SECRET: str
     JWT_ALGORITHM: str = "HS256"

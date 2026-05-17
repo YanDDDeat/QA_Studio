@@ -229,6 +229,10 @@ export function mergeAndDownloadFiles(fileIds, fields = null) {
   return api.post('/file-manage/merge-download', data, { responseType: 'blob' })
 }
 
+// 系统配置
+export const getSystemConfig = () => api.get('/llm-configs/system-config')
+export const updateSystemConfig = (data) => api.post('/llm-configs/system-config', data)
+
 // LLM Config API
 export function getLLMConfigs() {
   return api.get('/llm-configs')

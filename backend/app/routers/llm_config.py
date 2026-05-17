@@ -22,6 +22,7 @@ from app.database import get_db
 from app.models.models import LLMConfig, User
 from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm, LLMCallError
+from app.services.system_config import get_value, set_value
 
 logger = logging.getLogger("qa_studio.llm_config")
 
@@ -113,6 +114,10 @@ class LLMConfigTestResponse(BaseModel):
     latency_ms: Optional[float] = None
     reply: Optional[str] = None
     error: Optional[str] = None
+
+
+class SystemConfigUpdateRequest(BaseModel):
+    llm_thread_pool_size: Optional[int] = Field(None, description="LLM线程池大小")
 
 
 # ---------------------------------------------------------------------------
@@ -349,3 +354,41 @@ async def test_llm_config(
             reply=None,
             error=f"Unexpected error: {err_msg}",
         )
+
+
+# ---------------------------------------------------------------------------
+# System config endpoints (线程池等运行参数)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/system-config")
+async def get_system_config(
+    current_user: User = Depends(get_current_user),
+):
+    """获取系统配置（所有用户可读）。"""
+    return {
+        "llm_thread_pool_size": get_value("LLM_THREAD_POOL_SIZE", 20),
+    }
+
+
+@router.post("/system-config")
+async def update_system_config(
+    data: SystemConfigUpdateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """更新系统配置（仅管理员）。"""
+    if not _is_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅管理员可修改系统配置",
+        )
+
+    if data.llm_thread_pool_size is not None:
+        if data.llm_thread_pool_size < 1 or data.llm_thread_pool_size > 100:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="线程池大小必须在1-100之间",
+            )
+        set_value("LLM_THREAD_POOL_SIZE", data.llm_thread_pool_size)
+
+    return {"message": "配置已保存，重启后端后生效"}

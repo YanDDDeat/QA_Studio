@@ -309,6 +309,35 @@
           </el-tab-pane>
         </el-tabs>
       </el-tab-pane>
+
+      <!-- 系统设置 Tab (仅管理员可见) -->
+      <el-tab-pane label="系统设置" name="system" v-if="isAdmin">
+        <el-card>
+          <template #header>
+            <span>运行参数</span>
+          </template>
+          <el-form label-width="160px" style="max-width: 500px;">
+            <el-form-item label="LLM 并发线程数">
+              <el-input-number
+                v-model="systemConfig.llm_thread_pool_size"
+                :min="1"
+                :max="100"
+                :step="1"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="systemConfigSaving" @click="handleSaveSystemConfig">保存</el-button>
+            </el-form-item>
+            <el-alert
+              title="修改后需重启后端服务才能生效"
+              type="info"
+              :closable="false"
+              show-icon
+              style="margin-top: 10px;"
+            />
+          </el-form>
+        </el-card>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -328,6 +357,8 @@ import {
   updateLLMConfig,
   deleteLLMConfig,
   testLLMConfig,
+  getSystemConfig,
+  updateSystemConfig,
 } from '../api'
 
 // ----- Admin detection -----
@@ -342,6 +373,10 @@ const globalConfigs = computed(() => llmConfigs.value.filter(c => c.is_global))
 const llmLoading = ref(false)
 const testLoadingMap = ref({})
 const dialogLoading = ref(false)
+
+// ----- System config state -----
+const systemConfig = ref({ llm_thread_pool_size: 20 })
+const systemConfigSaving = ref(false)
 
 // ----- Use template dialog -----
 const useTemplateVisible = ref(false)
@@ -734,12 +769,35 @@ function formatTime(dt) {
   })
 }
 
+// ----- System config operations -----
+async function fetchSystemConfig() {
+  try {
+    const res = await getSystemConfig()
+    systemConfig.value = res
+  } catch (e) {
+    console.error('获取系统配置失败', e)
+  }
+}
+
+async function handleSaveSystemConfig() {
+  systemConfigSaving.value = true
+  try {
+    await updateSystemConfig(systemConfig.value)
+    ElMessage.success('配置已保存，重启后端后生效')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  } finally {
+    systemConfigSaving.value = false
+  }
+}
+
 // ----- Lifecycle -----
 onMounted(async () => {
-  await Promise.all([
-    fetchLLMConfigs(),
-    fetchStagesAndModels(),
-  ])
+  const tasks = [fetchLLMConfigs(), fetchStagesAndModels()]
+  if (isAdmin.value) {
+    tasks.push(fetchSystemConfig())
+  }
+  await Promise.all(tasks)
   // Load prompts for the first stage
   if (activeStage.value) {
     await fetchPromptsForStage(activeStage.value)
