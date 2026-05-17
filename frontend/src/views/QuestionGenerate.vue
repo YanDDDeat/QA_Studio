@@ -431,6 +431,9 @@ const username = computed(() => localStorage.getItem('username') || 'unknown')
 
 // ----- Current file name for results header -----
 const currentFileName = computed(() => {
+  if (taskInfo.value?.filename) {
+    return taskInfo.value.filename
+  }
   const targetId = effectiveFileId.value || form.value.file_id
   const f = fileOptions.value.find(f => f.id === targetId)
   return f ? f.filename : '未选择文件'
