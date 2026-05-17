@@ -30,7 +30,11 @@ from app.models.models import (
     StageEnum, User, LLMConfig,
 )
 from app.routers.auth import get_current_user
-from app.services.llm_service import call_llm_json, LLMCallError
+from app.services.llm_service import call_llm_json_sync, LLMCallError
+from functools import partial
+from app.services.thread_pool import (
+    llm_thread_pool, register_task, unregister_task, get_dynamic_batch_size,
+)
 from app.services.field_mapper import apply_llm_fields_to_dataset, build_record_content
 from app.services.file_service import (
     create_output_file, clone_single_dataset, write_datasets_to_file,
@@ -88,6 +92,7 @@ async def _run_answer_generate_task(
 ):
     """Background coroutine: 读源 question_validate(已通过) Dataset → LLM 生成 output/cot → 克隆到新输出文件。"""
     db = SessionLocal()
+    register_task()
     try:
         source_datasets = (
             db.query(Dataset)
@@ -123,95 +128,124 @@ async def _run_answer_generate_task(
         _add_task_log(db, task_id, f"输出文件已创建: {output_file.filename} (file_id={output_file.id})")
 
         success_count = 0
-        consecutive_failures = 0
+        loop = asyncio.get_event_loop()
+        consecutive_batch_failures = 0
+        processed_count = start_index
 
-        for idx in range(start_index, total):
-            dataset = source_datasets[idx]
-
-            record_content = build_record_content(dataset, reference_fields, "answer_generate")
-
-            if not record_content:
-                logger.warning(
-                    "Task %d: dataset %d has no reference content, skipping",
-                    task_id, dataset.id,
-                )
-                _add_task_log(db, task_id, f"记录 {idx + 1}: 数据集ID {dataset.id} 无参考内容，跳过")
-                _update_progress(db, task_id, idx + 1)
-                continue
-
-            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
-
-            # 检查任务是否被暂停
+        idx = start_index
+        while idx < total:
+            # ── 每批开始前检查暂停 ──
             task_check = db.query(Task).filter(Task.id == task_id).first()
             if task_check and task_check.status == TaskStatusEnum.PAUSED:
-                # 暂停前将已有数据刷写到磁盘文件
                 try:
                     write_datasets_to_file(db=db, file_id=output_file.id)
-                    _add_task_log(db, task_id, f"任务已暂停，已将 {idx} 条数据写入文件")
+                    _add_task_log(db, task_id, f"任务已暂停，已将 {processed_count} 条数据写入文件")
                 except Exception as flush_err:
                     _add_task_log(db, task_id, f"任务已暂停，刷写文件失败: {str(flush_err)[:200]}")
                 return
 
-            try:
-                llm_result = await call_llm_json(
-                    prompt=llm_prompt,
-                    model=model,
-                    temperature=0.3,
-                    base_url_override=base_url_override,
-                    api_key_override=api_key_override,
-                    username=username,
-                )
-            except LLMCallError as e:
-                consecutive_failures += 1
-                logger.error(
-                    "Task %d: LLM call failed for dataset %d: %s",
-                    task_id, dataset.id, str(e),
-                )
-                _add_task_log(
-                    db, task_id,
-                    f"记录 {idx + 1}: LLM调用失败 - {str(e)[:200]}",
-                )
-                if consecutive_failures >= 20:
-                    # 连续失败终止前将已有数据刷写到磁盘文件
-                    try:
-                        write_datasets_to_file(db=db, file_id=output_file.id)
-                        _add_task_log(db, task_id, f"连续失败{consecutive_failures}次终止，已将已有数据写入文件")
-                    except Exception as flush_err:
-                        _add_task_log(db, task_id, f"连续失败{consecutive_failures}次终止，刷写文件失败: {str(flush_err)[:200]}")
-                    task = db.query(Task).filter(Task.id == task_id).first()
-                    if task:
-                        task.status = TaskStatusEnum.FAILED
+            # ── 计算本批大小 ──
+            batch_size = get_dynamic_batch_size()
+            batch_end = min(idx + batch_size, total)
+
+            # ── 准备本批数据 ──
+            batch_items = []
+            for batch_idx in range(idx, batch_end):
+                dataset = source_datasets[batch_idx]
+                record_content = build_record_content(dataset, reference_fields, "answer_generate")
+
+                if not record_content:
+                    logger.warning(
+                        "Task %d: dataset %d has no reference content, skipping",
+                        task_id, dataset.id,
+                    )
+                    _add_task_log(db, task_id, f"记录 {batch_idx + 1}: 数据集ID {dataset.id} 无参考内容，跳过")
+                    continue
+
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
+                batch_items.append((batch_idx, llm_prompt, dataset))
+
+            # ── 提交本批到线程池 ──
+            if batch_items:
+                futures = [
+                    loop.run_in_executor(
+                        llm_thread_pool,
+                        partial(
+                            call_llm_json_sync,
+                            prompt=prompt,
+                            model=model,
+                            temperature=0.3,
+                            base_url_override=base_url_override,
+                            api_key_override=api_key_override,
+                            username=username,
+                        ),
+                    )
+                    for _, prompt, *_ in batch_items
+                ]
+                results = await asyncio.gather(*futures, return_exceptions=True)
+
+                # ── 处理本批结果 ──
+                batch_all_failed = True
+                for item, result in zip(batch_items, results):
+                    batch_idx = item[0]
+                    dataset = item[2]
+
+                    if isinstance(result, Exception):
+                        logger.error(
+                            "Task %d: LLM call failed for dataset %d: %s",
+                            task_id, dataset.id, str(result),
+                        )
+                        _add_task_log(
+                            db, task_id,
+                            f"记录 {batch_idx + 1}: LLM调用失败 - {str(result)[:200]}",
+                        )
+                        continue
+
+                    batch_all_failed = False
+                    llm_result = result
+
+                    if isinstance(llm_result, dict):
+                        output_text = llm_result.get("output", llm_result.get("answer", ""))
+                        cot_text = llm_result.get("cot", llm_result.get("reasoning", ""))
+                        cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.ANSWER_GENERATE)
+                        cloned_ds.output = output_text
+                        cloned_ds.cot = cot_text
+                        extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
+                        cloned_ds.extra_fields = extra if extra else None
                         db.commit()
-                    return
-                _update_progress(db, task_id, idx + 1)
-                continue
+                        success_count += 1
+                        _add_task_log(
+                            db, task_id,
+                            f"记录 {batch_idx + 1}: 答案生成成功 (数据集ID {dataset.id})",
+                        )
+                    else:
+                        logger.warning(
+                            "Task %d: unexpected LLM result type for dataset %d: %s",
+                            task_id, dataset.id, type(llm_result).__name__,
+                        )
+                        _add_task_log(db, task_id, f"记录 {batch_idx + 1}: LLM返回非JSON对象，跳过")
 
-            if isinstance(llm_result, dict):
-                output_text = llm_result.get("output", llm_result.get("answer", ""))
-                cot_text = llm_result.get("cot", llm_result.get("reasoning", ""))
-                # 立即克隆到输出文件，让前端能实时加载结果
-                cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.ANSWER_GENERATE)
-                cloned_ds.output = output_text
-                cloned_ds.cot = cot_text
-                # 自动映射 LLM 返回字段到数据库列
-                extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
-                cloned_ds.extra_fields = extra if extra else None
-                db.commit()
-                success_count += 1
-                consecutive_failures = 0
-                _add_task_log(
-                    db, task_id,
-                    f"记录 {idx + 1}: 答案生成成功 (数据集ID {dataset.id})",
-                )
-            else:
-                consecutive_failures = 0
-                logger.warning(
-                    "Task %d: unexpected LLM result type for dataset %d: %s",
-                    task_id, dataset.id, type(llm_result).__name__,
-                )
-                _add_task_log(db, task_id, f"记录 {idx + 1}: LLM返回非JSON对象，跳过")
+                # ── 检查连续整批失败 ──
+                if batch_all_failed:
+                    consecutive_batch_failures += 1
+                    if consecutive_batch_failures >= 4:
+                        try:
+                            write_datasets_to_file(db=db, file_id=output_file.id)
+                            _add_task_log(db, task_id, f"连续{consecutive_batch_failures}批全部失败，已将已有数据写入文件")
+                        except Exception as flush_err:
+                            _add_task_log(db, task_id, f"连续批次失败终止，刷写文件失败: {str(flush_err)[:200]}")
+                        task = db.query(Task).filter(Task.id == task_id).first()
+                        if task:
+                            task.status = TaskStatusEnum.FAILED
+                            db.commit()
+                        return
+                else:
+                    consecutive_batch_failures = 0
 
-            _update_progress(db, task_id, idx + 1)
+            # ── 更新进度 ──
+            processed_count = batch_end
+            _update_progress(db, task_id, processed_count)
+            idx = batch_end
 
         if success_count == 0:
             _add_task_log(db, task_id, "本次任务未生成任何有效记录")
@@ -256,6 +290,7 @@ async def _run_answer_generate_task(
         except Exception:
             pass
     finally:
+        unregister_task()
         db.close()
 
 

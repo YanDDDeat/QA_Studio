@@ -32,7 +32,11 @@ from app.models.models import (
     StageEnum, SourceTypeEnum, User, LLMConfig,
 )
 from app.routers.auth import get_current_user
-from app.services.llm_service import call_llm_json, LLMCallError
+from app.services.llm_service import call_llm_json_sync, LLMCallError
+from functools import partial
+from app.services.thread_pool import (
+    llm_thread_pool, register_task, unregister_task, get_dynamic_batch_size,
+)
 from app.services.field_mapper import apply_llm_fields_to_dataset
 from app.services.file_service import create_output_file, write_datasets_to_file
 from app.services.validation_service import validate_file_fields
@@ -122,6 +126,7 @@ async def _run_question_generate_task(
         start_index: Index to resume from (for retry).
     """
     db = SessionLocal()
+    register_task()
     try:
         # Read and parse the JSON file
         with open(file_path, "r", encoding="utf-8") as f:
@@ -139,7 +144,9 @@ async def _run_question_generate_task(
             db.commit()
 
         generated_count = 0
-        consecutive_failures = 0
+        loop = asyncio.get_event_loop()
+        consecutive_batch_failures = 0
+        processed_count = start_index
 
         # 提前创建输出文件，点击开始后前端立即显示输出文件名
         source_file = db.query(File).filter(File.id == source_file_id).first()
@@ -156,160 +163,178 @@ async def _run_question_generate_task(
             task.file_id = output_file.id
             db.commit()
 
-        for idx in range(start_index, total):
-            record = data[idx]
-
-            # Extract text content using the text_field
-            text_content = ""
-            if isinstance(record, dict):
-                text_content = record.get(text_field, "")
-                if not text_content:
-                    # Try common alternative field names
-                    for alt in ["text", "content", "body", "paragraph"]:
-                        alt_val = record.get(alt, "")
-                        if alt_val:
-                            text_content = alt_val
-                            break
-            else:
-                text_content = str(record)
-
-            if not text_content:
-                logger.warning(
-                    "Task %d: record %d has no text content, skipping",
-                    task_id, idx,
-                )
-                _add_task_log(db, task_id, f"记录 {idx + 1}: 无文本内容，跳过")
-                _update_progress(db, task_id, idx + 1)
-                continue
-
-            # Determine source with priority chain:
-            # user input > JSON field > filename
-            effective_source = source_override
-            if not effective_source and isinstance(record, dict):
-                effective_source = record.get("source", "")
-            if not effective_source:
-                # Strip extension from filename
-                effective_source = os.path.splitext(filename)[0]
-
-            # Determine source_id with priority chain:
-            # user input > JSON field
-            effective_source_id = source_id_override
-            if not effective_source_id and isinstance(record, dict):
-                effective_source_id = record.get("source_id", "")
-
-            # 检查任务是否被暂停
+        idx = start_index
+        while idx < total:
+            # ── 每批开始前检查暂停 ──
             task_check = db.query(Task).filter(Task.id == task_id).first()
             if task_check and task_check.status == TaskStatusEnum.PAUSED:
-                # 暂停前将已有数据刷写到磁盘文件
                 try:
                     write_datasets_to_file(db=db, file_id=output_file.id)
-                    _add_task_log(db, task_id, f"任务已暂停，已将 {idx} 条数据写入文件")
+                    _add_task_log(db, task_id, f"任务已暂停，已将 {processed_count} 条数据写入文件")
                 except Exception as flush_err:
                     _add_task_log(db, task_id, f"任务已暂停，刷写文件失败: {str(flush_err)[:200]}")
                 return
 
-            # Call LLM with the prompt + text content
-            try:
-                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{text_content}"
-                llm_result = await call_llm_json(
-                    prompt=llm_prompt,
-                    model=model,
-                    temperature=0.3,
-                    base_url_override=base_url_override,
-                    api_key_override=api_key_override,
-                    username=username,
-                )
-            except LLMCallError as e:
-                consecutive_failures += 1
-                logger.error(
-                    "Task %d: LLM call failed for record %d: %s",
-                    task_id, idx, str(e),
-                )
-                _add_task_log(
-                    db, task_id,
-                    f"记录 {idx + 1}: LLM调用失败 - {str(e)[:200]}",
-                )
-                if consecutive_failures >= 20:
-                    # 连续失败终止前将已有数据刷写到磁盘文件
-                    try:
-                        write_datasets_to_file(db=db, file_id=output_file.id)
-                        _add_task_log(db, task_id, f"连续失败{consecutive_failures}次终止，已将已有数据写入文件")
-                    except Exception as flush_err:
-                        _add_task_log(db, task_id, f"连续失败{consecutive_failures}次终止，刷写文件失败: {str(flush_err)[:200]}")
-                    task = db.query(Task).filter(Task.id == task_id).first()
-                    if task:
-                        task.status = TaskStatusEnum.FAILED
-                        db.commit()
-                    return
-                _update_progress(db, task_id, idx + 1)
-                continue
+            # ── 计算本批大小 ──
+            batch_size = get_dynamic_batch_size()
+            batch_end = min(idx + batch_size, total)
 
-            # Parse the LLM response as a list of question objects
-            questions = []
-            if isinstance(llm_result, list):
-                questions = llm_result
-            elif isinstance(llm_result, dict):
-                # The LLM may wrap the list in an object
-                for key in ["questions", "data", "items", "results", "qa_pairs", "list"]:
-                    if key in llm_result and isinstance(llm_result[key], list):
-                        questions = llm_result[key]
-                        break
-                if not questions:
-                    # Single question object returned directly
-                    questions = [llm_result]
+            # ── 准备本批数据 ──
+            batch_items = []
+            for batch_idx in range(idx, batch_end):
+                record = data[batch_idx]
 
-            if not questions:
-                consecutive_failures = 0
-                logger.warning(
-                    "Task %d: no questions generated for record %d",
-                    task_id, idx,
-                )
-                _add_task_log(
-                    db, task_id,
-                    f"记录 {idx + 1}: 未生成问题",
-                )
-                _update_progress(db, task_id, idx + 1)
-                continue
+                text_content = ""
+                if isinstance(record, dict):
+                    text_content = record.get(text_field, "")
+                    if not text_content:
+                        for alt in ["text", "content", "body", "paragraph"]:
+                            alt_val = record.get(alt, "")
+                            if alt_val:
+                                text_content = alt_val
+                                break
+                else:
+                    text_content = str(record)
 
-            # Create Dataset records for each question
-            for q in questions:
-                if not isinstance(q, dict):
+                if not text_content:
+                    logger.warning(
+                        "Task %d: record %d has no text content, skipping",
+                        task_id, batch_idx,
+                    )
+                    _add_task_log(db, task_id, f"记录 {batch_idx + 1}: 无文本内容，跳过")
                     continue
 
-                dataset = Dataset(
-                    user_id=user_id,
-                    category=category,
-                    corpus_cate=1,
-                    source=effective_source,
-                    source_id=effective_source_id,
-                    source_type=source_type,
-                    originContent=text_content,
-                    file_id=output_file.id,
-                    Assessment="",
-                    current_stage=StageEnum.QUESTION_GENERATE,
-                )
-                # 自动映射 LLM 返回字段到数据库列
-                # 对于 input/output/cot 需要处理别名（question/answer/reasoning）
-                q_normalized = dict(q)
-                if "question" in q_normalized and "input" not in q_normalized:
-                    q_normalized["input"] = q_normalized["question"]
-                if "answer" in q_normalized and "output" not in q_normalized:
-                    q_normalized["output"] = q_normalized["answer"]
-                if "reasoning" in q_normalized and "cot" not in q_normalized:
-                    q_normalized["cot"] = q_normalized["reasoning"]
-                extra = apply_llm_fields_to_dataset(dataset, q_normalized)
-                dataset.extra_fields = extra if extra else None
-                db.add(dataset)
-                generated_count += 1
+                effective_source = source_override
+                if not effective_source and isinstance(record, dict):
+                    effective_source = record.get("source", "")
+                if not effective_source:
+                    effective_source = os.path.splitext(filename)[0]
 
-            db.commit()
+                effective_source_id = source_id_override
+                if not effective_source_id and isinstance(record, dict):
+                    effective_source_id = record.get("source_id", "")
 
-            consecutive_failures = 0
-            _add_task_log(
-                db, task_id,
-                f"记录 {idx + 1}: 生成 {len(questions)} 个问题",
-            )
-            _update_progress(db, task_id, idx + 1)
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{text_content}"
+                batch_items.append((batch_idx, llm_prompt, text_content, effective_source, effective_source_id))
+
+            # ── 提交本批到线程池 ──
+            if batch_items:
+                futures = [
+                    loop.run_in_executor(
+                        llm_thread_pool,
+                        partial(
+                            call_llm_json_sync,
+                            prompt=prompt,
+                            model=model,
+                            temperature=0.3,
+                            base_url_override=base_url_override,
+                            api_key_override=api_key_override,
+                            username=username,
+                        ),
+                    )
+                    for _, prompt, *_ in batch_items
+                ]
+                results = await asyncio.gather(*futures, return_exceptions=True)
+
+                # ── 处理本批结果 ──
+                batch_all_failed = True
+                for item, result in zip(batch_items, results):
+                    batch_idx = item[0]
+                    text_content = item[2]
+                    effective_source = item[3]
+                    effective_source_id = item[4]
+
+                    if isinstance(result, Exception):
+                        logger.error(
+                            "Task %d: LLM call failed for record %d: %s",
+                            task_id, batch_idx, str(result),
+                        )
+                        _add_task_log(
+                            db, task_id,
+                            f"记录 {batch_idx + 1}: LLM调用失败 - {str(result)[:200]}",
+                        )
+                        continue
+
+                    batch_all_failed = False
+                    llm_result = result
+
+                    # Parse the LLM response as a list of question objects
+                    questions = []
+                    if isinstance(llm_result, list):
+                        questions = llm_result
+                    elif isinstance(llm_result, dict):
+                        for key in ["questions", "data", "items", "results", "qa_pairs", "list"]:
+                            if key in llm_result and isinstance(llm_result[key], list):
+                                questions = llm_result[key]
+                                break
+                        if not questions:
+                            questions = [llm_result]
+
+                    if not questions:
+                        logger.warning(
+                            "Task %d: no questions generated for record %d",
+                            task_id, batch_idx,
+                        )
+                        _add_task_log(
+                            db, task_id,
+                            f"记录 {batch_idx + 1}: 未生成问题",
+                        )
+                        continue
+
+                    for q in questions:
+                        if not isinstance(q, dict):
+                            continue
+                        dataset = Dataset(
+                            user_id=user_id,
+                            category=category,
+                            corpus_cate=1,
+                            source=effective_source,
+                            source_id=effective_source_id,
+                            source_type=source_type,
+                            originContent=text_content,
+                            file_id=output_file.id,
+                            Assessment="",
+                            current_stage=StageEnum.QUESTION_GENERATE,
+                        )
+                        q_normalized = dict(q)
+                        if "question" in q_normalized and "input" not in q_normalized:
+                            q_normalized["input"] = q_normalized["question"]
+                        if "answer" in q_normalized and "output" not in q_normalized:
+                            q_normalized["output"] = q_normalized["answer"]
+                        if "reasoning" in q_normalized and "cot" not in q_normalized:
+                            q_normalized["cot"] = q_normalized["reasoning"]
+                        extra = apply_llm_fields_to_dataset(dataset, q_normalized)
+                        dataset.extra_fields = extra if extra else None
+                        db.add(dataset)
+                        generated_count += 1
+
+                    db.commit()
+                    _add_task_log(
+                        db, task_id,
+                        f"记录 {batch_idx + 1}: 生成 {len(questions)} 个问题",
+                    )
+
+                # ── 检查连续整批失败 ──
+                if batch_all_failed:
+                    consecutive_batch_failures += 1
+                    if consecutive_batch_failures >= 4:
+                        try:
+                            write_datasets_to_file(db=db, file_id=output_file.id)
+                            _add_task_log(db, task_id, f"连续{consecutive_batch_failures}批全部失败，已将已有数据写入文件")
+                        except Exception as flush_err:
+                            _add_task_log(db, task_id, f"连续批次失败终止，刷写文件失败: {str(flush_err)[:200]}")
+                        task = db.query(Task).filter(Task.id == task_id).first()
+                        if task:
+                            task.status = TaskStatusEnum.FAILED
+                            db.commit()
+                        return
+                else:
+                    consecutive_batch_failures = 0
+
+            # ── 更新进度 ──
+            processed_count = batch_end
+            _update_progress(db, task_id, processed_count)
+            idx = batch_end
 
         # Write all datasets for this output file to disk as JSON
         write_datasets_to_file(db=db, file_id=output_file.id)
@@ -357,6 +382,7 @@ async def _run_question_generate_task(
         except Exception:
             pass
     finally:
+        unregister_task()
         db.close()
 
 
