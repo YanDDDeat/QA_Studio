@@ -48,9 +48,9 @@
   - [x] 配置项：`LLM_THREAD_POOL_SIZE`（默认20）
 
 ## 管理员查看运行中任务
-- [ ] 分支 `feature/admin-running-tasks`：详见 `docs/requirements/14_需求_管理员查看运行中任务.md`
-  - [ ] 后端 `GET /api/tasks/running`：查询所有 RUNNING 任务（关联用户名）
-  - [ ] 前端配置中心系统设置标签页新增运行中任务面板（表格 + 自动刷新）
+- [x] 分支 `feature/admin-running-tasks`：详见 `docs/requirements/14_需求_管理员查看运行中任务.md`
+  - [x] 后端 `GET /api/tasks/running`：查询所有 RUNNING 任务（关联用户名）
+  - [x] 前端配置中心系统设置标签页新增运行中任务面板（表格 + 自动刷新）
 
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
