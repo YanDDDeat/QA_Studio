@@ -50,6 +50,11 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
 class UserListResponse(BaseModel):
     users: List[UserResponse]
 
@@ -186,6 +191,44 @@ async def get_me(current_user: User = Depends(get_current_user)):
         username=current_user.username,
         created_at=current_user.created_at,
     )
+
+
+@router.post("/change-password")
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change password for the currently logged-in user.
+
+    Requires the current password for verification.
+    """
+    # Verify old password
+    if not verify_password(request.old_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="当前密码不正确",
+        )
+
+    # Validate new password
+    if len(request.new_password) < 4 or len(request.new_password) > 128:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="密码长度需在 4-128 个字符之间",
+        )
+
+    # Prevent same password
+    if verify_password(request.new_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="新密码不能与当前密码相同",
+        )
+
+    # Update password
+    current_user.password_hash = hash_password(request.new_password)
+    db.commit()
+
+    return {"message": "密码修改成功"}
 
 
 @router.get("/users", response_model=UserListResponse)

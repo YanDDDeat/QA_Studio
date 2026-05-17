@@ -17,6 +17,10 @@ export function listUsers() {
   return api.get('/auth/users')
 }
 
+export function changePassword(data) {
+  return api.post('/auth/change-password', data)
+}
+
 // Datasets API
 export function getDatasets(params) {
   return api.get('/datasets', { params })
