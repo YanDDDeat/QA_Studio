@@ -166,12 +166,13 @@ async def _run_answer_validate_task(
 
             # ── 提交本批到线程池 ──
             if batch_items:
-                futures = [
-                    loop.run_in_executor(
+                future_to_item = {}
+                for item in batch_items:
+                    fut = loop.run_in_executor(
                         llm_thread_pool,
                         partial(
                             call_llm_json_sync,
-                            prompt=prompt,
+                            prompt=item[1],
                             model=model,
                             temperature=0.3,
                             base_url_override=base_url_override,
@@ -179,25 +180,28 @@ async def _run_answer_validate_task(
                             username=username,
                         ),
                     )
-                    for _, prompt, *_ in batch_items
-                ]
-                results = await asyncio.gather(*futures, return_exceptions=True)
+                    future_to_item[fut] = item
 
-                # ── 处理本批结果 ──
+                # ── 处理本批结果（逐条完成逐条更新） ──
                 batch_all_failed = True
-                for item, result in zip(batch_items, results):
+                for coro in asyncio.as_completed(future_to_item):
+                    item = future_to_item[coro]
                     batch_idx = item[0]
                     dataset = item[2]
 
-                    if isinstance(result, Exception):
+                    try:
+                        result = await coro
+                    except Exception as e:
                         logger.error(
                             "Task %d: LLM call failed for record %d: %s",
-                            task_id, batch_idx, str(result),
+                            task_id, batch_idx, str(e),
                         )
                         _add_task_log(
                             db, task_id,
-                            f"记录 {batch_idx + 1}: LLM调用失败 - {str(result)[:200]}",
+                            f"记录 {batch_idx + 1}: LLM调用失败 - {str(e)[:200]}",
                         )
+                        processed_count += 1
+                        _update_progress(db, task_id, processed_count)
                         continue
 
                     batch_all_failed = False
@@ -224,6 +228,9 @@ async def _run_answer_validate_task(
                         fail_count += 1
                         _add_task_log(db, task_id, f"记录 {batch_idx + 1}: 校验失败 - {reason[:100]}")
 
+                    processed_count += 1
+                    _update_progress(db, task_id, processed_count)
+
                 # ── 检查连续整批失败 ──
                 if batch_all_failed:
                     consecutive_batch_failures += 1
@@ -241,9 +248,6 @@ async def _run_answer_validate_task(
                 else:
                     consecutive_batch_failures = 0
 
-            # ── 更新进度 ──
-            processed_count = batch_end
-            _update_progress(db, task_id, processed_count)
             idx = batch_end
 
         if pass_count > 0:
