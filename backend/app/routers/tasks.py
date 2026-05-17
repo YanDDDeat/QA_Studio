@@ -107,6 +107,39 @@ async def list_tasks(
     return tasks
 
 
+@router.get("/running")
+async def list_running_tasks(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """管理员查看所有用户正在运行的任务。"""
+    if current_user.username != "admin":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="仅管理员可查看",
+        )
+
+    tasks = (
+        db.query(Task)
+        .filter(Task.status == TaskStatusEnum.RUNNING)
+        .order_by(Task.id.desc())
+        .all()
+    )
+
+    return [
+        {
+            "task_id": t.id,
+            "username": t.user.username if t.user else "未知",
+            "stage": t.stage.value if t.stage else "未知",
+            "model": t.model or "",
+            "progress_current": t.progress_current or 0,
+            "progress_total": t.progress_total or 0,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        }
+        for t in tasks
+    ]
+
+
 @router.get("/{task_id}", response_model=TaskResponse)
 async def get_task(
     task_id: int,

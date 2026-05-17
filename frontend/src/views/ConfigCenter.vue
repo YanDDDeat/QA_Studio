@@ -337,13 +337,39 @@
             />
           </el-form>
         </el-card>
+
+        <el-divider />
+        <h4>运行中任务</h4>
+        <el-table
+          :data="runningTasks"
+          style="width: 100%; margin-top: 10px;"
+          v-loading="runningTasksLoading"
+          empty-text="暂无运行中的任务"
+        >
+          <el-table-column prop="username" label="用户" width="100" />
+          <el-table-column prop="stage" label="阶段" width="140" />
+          <el-table-column prop="model" label="模型" width="160" />
+          <el-table-column label="进度" width="180">
+            <template #default="{ row }">
+              <el-progress
+                :percentage="row.progress_total ? Math.round(row.progress_current / row.progress_total * 100) : 0"
+                :format="() => `${row.progress_current}/${row.progress_total}`"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column prop="created_at" label="创建时间" width="180">
+            <template #default="{ row }">
+              {{ row.created_at ? new Date(row.created_at).toLocaleString() : '-' }}
+            </template>
+          </el-table-column>
+        </el-table>
       </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getStages,
@@ -359,6 +385,7 @@ import {
   testLLMConfig,
   getSystemConfig,
   updateSystemConfig,
+  getRunningTasks,
 } from '../api'
 
 // ----- Admin detection -----
@@ -377,6 +404,11 @@ const dialogLoading = ref(false)
 // ----- System config state -----
 const systemConfig = ref({ llm_thread_pool_size: 20 })
 const systemConfigSaving = ref(false)
+
+// ----- Running tasks state (admin) -----
+const runningTasks = ref([])
+const runningTasksLoading = ref(false)
+let runningTasksTimer = null
 
 // ----- Use template dialog -----
 const useTemplateVisible = ref(false)
@@ -791,6 +823,18 @@ async function handleSaveSystemConfig() {
   }
 }
 
+async function fetchRunningTasks() {
+  runningTasksLoading.value = true
+  try {
+    const res = await getRunningTasks()
+    runningTasks.value = res.data
+  } catch (e) {
+    // 非管理员静默失败
+  } finally {
+    runningTasksLoading.value = false
+  }
+}
+
 // ----- Lifecycle -----
 onMounted(async () => {
   const tasks = [fetchLLMConfigs(), fetchStagesAndModels()]
@@ -798,9 +842,20 @@ onMounted(async () => {
     tasks.push(fetchSystemConfig())
   }
   await Promise.all(tasks)
+  if (isAdmin.value) {
+    fetchRunningTasks()
+    runningTasksTimer = setInterval(fetchRunningTasks, 5000)
+  }
   // Load prompts for the first stage
   if (activeStage.value) {
     await fetchPromptsForStage(activeStage.value)
+  }
+})
+
+onUnmounted(() => {
+  if (runningTasksTimer) {
+    clearInterval(runningTasksTimer)
+    runningTasksTimer = null
   }
 })
 </script>

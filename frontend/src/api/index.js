@@ -63,6 +63,10 @@ export function getTaskList(params) {
   return api.get('/task-logs/tasks', { params })
 }
 
+export function getRunningTasks() {
+  return api.get('/tasks/running')
+}
+
 export function stopTask(taskId) {
   return api.post(`/tasks/${taskId}/stop`)
 }
