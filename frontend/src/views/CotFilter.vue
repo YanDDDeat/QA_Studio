@@ -435,14 +435,13 @@ async function restoreTaskState() {
   try {
     const tasks = await getTaskList({ stage: 'cot_filter' })
     if (!Array.isArray(tasks) || tasks.length === 0) return
-    const runningTask = tasks.find(t => t.status === 'running')
-    const latestTask = runningTask || tasks[0]
+    const latestTask = tasks.find(t => t.status === 'running')
+    if (!latestTask) return
     taskId.value = latestTask.id
-    taskRunning.value = latestTask.status === 'running'
+    taskRunning.value = true
     await pollStatus()
     await fetchLogs()
-    if (latestTask.status === 'running') startPolling()
-    if (latestTask.status === 'completed') await loadFilterResult()
+    startPolling()
   } catch (err) {
     console.error('Restore task state error:', err)
   }

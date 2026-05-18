@@ -711,25 +711,15 @@ async function restoreTaskState() {
     const tasks = await getTaskList({ stage: 'knowledge_generate' })
     if (!Array.isArray(tasks) || tasks.length === 0) return
 
-    // Find the latest running task first, then fall back to the latest task overall
-    const runningTask = tasks.find(t => t.status === 'running')
-    const latestTask = runningTask || tasks[0]
-
+    const latestTask = tasks.find(t => t.status === 'running')
     if (!latestTask) return
 
     taskId.value = latestTask.id
-    taskRunning.value = latestTask.status === 'running'
+    taskRunning.value = true
 
-    // Fetch current status
     await pollStatus()
-
-    // Fetch existing logs
     await fetchLogs()
-
-    // Start polling if the task is still running
-    if (latestTask.status === 'running') {
-      startPolling()
-    }
+    startPolling()
   } catch (err) {
     console.error('Restore task state error:', err)
   }
