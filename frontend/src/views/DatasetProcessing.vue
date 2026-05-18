@@ -190,6 +190,11 @@
         <div class="stat-item"><span class="stat-label">已生成评分</span><span class="stat-value">{{ assessResult.generated }}</span></div>
         <div class="stat-item"><span class="stat-label">空评分数</span><span class="stat-value">{{ assessResult.empty_assessment }}</span></div>
       </div>
+      <div v-if="assessTaskInfo && assessTaskInfo.file_id" style="margin-top: 12px">
+        <el-link type="primary" :href="`/api/file-manage/${assessTaskInfo.file_id}/download`" target="_blank">
+          下载输出文件{{ assessTaskInfo.file_name ? '：' + assessTaskInfo.file_name : '' }}
+        </el-link>
+      </div>
       <div v-if="!assessTaskInfo && !assessResult" class="result-empty" style="margin-top: 12px">生成完成后将在此显示统计结果</div>
     </el-card>
 
@@ -693,7 +698,12 @@ async function loadAssessResult() {
     const logItems = Array.isArray(logsRes) ? logsRes : []
     const resultLog = logItems.find(l => l.log_content && l.log_content.includes('评分标准生成完成'))
     if (resultLog) {
-      assessResult.value = { qa_items: 0, short_answer_items: 0, generated: 0, empty_assessment: 0 }
+      assessResult.value = {
+        qa_items: assessTaskInfo.value?.progress_total || 0,
+        short_answer_items: 0,
+        generated: 0,
+        empty_assessment: 0,
+      }
       const match = resultLog.log_content.match(/简答题 (\d+) 条, 成功 (\d+) 条, 空 (\d+) 条/)
       if (match) {
         assessResult.value.short_answer_items = parseInt(match[1])
@@ -751,10 +761,8 @@ async function restoreAssessTaskState() {
     const latestTask = runningTask || tasks[0]
     assessTaskId.value = latestTask.id
     assessTaskRunning.value = latestTask.status === 'running'
-    await pollAssessStatus()
-    await fetchAssessLogs()
+    await pollAssessStatus()  // handles completed: loads logs + result internally
     if (latestTask.status === 'running') startAssessPolling()
-    if (latestTask.status === 'completed') await loadAssessResult()
   } catch (err) { console.error('Restore assess task error:', err) }
 }
 

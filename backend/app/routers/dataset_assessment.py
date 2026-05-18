@@ -52,6 +52,7 @@ class TaskStatusResponse(BaseModel):
     progress_total: int
     generated_count: int = 0
     file_id: Optional[int] = None
+    file_name: Optional[str] = None
 
 
 def _add_task_log(db: Session, task_id: int, content: str):
@@ -261,6 +262,7 @@ async def get_dataset_assessment_status(
             except Exception:
                 pass
 
+    output_file_obj = db.query(File).filter(File.id == task.file_id).first()
     return TaskStatusResponse(
         task_id=task.id,
         status=task.status.value,
@@ -268,6 +270,7 @@ async def get_dataset_assessment_status(
         progress_total=task.progress_total or 0,
         generated_count=generated_count,
         file_id=task.file_id,
+        file_name=output_file_obj.filename if output_file_obj else None,
     )
 
 
