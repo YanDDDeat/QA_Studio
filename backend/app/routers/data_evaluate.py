@@ -733,9 +733,19 @@ async def retry_data_evaluate(
         .count()
     )
 
-    # Reset task status and progress for retry
+    # Keep progress_current for breakpoint resume
+    start_index = task.progress_current or 0
+
+    # Resolve LLM config overrides
+    base_url_override = None
+    api_key_override = None
+    if prompt_obj.llm_config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == prompt_obj.llm_config_id).first()
+        if llm_config_obj:
+            base_url_override = llm_config_obj.base_url
+            api_key_override = llm_config_obj.api_key
+
     task.status = TaskStatusEnum.RUNNING
-    task.progress_current = 0
     task.progress_total = remaining_count
     db.commit()
 
@@ -748,7 +758,10 @@ async def retry_data_evaluate(
             model=task.model,
             user_id=current_user.id,
             username=current_user.username,
-            reference_fields=data.reference_fields or prompt_obj.reference_fields,
+            reference_fields=prompt_obj.reference_fields,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+            start_index=start_index,
         )
     )
 
@@ -805,7 +818,8 @@ def resume_data_evaluate_task(task: Task, db: Session):
             prompt_content=prompt_obj.content,
             model=task.model,
             user_id=task.user_id,
-            reference_fields=data.reference_fields or prompt_obj.reference_fields,
+            username=username,
+            reference_fields=prompt_obj.reference_fields,
             start_index=start_index,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
