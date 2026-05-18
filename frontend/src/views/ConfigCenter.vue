@@ -827,7 +827,7 @@ async function fetchRunningTasks() {
   runningTasksLoading.value = true
   try {
     const res = await getRunningTasks()
-    runningTasks.value = res.data
+    runningTasks.value = Array.isArray(res) ? res : []
   } catch (e) {
     // 非管理员静默失败
   } finally {
