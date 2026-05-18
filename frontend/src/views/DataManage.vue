@@ -31,6 +31,9 @@
           <el-button type="success" size="small" :disabled="selectedFileIds.size < 2" @click="handleMergeDownload">
             合并下载 ({{ selectedFileIds.size }})
           </el-button>
+          <el-button type="danger" size="small" :disabled="selectedFileIds.size === 0" @click="handleBatchDelete">
+            批量删除 ({{ selectedFileIds.size }})
+          </el-button>
           <el-button type="primary" size="small" @click="fetchFiles">刷新</el-button>
         </div>
       </div>
@@ -233,6 +236,7 @@ import {
   getManagedFileContent,
   downloadManagedFile,
   deleteManagedFile,
+  batchDeleteManagedFiles,
   mergeAndDownloadFiles,
   syncFileToDisk,
 } from '../api'
@@ -663,6 +667,41 @@ async function handleDeleteFile(row) {
   } catch (err) {
     const detail = err.response?.data?.detail || '删除失败'
     ElMessage.error(detail)
+  }
+}
+
+async function handleBatchDelete() {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${selectedFileIds.value.size} 个文件吗？此操作不可恢复。`,
+      '批量删除确认',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+
+  try {
+    const res = await batchDeleteManagedFiles([...selectedFileIds.value])
+    const deletedCount = res.deleted?.length || 0
+    const skippedCount = res.skipped?.length || 0
+
+    if (skippedCount > 0) {
+      ElMessage.warning(`已删除 ${deletedCount} 个文件，${skippedCount} 个因有运行中任务被跳过`)
+    } else {
+      ElMessage.success(`已删除 ${deletedCount} 个文件`)
+    }
+
+    selectedFileIds.value.clear()
+    selectedFileInfo.value.clear()
+
+    if (selectedFile.value && res.deleted?.includes(selectedFile.value.id)) {
+      selectedFile.value = null
+      previewData.value = null
+      selectedRecord.value = null
+    }
+
+    await fetchFiles()
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '批量删除失败')
   }
 }
 

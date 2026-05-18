@@ -471,6 +471,55 @@ async def delete_managed_file(
     db.commit()
 
 
+class BatchDeleteRequest(BaseModel):
+    file_ids: List[int]
+
+
+@router.post("/batch-delete")
+async def batch_delete_managed_files(
+    body: BatchDeleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Batch delete files. Skips files with running tasks instead of blocking."""
+    deleted = []
+    skipped = []
+    not_found = []
+
+    for file_id in body.file_ids:
+        query = db.query(File).filter(File.id == file_id)
+        if current_user.username != "admin":
+            query = query.filter(File.user_id == current_user.id)
+        file_obj = query.first()
+        if file_obj is None:
+            not_found.append(file_id)
+            continue
+
+        running_count = (
+            db.query(Task)
+            .filter(Task.file_id == file_id, Task.status == TaskStatusEnum.RUNNING)
+            .count()
+        )
+        if running_count > 0:
+            skipped.append({"id": file_id, "reason": "有运行中的任务引用此文件"})
+            continue
+
+        db.query(Task).filter(
+            Task.file_id == file_id, Task.status != TaskStatusEnum.RUNNING
+        ).update({"file_id": None})
+        db.query(Dataset).filter(Dataset.file_id == file_id).update({"file_id": None})
+        db.commit()
+
+        if os.path.exists(file_obj.file_path):
+            os.remove(file_obj.file_path)
+
+        db.delete(file_obj)
+        db.commit()
+        deleted.append(file_id)
+
+    return {"deleted": deleted, "skipped": skipped, "not_found": not_found}
+
+
 @router.get("/download/{file_id}")
 async def download_managed_file(
     file_id: int,

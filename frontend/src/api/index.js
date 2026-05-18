@@ -217,6 +217,10 @@ export function deleteManagedFile(id) {
   return api.post(`/file-manage/${id}/delete`)
 }
 
+export function batchDeleteManagedFiles(fileIds) {
+  return api.post('/file-manage/batch-delete', { file_ids: fileIds })
+}
+
 export function downloadManagedFile(id, fields = null) {
   const params = { responseType: 'blob' }
   if (fields && fields.length > 0) {
