@@ -115,7 +115,7 @@
     </el-card>
 
     <!-- Assessment section -->
-    <el-card class="section-card">
+    <el-card class="form-card">
       <template #header>
         <span class="card-title">评分标准生成</span>
       </template>
@@ -177,25 +177,6 @@
         </div>
       </div>
 
-      <!-- Progress + result area (below config) -->
-      <div v-if="assessTaskInfo" class="progress-area" style="margin-top: 16px">
-        <el-progress :percentage="assessProgressPercent" :status="assessProgressStatus" :stroke-width="16" :text-inside="true" />
-        <el-tag :type="assessStatusTagType" size="small" style="margin-top: 8px">{{ assessStatusLabel }}</el-tag>
-        <el-button v-if="assessTaskInfo.status === 'running'" type="danger" size="small" style="margin-top: 8px; margin-left: 8px" @click="handleStopAssess">停止</el-button>
-        <el-button v-if="assessTaskInfo.status === 'paused'" type="primary" size="small" style="margin-top: 8px; margin-left: 8px" @click="handleResumeAssess">恢复</el-button>
-      </div>
-      <div v-if="assessResult" class="result-stats" style="margin-top: 12px">
-        <div class="stat-item"><span class="stat-label">QA条目数</span><span class="stat-value">{{ assessResult.qa_items }}</span></div>
-        <div class="stat-item"><span class="stat-label">简答题数量</span><span class="stat-value">{{ assessResult.short_answer_items }}</span></div>
-        <div class="stat-item"><span class="stat-label">已生成评分</span><span class="stat-value">{{ assessResult.generated }}</span></div>
-        <div class="stat-item"><span class="stat-label">空评分数</span><span class="stat-value">{{ assessResult.empty_assessment }}</span></div>
-      </div>
-      <div v-if="assessTaskInfo && assessTaskInfo.file_id && assessTaskInfo.status === 'completed'" style="margin-top: 12px">
-        <el-link type="primary" :href="`/api/file-manage/${assessTaskInfo.file_id}/download`" target="_blank">
-          下载输出文件{{ assessTaskInfo.file_name ? '：' + assessTaskInfo.file_name : '' }}
-        </el-link>
-      </div>
-      <div v-if="!assessTaskInfo && !assessResult" class="result-empty" style="margin-top: 12px">生成完成后将在此显示统计结果</div>
     </el-card>
 
     <!-- Assessment source preview -->
@@ -235,14 +216,24 @@
       </div>
     </el-card>
 
-    <!-- Assessment logs -->
-    <el-card v-if="assessTaskInfo" class="log-card">
-      <template #header><span class="card-title">评分日志</span></template>
-      <div class="log-area" v-loading="assessLogLoading">
-        <div v-if="assessLogs.length === 0" class="log-empty">暂无日志</div>
-        <div v-for="log in assessLogs" :key="log.id" class="log-item">
-          <span class="log-time">{{ formatTime(log.created_at) }}</span>
-          <span class="log-content">{{ log.log_content }}</span>
+    <!-- Assessment progress -->
+    <el-card v-if="assessTaskInfo" class="progress-card">
+      <template #header>
+        <div class="card-header">
+          <span class="card-title">生成进度</span>
+          <el-tag :type="assessStatusTagType" size="small">{{ assessStatusLabel }}</el-tag>
+          <el-link v-if="assessTaskInfo.status === 'completed' && assessTaskInfo.file_id" type="success" :href="`/api/file-manage/${assessTaskInfo.file_id}/download`" target="_blank" style="margin-left: 8px">
+            下载输出文件
+          </el-link>
+          <el-button v-if="assessTaskInfo.status === 'running'" type="danger" size="small" @click="handleStopAssess">停止</el-button>
+          <el-button v-if="assessTaskInfo.status === 'paused'" type="primary" size="small" @click="handleResumeAssess">恢复</el-button>
+        </div>
+      </template>
+      <div class="progress-area">
+        <el-progress :percentage="assessProgressPercent" :status="assessProgressStatus" :stroke-width="20" :text-inside="true" style="margin-bottom: 12px" />
+        <div class="progress-text">
+          已完成 {{ assessTaskInfo.progress_current }}/{{ assessTaskInfo.progress_total }} 条记录，
+          已生成 {{ assessTaskInfo.generated_count || 0 }} 条评分标准
         </div>
       </div>
     </el-card>
@@ -272,6 +263,18 @@
         <div v-if="assessResultsData.length === 0 && !assessResultsLoading" class="results-empty">点击"加载最新结果"查看生成内容</div>
         <div v-if="assessResultsTotal > 0" class="results-pagination">
           <el-pagination v-model:current-page="assessResultsPage" :page-size="10" :total="assessResultsTotal" layout="total, prev, pager, next" @current-change="handleAssessResultsPageChange" />
+        </div>
+      </div>
+    </el-card>
+
+    <!-- Assessment logs -->
+    <el-card v-if="assessTaskInfo" class="log-card">
+      <template #header><span class="card-title">评分日志</span></template>
+      <div class="log-area" v-loading="assessLogLoading">
+        <div v-if="assessLogs.length === 0" class="log-empty">暂无日志</div>
+        <div v-for="log in assessLogs" :key="log.id" class="log-item">
+          <span class="log-time">{{ formatTime(log.created_at) }}</span>
+          <span class="log-content">{{ log.log_content }}</span>
         </div>
       </div>
     </el-card>
@@ -849,7 +852,11 @@ onUnmounted(() => { stopSplitPolling(); stopAssessPolling() })
 .page-container {}
 .page-container h2 { margin-bottom: 16px }
 .section-card { margin-bottom: 20px }
+.form-card { margin-bottom: 20px }
 .source-preview-card { margin-bottom: 20px }
+.progress-card { margin-bottom: 20px }
+.progress-card .card-header { display: flex; justify-content: space-between; align-items: center }
+.progress-text { color: #606266; font-size: 14px; margin-top: 4px }
 .results-card { margin-bottom: 20px }
 .card-title { font-size: 16px; font-weight: 600 }
 .config-layout { display: flex; gap: 24px }
