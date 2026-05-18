@@ -190,7 +190,7 @@
         <div class="stat-item"><span class="stat-label">已生成评分</span><span class="stat-value">{{ assessResult.generated }}</span></div>
         <div class="stat-item"><span class="stat-label">空评分数</span><span class="stat-value">{{ assessResult.empty_assessment }}</span></div>
       </div>
-      <div v-if="assessTaskInfo && assessTaskInfo.file_id" style="margin-top: 12px">
+      <div v-if="assessTaskInfo && assessTaskInfo.file_id && assessTaskInfo.status === 'completed'" style="margin-top: 12px">
         <el-link type="primary" :href="`/api/file-manage/${assessTaskInfo.file_id}/download`" target="_blank">
           下载输出文件{{ assessTaskInfo.file_name ? '：' + assessTaskInfo.file_name : '' }}
         </el-link>
@@ -248,7 +248,7 @@
     </el-card>
 
     <!-- Assessment results (output file content) -->
-    <el-card v-if="assessTaskInfo && assessTaskInfo.file_id" class="results-card">
+    <el-card v-if="assessTaskInfo && assessTaskInfo.file_id && (assessTaskInfo.status === 'completed' || assessTaskInfo.status === 'failed')" class="results-card">
       <template #header>
         <span class="card-title">生成结果 - {{ assessTaskInfo.file_name || '评分标准输出' }}</span>
       </template>
@@ -525,7 +525,7 @@ const {
   renderContent: renderAssessResultsContent,
 } = useSourcePreview(
   computed(() => assessTaskInfo.value?.file_id || null),
-  []
+  ref([])
 )
 
 function truncateText(text) {

@@ -117,9 +117,11 @@ async def _run_assessment_task(
             update_progress=_update_progress,
         )
 
-        # Mark task completed
+        # Update task with output file and mark completed
         task = db.query(Task).filter(Task.id == task_id).first()
         if task:
+            if "output_file_id" in result:
+                task.file_id = result["output_file_id"]
             task.status = TaskStatusEnum.COMPLETED
             db.commit()
 
