@@ -36,6 +36,7 @@ from app.services.llm_service import call_llm_json_sync, LLMCallError
 from functools import partial
 from app.services.thread_pool import (
     llm_thread_pool, register_task, unregister_task, get_dynamic_batch_size,
+    iter_completed_futures,
 )
 from app.services.field_mapper import apply_llm_fields_to_dataset
 from app.services.file_service import create_output_file, write_datasets_to_file
@@ -221,7 +222,7 @@ async def _run_question_generate_task(
 
             # ── 提交本批到线程池 ──
             if batch_items:
-                future_to_item = {}
+                fut_to_item = {}
                 for item in batch_items:
                     fut = loop.run_in_executor(
                         llm_thread_pool,
@@ -235,19 +236,18 @@ async def _run_question_generate_task(
                             username=username,
                         ),
                     )
-                    future_to_item[fut] = item
+                    fut_to_item[fut] = item
 
                 # ── 处理本批结果（逐条完成逐条更新） ──
                 batch_all_failed = True
-                for coro in asyncio.as_completed(future_to_item):
-                    item = future_to_item[coro]
+                async for fut, item in iter_completed_futures(fut_to_item):
                     batch_idx = item[0]
                     text_content = item[2]
                     effective_source = item[3]
                     effective_source_id = item[4]
 
                     try:
-                        result = await coro
+                        result = fut.result()
                     except Exception as e:
                         logger.error(
                             "Task %d: LLM call failed for record %d: %s",
