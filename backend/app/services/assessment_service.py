@@ -184,11 +184,10 @@ async def generate_assessment(
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
 ) -> Tuple[str, str]:
-    """Generate assessment for a single item with validation and repair retry.
+    """Generate assessment for a single item.
 
     Returns (assessment_text, warning_message). warning_message is empty on success.
     """
-    # Initial generation
     try:
         user_prompt = build_assessment_prompt(item, origin_content, prompt_template)
         result = await call_llm_json(
@@ -202,30 +201,10 @@ async def generate_assessment(
     except (LLMCallError, Exception) as exc:
         return "", f"生成失败: {exc}"
 
-    # Validate
-    valid, reason = validate_assessment_text(assessment)
-    if valid:
-        return assessment, ""
+    if not assessment:
+        return "", "LLM返回的Assessment为空"
 
-    # Repair attempt
-    try:
-        repair_prompt = build_repair_prompt(item, origin_content, assessment, reason, repair_template)
-        repaired_result = await call_llm_json(
-            prompt=repair_prompt,
-            model=model,
-            temperature=0.0,
-            base_url_override=base_url_override,
-            api_key_override=api_key_override,
-        )
-        repaired = get_assessment_value(repaired_result)
-    except (LLMCallError, Exception) as exc:
-        return "", f"修复失败 ({reason}): {exc}"
-
-    repaired_valid, repaired_reason = validate_assessment_text(repaired)
-    if repaired_valid:
-        return repaired, ""
-
-    return "", f"修复后仍不合规: {repaired_reason}"
+    return assessment, ""
 
 
 def is_qa_item(item: Dict[str, Any]) -> bool:
