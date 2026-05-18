@@ -76,6 +76,7 @@ async def _run_assessment_task(
     model: str,
     user_id: int,
     username: str,
+    reference_fields: Optional[List[str]] = None,
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
 ):
@@ -110,6 +111,7 @@ async def _run_assessment_task(
             username=username,
             prompt_content=prompt_content,
             model=model,
+            reference_fields=reference_fields,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
             task_id=task_id,
@@ -227,6 +229,7 @@ async def start_dataset_assessment(
             model=data.model,
             user_id=current_user.id,
             username=current_user.username,
+            reference_fields=data.reference_fields or prompt_obj.reference_fields,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
         )
@@ -348,6 +351,7 @@ def resume_dataset_assessment_task(task: Task, db: Session):
             model=task.model,
             user_id=task.user_id,
             username=username,
+            reference_fields=prompt_obj.reference_fields,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
         )

@@ -37,6 +37,7 @@ _STAGE_DEFAULT_FIELDS = {
     "answer_generate": ["input", "originContent"],
     "answer_validate": ["input", "output", "cot", "knowledge"],
     "data_evaluate": ["input", "output", "cot", "knowledge"],
+    "dataset_assessment": ["input", "output", "cot", "task_type", "domain", "difficulty", "originContent"],
 }
 
 # 字段名 → 中文标签（用于 Prompt 中显示）
@@ -118,10 +119,10 @@ def apply_llm_fields_to_dataset(ds, llm_result: dict) -> dict:
 
 
 def build_record_content(ds, reference_fields, stage: str) -> str:
-    """根据 reference_fields 从 Dataset 抽取字段，拼接为 LLM 参考内容。
+    """根据 reference_fields 从 Dataset 或 dict 抽取字段，拼接为 LLM 参考内容。
 
     Args:
-        ds: Dataset 实例
+        ds: Dataset 实例或 dict
         reference_fields: 用户选择的字段列表（如 ["input","output","domain"]），
                          为空时使用 stage 默认字段
         stage: 阶段名（如 "data_evaluate"）
@@ -134,9 +135,10 @@ def build_record_content(ds, reference_fields, stage: str) -> str:
     """
     fields = reference_fields if reference_fields else _STAGE_DEFAULT_FIELDS.get(stage, [])
 
+    is_dict = isinstance(ds, dict)
     parts = []
     for field in fields:
-        value = getattr(ds, field, None)
+        value = ds.get(field) if is_dict else getattr(ds, field, None)
         if value is not None and str(value).strip():
             label = _FIELD_LABELS.get(field, field)
             display_value = str(value)

@@ -36,7 +36,7 @@ QA 数据生成评估平台，Vue 3 + FastAPI + MySQL，6 阶段 Pipeline。
 
 - 后端：FastAPI + SQLAlchemy ORM，路由在 `backend/app/routers/`，服务在 `backend/app/services/`
 - 前端：Vue 3 + Element Plus，页面在 `frontend/src/views/`，组件在 `frontend/src/components/`
-- 数据库变更必须有迁移脚本，放在 `scripts/` 目录
+- **数据库变更必须先通知用户**：任何涉及数据库表/列增删改的需求，必须先向用户说明变更内容（改什么表、加什么列、影响范围），等用户确认后再编写迁移脚本和修改代码。不得擅自执行数据库变更。
 - 新接口必须遵循现有路由命名模式（`/api/<resource>`）
 - **git 提交备注必须用中文**（如 `修复数据集切分自引用bug`，不要用英文）
 
