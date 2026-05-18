@@ -240,9 +240,12 @@ async def _run_assessment_task(
                 else:
                     consecutive_batch_failures = 0
 
+            # Flush after each batch so frontend can preview partial results
+            _flush_results(output_file.file_path, updated_items)
+
             idx = batch_end
 
-        # Write final results
+        # Final flush
         _flush_results(output_file.file_path, updated_items)
         _add_task_log(db, task_id, f"评分标准生成完成: 简答题 {short_answer_count} 条, 成功 {success_count} 条")
 
@@ -379,18 +382,16 @@ async def get_dataset_assessment_status(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
 
     generated_count = 0
-    if task.status.value in ("completed", "failed"):
-        file_obj = db.query(File).filter(File.id == task.file_id).first()
-        if file_obj:
-            try:
-                with open(file_obj.file_path, "r", encoding="utf-8") as f:
-                    items = json.load(f)
-                if isinstance(items, list):
-                    generated_count = sum(1 for item in items if is_short_answer_item(item) and str(item.get("Assessment", "")).strip())
-            except Exception:
-                pass
+    file_obj = db.query(File).filter(File.id == task.file_id).first()
+    if file_obj:
+        try:
+            with open(file_obj.file_path, "r", encoding="utf-8") as f:
+                items = json.load(f)
+            if isinstance(items, list):
+                generated_count = sum(1 for item in items if is_short_answer_item(item) and str(item.get("Assessment", "")).strip())
+        except Exception:
+            pass
 
-    output_file_obj = db.query(File).filter(File.id == task.file_id).first()
     return TaskStatusResponse(
         task_id=task.id,
         status=task.status.value,
@@ -398,7 +399,7 @@ async def get_dataset_assessment_status(
         progress_total=task.progress_total or 0,
         generated_count=generated_count,
         file_id=task.file_id,
-        file_name=output_file_obj.filename if output_file_obj else None,
+        file_name=file_obj.filename if file_obj else None,
     )
 
 
