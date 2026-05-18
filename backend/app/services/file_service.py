@@ -172,52 +172,21 @@ def _build_output_filename(
     username_or_id: str,
     name_suffix: Optional[str] = None,
 ) -> str:
-    """构造输出文件名：{base}_{阶段中文}_{username}_{时间}{_suffix?}.json
+    """构造输出文件名：{base首段}_{username}_{时间}{_suffix?}.json
 
-    如果 source_filename 已包含之前阶段的后缀（如 _问题生成_user_20260507123456），
-    先剥离这些后缀再重新追加，避免文件名越来越长。
+    base 取源文件名按 '_' 切割后的第一段，保持文件名简短。
     """
     if output_filename:
-        base = _strip_stage_suffix(output_filename)
+        raw_base = os.path.splitext(output_filename)[0]
     else:
         raw_base = os.path.splitext(source_filename or "output")[0]
-        # Strip previously appended stage suffixes to avoid cascading length
-        # Pattern: _阶段中文_username_timestamp or _阶段英文_username_timestamp
-        base = _strip_stage_suffix(raw_base)
 
-    stage_label = STAGE_LABELS.get(stage, stage.value if isinstance(stage, StageEnum) else str(stage))
+    base = raw_base.split("_")[0] if "_" in raw_base else raw_base
+
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     suffix_part = f"_{name_suffix}" if name_suffix else ""
-    return f"{base}_{stage_label}_{username_or_id}_{timestamp}{suffix_part}.json"
+    return f"{base}_{username_or_id}_{timestamp}{suffix_part}.json"
 
-
-def _strip_stage_suffix(filename_base: str) -> str:
-    """Remove ALL previously appended stage suffixes from a filename base.
-
-    Previous stages appended patterns like:
-      _问题生成_username_20260507123456
-      _知识体系_username_20260507123456
-      _COT过滤_username_20260507123456
-      etc.
-
-    Strips all such suffixes in a loop, keeping only the original
-    user-provided base name.  This prevents filename length from
-    cascading across multiple pipeline stages.
-    """
-    labels = list(STAGE_LABELS.values()) + [s.value for s in StageEnum]
-    # Repeatedly strip the outermost stage suffix until none remain
-    while True:
-        stripped = False
-        for label in labels:
-            pattern = re.compile(rf'_{re.escape(label)}_[^_]+_\d{{14}}$')
-            match = pattern.search(filename_base)
-            if match:
-                filename_base = filename_base[:match.start()]
-                stripped = True
-                break  # restart outer loop with shortened base
-        if not stripped:
-            break
-    return filename_base
 
 
 def _resolve_unique_path(upload_dir: str, filename: str) -> tuple[str, str]:
