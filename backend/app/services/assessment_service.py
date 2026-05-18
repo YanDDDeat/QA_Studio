@@ -134,9 +134,10 @@ def build_assessment_prompt(item: Dict[str, Any], origin_content: str, prompt_te
         "knowledge": item.get("knowledge", []),
         "difficulty": item.get("difficulty", ""),
     }
-    return prompt_template.format(
-        qa_item_json=json.dumps(payload, ensure_ascii=False, indent=2),
-        origin_content=origin_content,
+    return prompt_template.replace(
+        "{qa_item_json}", json.dumps(payload, ensure_ascii=False, indent=2)
+    ).replace(
+        "{origin_content}", origin_content
     )
 
 
@@ -163,11 +164,14 @@ def build_repair_prompt(
         "knowledge": item.get("knowledge", []),
         "difficulty": item.get("difficulty", ""),
     }
-    return repair_template.format(
-        repair_reason=reason,
-        invalid_assessment=invalid_assessment,
-        qa_item_json=json.dumps(payload, ensure_ascii=False, indent=2),
-        origin_content=origin_content,
+    return repair_template.replace(
+        "{repair_reason}", reason
+    ).replace(
+        "{invalid_assessment}", invalid_assessment
+    ).replace(
+        "{qa_item_json}", json.dumps(payload, ensure_ascii=False, indent=2)
+    ).replace(
+        "{origin_content}", origin_content
     )
 
 
