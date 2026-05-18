@@ -246,6 +246,36 @@
         </div>
       </div>
     </el-card>
+
+    <!-- Assessment results (output file content) -->
+    <el-card v-if="assessTaskInfo && assessTaskInfo.file_id" class="results-card">
+      <template #header>
+        <span class="card-title">生成结果 - {{ assessTaskInfo.file_name || '评分标准输出' }}</span>
+      </template>
+      <div class="results-body">
+        <div class="results-toolbar">
+          <el-button type="primary" size="small" :loading="assessResultsLoading" @click="loadAssessResults">加载最新结果</el-button>
+          <span v-if="assessResultsTotal > 0" class="results-count">共 {{ assessResultsTotal }} 条</span>
+        </div>
+        <el-table v-if="assessResultsData.length > 0" :data="assessResultsData" v-loading="assessResultsLoading" stripe border size="small" style="width: 100%">
+          <el-table-column v-for="col in assessResultsColumns" :key="col.prop" :prop="col.prop" :label="col.label" :width="col.width" :min-width="col.minWidth" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ truncateText(row[col.prop]) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" link size="small" @click.stop="showAssessResultsDetail(row)">查看</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="assessResultsData.length === 0 && !assessResultsLoading" class="results-empty">点击"加载最新结果"查看生成内容</div>
+        <div v-if="assessResultsTotal > 0" class="results-pagination">
+          <el-pagination v-model:current-page="assessResultsPage" :page-size="10" :total="assessResultsTotal" layout="total, prev, pager, next" @current-change="handleAssessResultsPageChange" />
+        </div>
+      </div>
+    </el-card>
+
     <!-- Split source detail dialog -->
     <el-dialog v-model="splitSourceDetailVisible" title="源文件记录详情" width="700px" :append-to-body="true">
       <template v-if="splitSourceDetailRecord">
@@ -258,6 +288,23 @@
           <div v-for="key in splitSourceLongTextFields" :key="key" class="text-field-block">
             <div class="field-label">{{ key }}</div>
             <div class="field-content" v-html="renderSplitSourceContent(splitSourceDetailFlatRecord[key])"></div>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- Assessment results detail dialog -->
+    <el-dialog v-model="assessResultsDetailVisible" title="生成结果详情" width="700px" :append-to-body="true">
+      <template v-if="assessResultsDetailRecord">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item v-for="key in assessResultsMetaFields" :key="key" :label="key">
+            {{ assessResultsDetailFlatRecord[key] != null ? assessResultsDetailFlatRecord[key] : '-' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <div class="detail-text-fields">
+          <div v-for="key in assessResultsLongTextFields" :key="key" class="text-field-block">
+            <div class="field-label">{{ key }}</div>
+            <div class="field-content" v-html="renderAssessResultsContent(assessResultsDetailFlatRecord[key])"></div>
           </div>
         </div>
       </template>
@@ -458,6 +505,27 @@ const {
 } = useSourcePreview(
   computed(() => assessForm.value.file_id),
   assessFileOptions
+)
+
+// ----- Assessment results (output file content) -----
+const {
+  sourceData: assessResultsData,
+  sourceTotal: assessResultsTotal,
+  sourceLoading: assessResultsLoading,
+  sourcePage: assessResultsPage,
+  sourceColumns: assessResultsColumns,
+  sourceDetailVisible: assessResultsDetailVisible,
+  sourceDetailRecord: assessResultsDetailRecord,
+  sourceMetaFields: assessResultsMetaFields,
+  sourceLongTextFields: assessResultsLongTextFields,
+  sourceDetailFlatRecord: assessResultsDetailFlatRecord,
+  loadSourcePreview: loadAssessResults,
+  handleSourcePageChange: handleAssessResultsPageChange,
+  showSourceDetail: showAssessResultsDetail,
+  renderContent: renderAssessResultsContent,
+} = useSourcePreview(
+  computed(() => assessTaskInfo.value?.file_id || null),
+  []
 )
 
 function truncateText(text) {
@@ -782,6 +850,7 @@ onUnmounted(() => { stopSplitPolling(); stopAssessPolling() })
 .page-container h2 { margin-bottom: 16px }
 .section-card { margin-bottom: 20px }
 .source-preview-card { margin-bottom: 20px }
+.results-card { margin-bottom: 20px }
 .card-title { font-size: 16px; font-weight: 600 }
 .config-layout { display: flex; gap: 24px }
 .config-form { flex: 3; min-width: 0 }
