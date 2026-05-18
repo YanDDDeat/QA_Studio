@@ -650,6 +650,10 @@ async function fetchAssessLLMConfigs() {
 async function handleStartAssess() {
   if (!canStartAssess.value) return
   assessStartLoading.value = true
+  // 启动新任务前清理旧任务状态
+  assessTaskInfo.value = null
+  assessLogs.value = []
+  assessResult.value = null
   try {
     const res = await startDatasetAssessment({
       file_id: assessForm.value.file_id,
