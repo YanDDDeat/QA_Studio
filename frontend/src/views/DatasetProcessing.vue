@@ -239,9 +239,9 @@
     </el-card>
 
     <!-- Assessment results (output file content) -->
-    <el-card v-if="assessTaskInfo && assessTaskInfo.file_id && (assessTaskInfo.status === 'completed' || assessTaskInfo.status === 'failed')" class="results-card">
+    <el-card class="results-card">
       <template #header>
-        <span class="card-title">生成结果 - {{ assessTaskInfo.file_name || '评分标准输出' }}</span>
+        <span class="card-title">生成结果 - {{ assessTaskInfo?.file_name || '评分标准输出' }}</span>
       </template>
       <div class="results-body">
         <div class="results-toolbar">

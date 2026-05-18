@@ -10,8 +10,10 @@ Key design:
 """
 
 import asyncio
+import json
 import logging
 import traceback
+from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,8 +27,17 @@ from app.models.models import (
     User, LLMConfig, Prompt,
 )
 from app.routers.auth import get_current_user
-from app.services.assessment_service import run_assessment_job
-from app.services.file_service import write_datasets_to_file
+from app.services.thread_pool import (
+    llm_thread_pool, register_task, unregister_task,
+    get_dynamic_batch_size, iter_completed_futures,
+)
+from app.services.llm_service import call_llm_json_sync
+from app.services.field_mapper import build_record_content
+from app.services.file_service import create_output_file
+from app.services.assessment_service import (
+    normalize_assessment_text, get_assessment_value,
+    is_qa_item, is_short_answer_item,
+)
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.dataset_assessment")
@@ -68,6 +79,12 @@ def _update_progress(db: Session, task_id: int, current: int):
         db.commit()
 
 
+def _flush_results(file_path: str, items: list):
+    """Write current results to output file."""
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+
 async def _run_assessment_task(
     task_id: int,
     file_id: int,
@@ -76,12 +93,15 @@ async def _run_assessment_task(
     model: str,
     user_id: int,
     username: str,
-    reference_fields: Optional[List[str]] = None,
-    base_url_override: Optional[str] = None,
-    api_key_override: Optional[str] = None,
+    reference_fields=None,
+    base_url_override=None,
+    api_key_override=None,
+    start_index: int = 0,
 ):
-    """Background coroutine that runs assessment generation."""
+    """Background coroutine: batch-threaded assessment generation."""
     db = SessionLocal()
+    register_task()
+    output_file = None
     try:
         source_file = db.query(File).filter(File.id == file_id, File.user_id == user_id).first()
         if not source_file:
@@ -92,59 +112,163 @@ async def _run_assessment_task(
                 db.commit()
             return
 
-        # Read file to get total count for progress tracking
-        import json
+        # Read source JSON
         with open(source_file.file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        total = len(data) if isinstance(data, list) else 1
+            raw_items = json.load(f)
+        if not isinstance(raw_items, list):
+            raw_items = [raw_items]
+
+        total = len(raw_items)
+        short_answer_count = sum(1 for item in raw_items if is_short_answer_item(item))
 
         task = db.query(Task).filter(Task.id == task_id).first()
-        if task:
+        if task and start_index == 0:
             task.progress_total = total
             db.commit()
 
-        result = await run_assessment_job(
-            db=db,
-            user_id=user_id,
-            source_file=source_file,
-            output_name=output_name,
-            username=username,
-            prompt_content=prompt_content,
-            model=model,
-            reference_fields=reference_fields,
-            base_url_override=base_url_override,
-            api_key_override=api_key_override,
-            task_id=task_id,
-            add_task_log=_add_task_log,
-            update_progress=_update_progress,
+        # Pre-create output file so frontend sees it immediately
+        output_file = create_output_file(
+            db=db, user_id=user_id, source_file=source_file,
+            stage=StageEnum.DATASET_ASSESSMENT, output_filename=output_name,
+            username=username, name_suffix="assessed",
         )
-
-        # Update task with output file and mark completed
         task = db.query(Task).filter(Task.id == task_id).first()
         if task:
-            if "output_file_id" in result:
-                task.file_id = result["output_file_id"]
+            task.file_id = output_file.id
+            db.commit()
+
+        _add_task_log(db, task_id, f"开始评分标准生成: 共 {total} 条记录, {short_answer_count} 条简答题, 输出文件: {output_file.filename}")
+
+        # Initialize updated_items with copies of all items
+        updated_items = [dict(item) for item in raw_items]
+
+        success_count = 0
+        loop = asyncio.get_event_loop()
+        consecutive_batch_failures = 0
+        processed_count = start_index
+        idx = start_index
+
+        while idx < total:
+            # Pause check
+            task_check = db.query(Task).filter(Task.id == task_id).first()
+            if task_check and task_check.status == TaskStatusEnum.PAUSED:
+                _flush_results(output_file.file_path, updated_items)
+                _add_task_log(db, task_id, f"任务已暂停，已将 {processed_count} 条数据写入文件")
+                return
+
+            batch_size = get_dynamic_batch_size()
+            batch_end = min(idx + batch_size, total)
+
+            # Prepare batch: only short-answer items without existing Assessment
+            batch_items = []
+            for batch_idx in range(idx, batch_end):
+                item = raw_items[batch_idx]
+                updated_items[batch_idx] = dict(item)
+
+                if not is_qa_item(item):
+                    processed_count += 1
+                    _update_progress(db, task_id, processed_count)
+                    continue
+
+                existing = get_assessment_value(item)
+                updated_items[batch_idx]["Assessment"] = normalize_assessment_text(existing)
+
+                if is_short_answer_item(item) and not existing:
+                    record_content = build_record_content(item, reference_fields, "dataset_assessment")
+                    if not record_content:
+                        _add_task_log(db, task_id, f"记录 {batch_idx + 1}: 无参考内容，跳过")
+                        processed_count += 1
+                        _update_progress(db, task_id, processed_count)
+                        continue
+                    llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
+                    batch_items.append((batch_idx, llm_prompt))
+                else:
+                    processed_count += 1
+                    _update_progress(db, task_id, processed_count)
+
+            # Submit batch to thread pool
+            if batch_items:
+                fut_to_item = {}
+                for item in batch_items:
+                    fut = loop.run_in_executor(
+                        llm_thread_pool,
+                        partial(
+                            call_llm_json_sync,
+                            prompt=item[1],
+                            model=model,
+                            temperature=0.0,
+                            base_url_override=base_url_override,
+                            api_key_override=api_key_override,
+                            username=username,
+                        ),
+                    )
+                    fut_to_item[fut] = item
+
+                batch_all_failed = True
+                async for fut, item in iter_completed_futures(fut_to_item):
+                    batch_idx = item[0]
+                    try:
+                        result = fut.result()
+                    except Exception as e:
+                        _add_task_log(db, task_id, f"记录 {batch_idx + 1}: LLM调用失败 - {str(e)[:200]}")
+                        processed_count += 1
+                        _update_progress(db, task_id, processed_count)
+                        continue
+
+                    batch_all_failed = False
+                    assessment = get_assessment_value(result) if isinstance(result, dict) else ""
+                    updated_items[batch_idx]["Assessment"] = normalize_assessment_text(assessment)
+
+                    status_str = "OK" if assessment else "EMPTY"
+                    if assessment:
+                        success_count += 1
+                    _add_task_log(db, task_id, f"记录 {batch_idx + 1}: 评分标准={status_str}")
+                    processed_count += 1
+                    _update_progress(db, task_id, processed_count)
+
+                # Circuit breaker
+                if batch_all_failed:
+                    consecutive_batch_failures += 1
+                    if consecutive_batch_failures >= 4:
+                        _flush_results(output_file.file_path, updated_items)
+                        _add_task_log(db, task_id, f"连续{consecutive_batch_failures}批全部失败，已将已有数据写入文件")
+                        task = db.query(Task).filter(Task.id == task_id).first()
+                        if task:
+                            task.status = TaskStatusEnum.FAILED
+                            db.commit()
+                        return
+                else:
+                    consecutive_batch_failures = 0
+
+            idx = batch_end
+
+        # Write final results
+        _flush_results(output_file.file_path, updated_items)
+        _add_task_log(db, task_id, f"评分标准生成完成: 简答题 {short_answer_count} 条, 成功 {success_count} 条")
+
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
             task.status = TaskStatusEnum.COMPLETED
             db.commit()
 
     except Exception as e:
         logger.error("Assessment task %d failed: %s\n%s", task_id, str(e), traceback.format_exc())
         try:
+            db.rollback()
             task = db.query(Task).filter(Task.id == task_id).first()
             if task:
                 task.status = TaskStatusEnum.FAILED
                 db.commit()
             _add_task_log(db, task_id, f"评分生成失败: {str(e)[:200]}")
-            # 异常退出时尝试将已有数据刷写到磁盘
-            if task and task.file_id:
+            if output_file:
                 try:
-                    write_datasets_to_file(db=db, file_id=task.file_id)
-                    logger.info("Task %d: flushed partial data to file on exception exit", task_id)
+                    _flush_results(output_file.file_path, updated_items)
                 except Exception:
                     pass
         except Exception:
             pass
     finally:
+        unregister_task()
         db.close()
 
 
@@ -232,6 +356,7 @@ async def start_dataset_assessment(
             reference_fields=data.reference_fields or prompt_obj.reference_fields,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
+            start_index=0,
         )
     )
 
@@ -255,8 +380,6 @@ async def get_dataset_assessment_status(
 
     generated_count = 0
     if task.status.value in ("completed", "failed"):
-        from app.services.assessment_service import is_short_answer_item
-        import json
         file_obj = db.query(File).filter(File.id == task.file_id).first()
         if file_obj:
             try:
@@ -354,5 +477,6 @@ def resume_dataset_assessment_task(task: Task, db: Session):
             reference_fields=prompt_obj.reference_fields,
             base_url_override=base_url_override,
             api_key_override=api_key_override,
+            start_index=task.progress_current or 0,
         )
     )
