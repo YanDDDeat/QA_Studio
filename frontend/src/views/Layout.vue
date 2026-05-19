@@ -69,16 +69,15 @@
           </el-menu-item>
         </el-sub-menu>
 
-        <el-menu-item index="/my-tasks">
-          <el-icon><List /></el-icon>
-          <span>我的任务</span>
-        </el-menu-item>
-
         <el-sub-menu index="group-admin">
           <template #title>
             <el-icon><Setting /></el-icon>
             <span>管理中心</span>
           </template>
+          <el-menu-item index="/my-tasks">
+            <el-icon><List /></el-icon>
+            <span>我的任务</span>
+          </el-menu-item>
           <el-menu-item index="/config-center">
             <el-icon><Setting /></el-icon>
             <span>配置中心</span>

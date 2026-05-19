@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     SWUST_PROXY: str = ""     # SWUST专属代理：仅swust provider使用（dashscope不走）
 
     # LLM concurrency
-    LLM_THREAD_POOL_SIZE: int = 20
+    LLM_THREAD_POOL_SIZE: int = 40
 
     # Auth — must be set in .env, no hardcoded secrets
     JWT_SECRET: str
