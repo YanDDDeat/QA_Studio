@@ -367,7 +367,7 @@ async def get_system_config(
 ):
     """获取系统配置（所有用户可读）。"""
     return {
-        "llm_thread_pool_size": get_value("LLM_THREAD_POOL_SIZE", 40),
+        "llm_thread_pool_size": settings.LLM_THREAD_POOL_SIZE,
     }
 
 
@@ -389,6 +389,4 @@ async def update_system_config(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="线程池大小必须在1-100之间",
             )
-        set_value("LLM_THREAD_POOL_SIZE", data.llm_thread_pool_size)
-
-    return {"message": "配置已保存，重启后端后生效"}
+    return {"message": "线程池大小请在 .env 文件中修改 LLM_THREAD_POOL_SIZE，重启后生效"}

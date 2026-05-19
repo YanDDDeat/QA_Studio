@@ -44,6 +44,7 @@ services:
       - LLM_MODEL=${LLM_MODEL}
       - LLM_PROXY=${LLM_PROXY}
       - SWUST_PROXY=${SWUST_PROXY}
+      - LLM_THREAD_POOL_SIZE=${LLM_THREAD_POOL_SIZE:-40}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
@@ -52,7 +53,6 @@ services:
     volumes:
       - backend-logs:/app/logs
       - backend-uploads:/app/uploads
-      - backend-data:/app/data
     ports:
       - "8000:8000"
     depends_on:
@@ -97,7 +97,6 @@ volumes:
   mysql_data:
   backend-logs:
   backend-uploads:
-  backend-data:
   frontend-dist:
 
 networks:
