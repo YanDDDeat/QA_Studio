@@ -813,13 +813,13 @@ async function restoreSplitTaskState() {
   try {
     const tasks = await getTaskList({ stage: 'dataset_split' })
     if (!Array.isArray(tasks) || tasks.length === 0) return
-    const latestTask = tasks.find(t => t.status === 'running')
+    const latestTask = tasks.find(t => t.status === 'running' || t.status === 'paused')
     if (!latestTask) return
     splitTaskId.value = latestTask.id
-    splitTaskRunning.value = true
+    splitTaskRunning.value = latestTask.status === 'running'
     await pollSplitStatus()
     await fetchSplitLogs()
-    startSplitPolling()
+    if (latestTask.status === 'running') startSplitPolling()
   } catch (err) { console.error('Restore split task error:', err) }
 }
 
@@ -827,12 +827,12 @@ async function restoreAssessTaskState() {
   try {
     const tasks = await getTaskList({ stage: 'dataset_assessment' })
     if (!Array.isArray(tasks) || tasks.length === 0) return
-    const latestTask = tasks.find(t => t.status === 'running')
+    const latestTask = tasks.find(t => t.status === 'running' || t.status === 'paused')
     if (!latestTask) return
     assessTaskId.value = latestTask.id
-    assessTaskRunning.value = true
+    assessTaskRunning.value = latestTask.status === 'running'
     await pollAssessStatus()
-    startAssessPolling()
+    if (latestTask.status === 'running') startAssessPolling()
   } catch (err) { console.error('Restore assess task error:', err) }
 }
 

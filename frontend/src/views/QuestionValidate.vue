@@ -712,15 +712,15 @@ async function restoreTaskState() {
     const tasks = await getTaskList({ stage: 'question_validate' })
     if (!Array.isArray(tasks) || tasks.length === 0) return
 
-    const latestTask = tasks.find(t => t.status === 'running')
+    const latestTask = tasks.find(t => t.status === 'running' || t.status === 'paused')
     if (!latestTask) return
 
     taskId.value = latestTask.id
-    taskRunning.value = true
+    taskRunning.value = latestTask.status === 'running'
 
     await pollStatus()
     await fetchLogs()
-    startPolling()
+    if (latestTask.status === 'running') startPolling()
   } catch (err) {
     console.error('Restore task state error:', err)
   }
