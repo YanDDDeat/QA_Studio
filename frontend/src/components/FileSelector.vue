@@ -220,6 +220,9 @@ async function submitUpload() {
 
     if (uploaded.length > 0) {
       ElMessage.success('文件上传成功')
+      if (uploaded[0].warning) {
+        ElMessage.warning({ message: uploaded[0].warning, duration: 8000 })
+      }
       emit('update:modelValue', uploaded[0].id)
       emit('upload-success', uploaded[0])
       mode.value = 'existing'

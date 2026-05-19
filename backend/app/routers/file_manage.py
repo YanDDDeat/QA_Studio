@@ -263,13 +263,28 @@ async def upload_managed_files(
         # Read and validate JSON content
         content_bytes = await file.read()
         try:
-            json.loads(content_bytes.decode("utf-8"))
+            parsed = json.loads(content_bytes.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             errors.append({
                 "filename": file.filename,
                 "error": f"Invalid JSON: {str(e)}",
             })
             continue
+
+        # 检查 text_field 是否存在于 JSON 记录中
+        text_field_warning = None
+        records = parsed if isinstance(parsed, list) else [parsed]
+        if records and isinstance(records[0], dict):
+            sample = records[0]
+            if text_field not in sample:
+                available = [k for k in sample.keys() if isinstance(sample[k], str) and len(sample[k]) > 0]
+                alt_fields = ["text", "content", "body", "paragraph", "input"]
+                found_alt = [f for f in alt_fields if f in sample]
+                hint = f"，可用字段: {', '.join(available[:8])}" if available else ""
+                if found_alt:
+                    text_field_warning = f"指定的text字段「{text_field}」不存在于JSON中{hint}。备选字段 {found_alt} 可用"
+                else:
+                    text_field_warning = f"指定的text字段「{text_field}」不存在于JSON中{hint}"
 
         # Save file to disk
         file_path = os.path.join(upload_dir, file.filename)
@@ -297,12 +312,12 @@ async def upload_managed_files(
         db.commit()
         db.refresh(file_record)
 
-        results.append(_serialize_file(file_record))
+        result_item = _serialize_file(file_record)
+        if text_field_warning:
+            result_item["warning"] = text_field_warning
+        results.append(result_item)
 
-    return {
-        "uploaded": results,
-        "errors": errors,
-    }
+    return {"uploaded": results, "errors": errors}
 
 
 SOURCE_TYPE_CHOICES = ['文献', '图书', '其他']
