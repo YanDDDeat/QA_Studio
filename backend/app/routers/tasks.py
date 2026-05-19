@@ -68,6 +68,7 @@ class TaskResponse(BaseModel):
     stage: str
     dataset_id: Optional[int] = None
     file_id: Optional[int] = None
+    source_file_id: Optional[int] = None
     filename: Optional[str] = None
     model: Optional[str] = None
     prompt_id: Optional[int] = None

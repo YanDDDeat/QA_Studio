@@ -109,6 +109,7 @@ async def _run_answer_validate_task(
         task = db.query(Task).filter(Task.id == task_id).first()
         if task and start_index == 0:
             task.progress_total = total
+            task.source_file_id = file_id
             db.commit()
 
         # 提前创建输出文件，点击开始后前端立即显示输出文件名
@@ -621,9 +622,10 @@ async def retry_answer_validate(
 
 def resume_answer_validate_task(task: Task, db: Session):
     """Resume a paused answer_validate task from progress_current."""
+    source_fid = task.source_file_id or task.file_id
     file_obj = (
         db.query(File)
-        .filter(File.id == task.file_id, File.user_id == task.user_id)
+        .filter(File.id == source_fid, File.user_id == task.user_id)
         .first()
     )
     if file_obj is None:

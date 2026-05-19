@@ -159,6 +159,7 @@ class Task(Base):
     stage = Column(_stage_enum_type(), nullable=False)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True)
     file_id = Column(Integer, ForeignKey("files.id"), nullable=True)
+    source_file_id = Column(Integer, nullable=True)
     model = Column(String(128), nullable=True)
     prompt_id = Column(Integer, ForeignKey("prompts.id"), nullable=True)
     status = Column(Enum(TaskStatusEnum), default=TaskStatusEnum.PENDING, nullable=False)

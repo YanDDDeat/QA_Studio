@@ -142,6 +142,7 @@ async def _run_question_generate_task(
         task = db.query(Task).filter(Task.id == task_id).first()
         if task and start_index == 0:
             task.progress_total = total
+            task.source_file_id = source_file_id
             db.commit()
 
         generated_count = 0
@@ -747,9 +748,10 @@ async def list_source_files(
 
 def resume_question_generate_task(task: Task, db: Session):
     """Resume a paused question_generate task from progress_current."""
+    source_fid = task.source_file_id or task.file_id
     file_obj = (
         db.query(File)
-        .filter(File.id == task.file_id, File.user_id == task.user_id)
+        .filter(File.id == source_fid, File.user_id == task.user_id)
         .first()
     )
     if file_obj is None:
