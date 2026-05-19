@@ -366,8 +366,9 @@ async def get_system_config(
     current_user: User = Depends(get_current_user),
 ):
     """获取系统配置（所有用户可读）。"""
+    import os
     return {
-        "llm_thread_pool_size": settings.LLM_THREAD_POOL_SIZE,
+        "llm_thread_pool_size": int(os.environ.get("LLM_THREAD_POOL_SIZE", "40")),
     }
 
 

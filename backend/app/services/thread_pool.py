@@ -4,9 +4,9 @@ import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from app.config import settings
+import os
 
-_pool_size = settings.LLM_THREAD_POOL_SIZE
+_pool_size = int(os.environ.get("LLM_THREAD_POOL_SIZE", "40"))
 llm_thread_pool = ThreadPoolExecutor(
     max_workers=_pool_size,
     thread_name_prefix="llm-worker",
