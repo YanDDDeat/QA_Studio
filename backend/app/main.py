@@ -95,6 +95,7 @@ from app.routers import (
 )
 from app.database import engine, Base, SessionLocal
 from app.models import User, Dataset, File, Prompt, Task, TaskLog, LLMConfig
+from app.models.models import TaskStatusEnum
 from app.config import settings, LLM_PROVIDERS
 
 app = FastAPI(
@@ -147,6 +148,16 @@ async def startup_event():
                 print(f"[Startup] Default LLM config seeded: '{provider_name}'")
             else:
                 print(f"[Startup] LLM config exists: '{provider_name}', skipping")
+        # Clean up zombie tasks: running tasks from before restart → paused
+        zombie_count = (
+            db.query(Task)
+            .filter(Task.status == TaskStatusEnum.RUNNING)
+            .update({Task.status: TaskStatusEnum.PAUSED})
+        )
+        if zombie_count:
+            db.commit()
+            print(f"[Startup] {zombie_count} 个运行中的僵尸任务已自动改为暂停")
+
     except Exception as e:
         print(f"[Startup] Error initializing: {e}")
         db.rollback()
