@@ -67,6 +67,10 @@ export function getRunningTasks() {
   return api.get('/tasks/running')
 }
 
+export function getMyRunningTasks() {
+  return api.get('/tasks/my-running')
+}
+
 export function stopTask(taskId) {
   return api.post(`/tasks/${taskId}/stop`)
 }

@@ -69,6 +69,11 @@
           </el-menu-item>
         </el-sub-menu>
 
+        <el-menu-item index="/my-tasks">
+          <el-icon><List /></el-icon>
+          <span>我的任务</span>
+        </el-menu-item>
+
         <el-sub-menu index="group-admin">
           <template #title>
             <el-icon><Setting /></el-icon>
@@ -168,7 +173,7 @@ import { getMe, changePassword } from '../api'
 import {
   EditPen, Share, Checked, Document, Select,
   DataAnalysis, Folder, Setting, ArrowDown, UserFilled,
-  Operation, Filter, Grid,
+  Operation, Filter, Grid, List,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()

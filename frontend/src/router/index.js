@@ -84,6 +84,12 @@ const routes = [
         component: () => import('../views/UserManage.vue'),
         meta: { title: '用户管理' },
       },
+      {
+        path: 'my-tasks',
+        name: 'MyTasks',
+        component: () => import('../views/MyTasks.vue'),
+        meta: { title: '我的任务' },
+      },
     ],
   },
 ]

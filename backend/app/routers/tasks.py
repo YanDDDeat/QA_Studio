@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.models import Task, TaskStatusEnum, StageEnum, User
+from app.models.models import Task, TaskStatusEnum, StageEnum, User, File
 from app.routers.auth import get_current_user
 
 router = APIRouter()
@@ -68,6 +68,7 @@ class TaskResponse(BaseModel):
     stage: str
     dataset_id: Optional[int] = None
     file_id: Optional[int] = None
+    filename: Optional[str] = None
     model: Optional[str] = None
     prompt_id: Optional[int] = None
     status: str
@@ -104,7 +105,59 @@ async def list_tasks(
             )
         query = query.filter(Task.status == TaskStatusEnum(task_status))
     tasks = query.order_by(Task.id.desc()).all()
-    return tasks
+
+    # 批量查询 file_id → filename 映射
+    file_ids = {t.file_id for t in tasks if t.file_id}
+    file_map = {}
+    if file_ids:
+        files = db.query(File.id, File.filename).filter(File.id.in_(file_ids)).all()
+        file_map = {f.id: f.filename for f in files}
+
+    result = []
+    for t in tasks:
+        d = TaskResponse.model_validate(t).model_dump()
+        d["filename"] = file_map.get(t.file_id) if t.file_id else None
+        result.append(d)
+    return result
+
+
+@router.get("/my-running")
+async def list_my_running_tasks(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查看当前用户正在运行和已暂停的任务。"""
+    tasks = (
+        db.query(Task)
+        .filter(
+            Task.user_id == current_user.id,
+            Task.status.in_([TaskStatusEnum.RUNNING, TaskStatusEnum.PAUSED]),
+        )
+        .order_by(Task.id.desc())
+        .all()
+    )
+
+    # 批量查询 filename
+    file_ids = {t.file_id for t in tasks if t.file_id}
+    file_map = {}
+    if file_ids:
+        files = db.query(File.id, File.filename).filter(File.id.in_(file_ids)).all()
+        file_map = {f.id: f.filename for f in files}
+
+    return [
+        {
+            "task_id": t.id,
+            "stage": t.stage.value if t.stage else "未知",
+            "model": t.model or "",
+            "status": t.status.value if t.status else "unknown",
+            "progress_current": t.progress_current or 0,
+            "progress_total": t.progress_total or 0,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "file_id": t.file_id,
+            "filename": file_map.get(t.file_id) if t.file_id else None,
+        }
+        for t in tasks
+    ]
 
 
 @router.get("/running")
