@@ -78,7 +78,7 @@
               placeholder="全部阶段"
               clearable
               style="width: 160px; margin-right: 12px;"
-              @change="fetchHistory"
+              @change="handleFilterChange"
             >
               <el-option
                 v-for="(label, value) in stageLabels"
@@ -92,7 +92,7 @@
               placeholder="全部状态"
               clearable
               style="width: 130px;"
-              @change="fetchHistory"
+              @change="handleFilterChange"
             >
               <el-option
                 v-for="(label, value) in statusLabels"
@@ -147,6 +147,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div style="margin-top: 16px; display: flex; justify-content: flex-end;">
+        <el-pagination
+          v-model:current-page="historyPage"
+          v-model:page-size="historyPageSize"
+          :total="historyTotal"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next"
+          @current-change="fetchHistory"
+          @size-change="handlePageSizeChange"
+        />
+      </div>
     </el-card>
   </div>
 </template>
@@ -227,20 +238,34 @@ const historyTasks = ref([])
 const historyLoading = ref(false)
 const historyStage = ref('')
 const historyStatus = ref('')
+const historyPage = ref(1)
+const historyPageSize = ref(20)
+const historyTotal = ref(0)
 
 async function fetchHistory() {
   historyLoading.value = true
   try {
-    const params = {}
+    const params = { page: historyPage.value, page_size: historyPageSize.value }
     if (historyStage.value) params.stage = historyStage.value
     if (historyStatus.value) params.task_status = historyStatus.value
     const res = await getTasks(params)
-    historyTasks.value = Array.isArray(res) ? res : []
+    historyTasks.value = Array.isArray(res.items) ? res.items : []
+    historyTotal.value = res.total || 0
   } catch {
     // 静默处理
   } finally {
     historyLoading.value = false
   }
+}
+
+function handlePageSizeChange() {
+  historyPage.value = 1
+  fetchHistory()
+}
+
+function handleFilterChange() {
+  historyPage.value = 1
+  fetchHistory()
 }
 
 // ---------- 生命周期 ----------

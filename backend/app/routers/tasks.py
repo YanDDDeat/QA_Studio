@@ -81,14 +81,16 @@ class TaskResponse(BaseModel):
 # ---------- API endpoints ----------
 
 
-@router.get("", response_model=List[TaskResponse])
+@router.get("")
 async def list_tasks(
     stage: Optional[str] = None,
     task_status: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all tasks belonging to the current user."""
+    """List all tasks belonging to the current user, with pagination."""
     query = db.query(Task).filter(Task.user_id == current_user.id)
     if stage:
         if stage not in [s.value for s in StageEnum]:
@@ -104,21 +106,22 @@ async def list_tasks(
                 detail=f"Invalid status: {task_status}",
             )
         query = query.filter(Task.status == TaskStatusEnum(task_status))
-    tasks = query.order_by(Task.id.desc()).all()
 
-    # 批量查询 file_id → filename 映射
+    total = query.count()
+    tasks = query.order_by(Task.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
     file_ids = {t.file_id for t in tasks if t.file_id}
     file_map = {}
     if file_ids:
         files = db.query(File.id, File.filename).filter(File.id.in_(file_ids)).all()
         file_map = {f.id: f.filename for f in files}
 
-    result = []
+    items = []
     for t in tasks:
         d = TaskResponse.model_validate(t).model_dump()
         d["filename"] = file_map.get(t.file_id) if t.file_id else None
-        result.append(d)
-    return result
+        items.append(d)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/my-running")
