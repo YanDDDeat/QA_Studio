@@ -367,7 +367,7 @@ async def get_system_config(
 ):
     """获取系统配置（所有用户可读）。"""
     return {
-        "llm_thread_pool_size": get_value("LLM_THREAD_POOL_SIZE", 20),
+        "llm_thread_pool_size": get_value("LLM_THREAD_POOL_SIZE", 40),
     }
 
 
