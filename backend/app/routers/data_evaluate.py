@@ -37,7 +37,7 @@ from app.services.llm_service import call_llm_json_sync, LLMCallError
 from functools import partial
 from app.services.thread_pool import (
     llm_thread_pool, register_task, unregister_task, get_dynamic_batch_size,
-    iter_completed_futures,
+    iter_completed_futures, SlidingWindowExecutor,
 )
 from app.services.file_service import (
     create_output_file, clone_single_dataset,
@@ -211,14 +211,70 @@ async def _run_data_evaluate_task(
 
         evaluated_count = 0
         loop = asyncio.get_event_loop()
-        consecutive_batch_failures = 0
+        consecutive_failures = 0
         processed_count = start_index
+        executor = SlidingWindowExecutor()
+
+        # ── helper: 处理单条完成结果 ──
+        def _handle_result(fut, item):
+            nonlocal evaluated_count, consecutive_failures, processed_count
+            batch_idx = item[0]
+            dataset = item[2]
+            try:
+                result = fut.result()
+            except Exception as e:
+                logger.error(
+                    "Task %d: LLM call failed for record %d: %s",
+                    task_id, batch_idx, str(e),
+                )
+                _add_task_log(
+                    db, task_id,
+                    f"记录 {batch_idx + 1}: LLM调用失败 - {str(e)[:200]}",
+                )
+                consecutive_failures += 1
+                processed_count += 1
+                _update_progress(db, task_id, processed_count)
+                return
+
+            consecutive_failures = 0
+            llm_result = result
+
+            relevance = _parse_int_score(llm_result, "relevance")
+            clarity = _parse_int_score(llm_result, "clarity")
+            reasoning = _parse_int_score(llm_result, "reasoning")
+            terminology = _parse_int_score(llm_result, "terminology")
+            score = _parse_float_score(llm_result, "score")
+
+            cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.DATA_EVALUATE)
+            extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
+            if relevance is not None:
+                cloned_ds.relevance = relevance
+            if clarity is not None:
+                cloned_ds.clarity = clarity
+            if reasoning is not None:
+                cloned_ds.reasoning = reasoning
+            if terminology is not None:
+                cloned_ds.terminology = terminology
+            if score is not None:
+                cloned_ds.score = score
+            cloned_ds.extra_fields = extra if extra else None
+            db.commit()
+            evaluated_count += 1
+            score_msg = f"综合评分 {score}" if score is not None else "无评分"
+            _add_task_log(
+                db, task_id,
+                f"记录 {batch_idx + 1}: 评估完成 - {score_msg}",
+            )
+            processed_count += 1
+            _update_progress(db, task_id, processed_count)
 
         idx = start_index
         while idx < total:
-            # ── 每批开始前检查暂停 ──
+            # ── 暂停检查 ──
             task_check = db.query(Task).filter(Task.id == task_id).first()
             if task_check and task_check.status == TaskStatusEnum.PAUSED:
+                async for fut, item in executor.drain():
+                    _handle_result(fut, item)
                 try:
                     write_datasets_to_file(db=db, file_id=output_file.id)
                     _add_task_log(db, task_id, f"任务已暂停，已将 {processed_count} 条数据写入文件")
@@ -226,107 +282,44 @@ async def _run_data_evaluate_task(
                     _add_task_log(db, task_id, f"任务已暂停，刷写文件失败: {str(flush_err)[:200]}")
                 return
 
-            # ── 计算本批大小 ──
-            batch_size = get_dynamic_batch_size()
-            batch_end = min(idx + batch_size, total)
-
-            # ── 准备本批数据 ──
-            batch_items = []
-            for batch_idx in range(idx, batch_end):
-                dataset = source_datasets[batch_idx]
-                record_content = build_record_content(dataset, reference_fields, "data_evaluate")
-                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
-                batch_items.append((batch_idx, llm_prompt, dataset))
-
-            # ── 提交本批到线程池 ──
-            if batch_items:
-                fut_to_item = {}
-                for item in batch_items:
-                    fut = loop.run_in_executor(
-                        llm_thread_pool,
-                        partial(
-                            call_llm_json_sync,
-                            prompt=item[1],
-                            model=model,
-                            temperature=0.3,
-                            base_url_override=base_url_override,
-                            api_key_override=api_key_override,
-                            username=username,
-                        ),
-                    )
-                    fut_to_item[fut] = item
-
-                # ── 处理本批结果（逐条完成逐条更新） ──
-                batch_all_failed = True
-                async for fut, item in iter_completed_futures(fut_to_item):
-                    batch_idx = item[0]
-                    dataset = item[2]
-
-                    try:
-                        result = fut.result()
-                    except Exception as e:
-                        logger.error(
-                            "Task %d: LLM call failed for record %d: %s",
-                            task_id, batch_idx, str(e),
-                        )
-                        _add_task_log(
-                            db, task_id,
-                            f"记录 {batch_idx + 1}: LLM调用失败 - {str(e)[:200]}",
-                        )
-                        processed_count += 1
-                        _update_progress(db, task_id, processed_count)
-                        continue
-
-                    batch_all_failed = False
-                    llm_result = result
-
-                    relevance = _parse_int_score(llm_result, "relevance")
-                    clarity = _parse_int_score(llm_result, "clarity")
-                    reasoning = _parse_int_score(llm_result, "reasoning")
-                    terminology = _parse_int_score(llm_result, "terminology")
-                    score = _parse_float_score(llm_result, "score")
-
-                    cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.DATA_EVALUATE)
-                    extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
-                    if relevance is not None:
-                        cloned_ds.relevance = relevance
-                    if clarity is not None:
-                        cloned_ds.clarity = clarity
-                    if reasoning is not None:
-                        cloned_ds.reasoning = reasoning
-                    if terminology is not None:
-                        cloned_ds.terminology = terminology
-                    if score is not None:
-                        cloned_ds.score = score
-                    cloned_ds.extra_fields = extra if extra else None
+            # ── 连续失败检查 ──
+            if consecutive_failures >= 10:
+                async for fut, item in executor.drain():
+                    _handle_result(fut, item)
+                try:
+                    write_datasets_to_file(db=db, file_id=output_file.id)
+                    _add_task_log(db, task_id, f"连续{consecutive_failures}次调用失败，已将已有数据写入文件")
+                except Exception as flush_err:
+                    _add_task_log(db, task_id, f"连续失败终止，刷写文件失败: {str(flush_err)[:200]}")
+                task = db.query(Task).filter(Task.id == task_id).first()
+                if task:
+                    task.status = TaskStatusEnum.FAILED
                     db.commit()
-                    evaluated_count += 1
-                    score_msg = f"综合评分 {score}" if score is not None else "无评分"
-                    _add_task_log(
-                        db, task_id,
-                        f"记录 {batch_idx + 1}: 评估完成 - {score_msg}",
-                    )
-                    processed_count += 1
-                    _update_progress(db, task_id, processed_count)
+                return
 
-                # ── 检查连续整批失败 ──
-                if batch_all_failed:
-                    consecutive_batch_failures += 1
-                    if consecutive_batch_failures >= 4:
-                        try:
-                            write_datasets_to_file(db=db, file_id=output_file.id)
-                            _add_task_log(db, task_id, f"连续{consecutive_batch_failures}批全部失败，已将已有数据写入文件")
-                        except Exception as flush_err:
-                            _add_task_log(db, task_id, f"连续批次失败终止，刷写文件失败: {str(flush_err)[:200]}")
-                        task = db.query(Task).filter(Task.id == task_id).first()
-                        if task:
-                            task.status = TaskStatusEnum.FAILED
-                            db.commit()
-                        return
-                else:
-                    consecutive_batch_failures = 0
+            # ── 准备当前记录 ──
+            dataset = source_datasets[idx]
+            record_content = build_record_content(dataset, reference_fields, "data_evaluate")
+            llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
 
-            idx = batch_end
+            # ── 获取窗口空位并提交 ──
+            await executor.acquire()
+            fut = loop.run_in_executor(
+                llm_thread_pool,
+                partial(call_llm_json_sync, prompt=llm_prompt, model=model, temperature=0.3,
+                        base_url_override=base_url_override, api_key_override=api_key_override,
+                        username=username),
+            )
+            executor.track(fut, (idx, llm_prompt, dataset))
+            idx += 1
+
+            # ── 收割已完成的结果（非阻塞） ──
+            async for fut, item in executor.iter_done():
+                _handle_result(fut, item)
+
+        # ── 收割剩余 ──
+        async for fut, item in executor.drain():
+            _handle_result(fut, item)
 
         if evaluated_count == 0:
             _add_task_log(db, task_id, "本次任务无成功评估记录")

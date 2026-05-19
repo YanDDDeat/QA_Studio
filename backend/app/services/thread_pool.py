@@ -73,3 +73,70 @@ async def iter_completed_futures(fut_to_item: dict):
         )
         for fut in done:
             yield fut, fut_to_item[fut]
+
+
+# ── 滑动窗口执行器 ──────────────────────────────────────────
+
+
+class SlidingWindowExecutor:
+    """滑动窗口并发控制器：始终保持 window_size 个并发，完成一个补一个。
+
+    用法::
+
+        executor = SlidingWindowExecutor()
+        for item in items:
+            await executor.acquire()          # 窗口满时阻塞
+            fut = loop.run_in_executor(pool, fn, *args)
+            executor.track(fut, item)
+            async for f, it in executor.iter_done():  # 非阻塞收割已完成的
+                process(f, it)
+        async for f, it in executor.drain():  # 收割剩余
+            process(f, it)
+    """
+
+    def __init__(self):
+        self._sem: asyncio.Semaphore | None = None
+        self._pending: dict = {}
+        self._last_window_size: int = 0
+
+    def _window_size(self) -> int:
+        active = get_active_task_count()
+        return max(1, _pool_size // active) if active > 0 else _pool_size
+
+    async def acquire(self):
+        """获取一个窗口空位。窗口大小随活跃任务数动态调整。"""
+        ws = self._window_size()
+        if self._sem is None or ws != self._last_window_size:
+            self._sem = asyncio.Semaphore(ws)
+            self._last_window_size = ws
+        await self._sem.acquire()
+
+    def track(self, future, item):
+        """跟踪一个已提交到线程池的 future，完成时自动释放窗口空位。"""
+        self._pending[future] = item
+        future.add_done_callback(lambda _: self._sem.release())
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._pending)
+
+    async def iter_done(self):
+        """非阻塞 yield 所有已完成的 future+item。无已完成则立即返回。"""
+        if not self._pending:
+            return
+        done, _ = await asyncio.wait(
+            self._pending.keys(), timeout=0, return_when=asyncio.FIRST_COMPLETED
+        )
+        for fut in done:
+            item = self._pending.pop(fut)
+            yield fut, item
+
+    async def drain(self):
+        """阻塞等待所有剩余 pending futures 完成，逐个 yield。"""
+        while self._pending:
+            done, _ = await asyncio.wait(
+                self._pending.keys(), return_when=asyncio.FIRST_COMPLETED
+            )
+            for fut in done:
+                item = self._pending.pop(fut)
+                yield fut, item

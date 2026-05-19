@@ -29,7 +29,7 @@ from app.models.models import (
 from app.routers.auth import get_current_user
 from app.services.thread_pool import (
     llm_thread_pool, register_task, unregister_task,
-    get_dynamic_batch_size, iter_completed_futures,
+    get_dynamic_batch_size, iter_completed_futures, SlidingWindowExecutor,
 )
 from app.services.llm_service import call_llm_json_sync
 from app.services.field_mapper import build_record_content
@@ -144,106 +144,105 @@ async def _run_assessment_task(
 
         success_count = 0
         loop = asyncio.get_event_loop()
-        consecutive_batch_failures = 0
+        consecutive_failures = 0
         processed_count = start_index
+        executor = SlidingWindowExecutor()
         idx = start_index
 
+        # ── helper: 处理单条完成结果 ──
+        def _handle_result(fut, item):
+            nonlocal success_count, consecutive_failures, processed_count
+            batch_idx = item[0]
+            try:
+                result = fut.result()
+            except Exception as e:
+                _add_task_log(db, task_id, f"记录 {batch_idx + 1}: LLM调用失败 - {str(e)[:200]}")
+                consecutive_failures += 1
+                processed_count += 1
+                _update_progress(db, task_id, processed_count)
+                return
+
+            consecutive_failures = 0
+            assessment = get_assessment_value(result) if isinstance(result, dict) else ""
+            updated_items[batch_idx]["Assessment"] = normalize_assessment_text(assessment)
+
+            status_str = "OK" if assessment else "EMPTY"
+            if assessment:
+                success_count += 1
+            _add_task_log(db, task_id, f"记录 {batch_idx + 1}: 评分标准={status_str}")
+            processed_count += 1
+            _update_progress(db, task_id, processed_count)
+
         while idx < total:
-            # Pause check
+            # ── 暂停检查 ──
             task_check = db.query(Task).filter(Task.id == task_id).first()
             if task_check and task_check.status == TaskStatusEnum.PAUSED:
+                async for fut, item in executor.drain():
+                    _handle_result(fut, item)
                 _flush_results(output_file.file_path, updated_items)
                 _add_task_log(db, task_id, f"任务已暂停，已将 {processed_count} 条数据写入文件")
                 return
 
-            batch_size = get_dynamic_batch_size()
-            batch_end = min(idx + batch_size, total)
+            # ── 连续失败检查 ──
+            if consecutive_failures >= 10:
+                async for fut, item in executor.drain():
+                    _handle_result(fut, item)
+                _flush_results(output_file.file_path, updated_items)
+                _add_task_log(db, task_id, f"连续{consecutive_failures}次调用失败，已将已有数据写入文件")
+                task = db.query(Task).filter(Task.id == task_id).first()
+                if task:
+                    task.status = TaskStatusEnum.FAILED
+                    db.commit()
+                return
 
-            # Prepare batch: only short-answer items without existing Assessment
-            batch_items = []
-            for batch_idx in range(idx, batch_end):
-                item = raw_items[batch_idx]
-                updated_items[batch_idx] = dict(item)
+            # ── 准备当前记录 ──
+            item = raw_items[idx]
+            updated_items[idx] = dict(item)
 
-                if not is_qa_item(item):
+            if not is_qa_item(item):
+                processed_count += 1
+                _update_progress(db, task_id, processed_count)
+                idx += 1
+                continue
+
+            existing = get_assessment_value(item)
+            updated_items[idx]["Assessment"] = normalize_assessment_text(existing)
+
+            if is_short_answer_item(item) and not existing:
+                record_content = build_record_content(item, reference_fields, "dataset_assessment")
+                if not record_content:
+                    _add_task_log(db, task_id, f"记录 {idx + 1}: 无参考内容，跳过")
                     processed_count += 1
                     _update_progress(db, task_id, processed_count)
+                    idx += 1
                     continue
+                llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
 
-                existing = get_assessment_value(item)
-                updated_items[batch_idx]["Assessment"] = normalize_assessment_text(existing)
+                # ── 获取窗口空位并提交 ──
+                await executor.acquire()
+                fut = loop.run_in_executor(
+                    llm_thread_pool,
+                    partial(call_llm_json_sync, prompt=llm_prompt, model=model, temperature=0.0,
+                            base_url_override=base_url_override, api_key_override=api_key_override,
+                            username=username),
+                )
+                executor.track(fut, (idx, llm_prompt))
+            else:
+                processed_count += 1
+                _update_progress(db, task_id, processed_count)
 
-                if is_short_answer_item(item) and not existing:
-                    record_content = build_record_content(item, reference_fields, "dataset_assessment")
-                    if not record_content:
-                        _add_task_log(db, task_id, f"记录 {batch_idx + 1}: 无参考内容，跳过")
-                        processed_count += 1
-                        _update_progress(db, task_id, processed_count)
-                        continue
-                    llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{record_content}"
-                    batch_items.append((batch_idx, llm_prompt))
-                else:
-                    processed_count += 1
-                    _update_progress(db, task_id, processed_count)
+            idx += 1
 
-            # Submit batch to thread pool
-            if batch_items:
-                fut_to_item = {}
-                for item in batch_items:
-                    fut = loop.run_in_executor(
-                        llm_thread_pool,
-                        partial(
-                            call_llm_json_sync,
-                            prompt=item[1],
-                            model=model,
-                            temperature=0.0,
-                            base_url_override=base_url_override,
-                            api_key_override=api_key_override,
-                            username=username,
-                        ),
-                    )
-                    fut_to_item[fut] = item
+            # ── 收割已完成的结果（非阻塞） ──
+            async for fut, item in executor.iter_done():
+                _handle_result(fut, item)
 
-                batch_all_failed = True
-                async for fut, item in iter_completed_futures(fut_to_item):
-                    batch_idx = item[0]
-                    try:
-                        result = fut.result()
-                    except Exception as e:
-                        _add_task_log(db, task_id, f"记录 {batch_idx + 1}: LLM调用失败 - {str(e)[:200]}")
-                        processed_count += 1
-                        _update_progress(db, task_id, processed_count)
-                        continue
-
-                    batch_all_failed = False
-                    assessment = get_assessment_value(result) if isinstance(result, dict) else ""
-                    updated_items[batch_idx]["Assessment"] = normalize_assessment_text(assessment)
-
-                    status_str = "OK" if assessment else "EMPTY"
-                    if assessment:
-                        success_count += 1
-                    _add_task_log(db, task_id, f"记录 {batch_idx + 1}: 评分标准={status_str}")
-                    processed_count += 1
-                    _update_progress(db, task_id, processed_count)
-
-                # Circuit breaker
-                if batch_all_failed:
-                    consecutive_batch_failures += 1
-                    if consecutive_batch_failures >= 4:
-                        _flush_results(output_file.file_path, updated_items)
-                        _add_task_log(db, task_id, f"连续{consecutive_batch_failures}批全部失败，已将已有数据写入文件")
-                        task = db.query(Task).filter(Task.id == task_id).first()
-                        if task:
-                            task.status = TaskStatusEnum.FAILED
-                            db.commit()
-                        return
-                else:
-                    consecutive_batch_failures = 0
-
-            # Flush after each batch so frontend can preview partial results
+            # Flush after each iteration so frontend can preview partial results
             _flush_results(output_file.file_path, updated_items)
 
-            idx = batch_end
+        # ── 收割剩余 ──
+        async for fut, item in executor.drain():
+            _handle_result(fut, item)
 
         # Final flush
         _flush_results(output_file.file_path, updated_items)
