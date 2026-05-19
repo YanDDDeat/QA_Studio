@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from app.config import settings
 from app.services.system_config import get_value
 
-_pool_size = get_value("LLM_THREAD_POOL_SIZE", getattr(settings, "LLM_THREAD_POOL_SIZE", 20))
+_pool_size = get_value("LLM_THREAD_POOL_SIZE", getattr(settings, "LLM_THREAD_POOL_SIZE", 40))
 llm_thread_pool = ThreadPoolExecutor(
     max_workers=_pool_size,
     thread_name_prefix="llm-worker",
