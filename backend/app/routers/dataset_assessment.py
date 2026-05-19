@@ -127,18 +127,22 @@ async def _run_assessment_task(
             task.source_file_id = file_id
             db.commit()
 
-        # Pre-create output file so frontend sees it immediately
-        output_file = create_output_file(
-            db=db, user_id=user_id, source_file=source_file,
-            stage=StageEnum.DATASET_ASSESSMENT, output_filename=output_name,
-            username=username, name_suffix="assessed",
-        )
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if task:
-            task.file_id = output_file.id
-            db.commit()
-
-        _add_task_log(db, task_id, f"开始评分标准生成: 共 {total} 条记录, {short_answer_count} 条简答题, 输出文件: {output_file.filename}")
+        if start_index == 0:
+            # Pre-create output file so frontend sees it immediately
+            output_file = create_output_file(
+                db=db, user_id=user_id, source_file=source_file,
+                stage=StageEnum.DATASET_ASSESSMENT, output_filename=output_name,
+                username=username, name_suffix="assessed",
+            )
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                task.file_id = output_file.id
+                db.commit()
+            _add_task_log(db, task_id, f"开始评分标准生成: 共 {total} 条记录, {short_answer_count} 条简答题, 输出文件: {output_file.filename}")
+        else:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            output_file = db.query(File).filter(File.id == task.file_id).first()
+            _add_task_log(db, task_id, f"恢复任务，继续写入已有输出文件: {output_file.filename}")
 
         # Initialize updated_items with copies of all items
         updated_items = [dict(item) for item in raw_items]

@@ -112,20 +112,25 @@ async def _run_answer_validate_task(
             task.source_file_id = file_id
             db.commit()
 
-        # 提前创建输出文件，点击开始后前端立即显示输出文件名
-        source_file = db.query(File).filter(File.id == file_id).first()
-        output_file = create_output_file(
-            db=db,
-            user_id=user_id,
-            source_file=source_file,
-            stage=StageEnum.ANSWER_VALIDATE,
-            output_filename=output_filename,
-            username=username,
-        )
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if task:
-            task.file_id = output_file.id
-            db.commit()
+        if start_index == 0:
+            # 提前创建输出文件，点击开始后前端立即显示输出文件名
+            source_file = db.query(File).filter(File.id == file_id).first()
+            output_file = create_output_file(
+                db=db,
+                user_id=user_id,
+                source_file=source_file,
+                stage=StageEnum.ANSWER_VALIDATE,
+                output_filename=output_filename,
+                username=username,
+            )
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                task.file_id = output_file.id
+                db.commit()
+        else:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            output_file = db.query(File).filter(File.id == task.file_id).first()
+            _add_task_log(db, task_id, f"恢复任务，继续写入已有输出文件: {output_file.filename}")
 
         pass_ids: list[int] = []
         fail_records: list[dict] = []

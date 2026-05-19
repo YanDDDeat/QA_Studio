@@ -151,20 +151,25 @@ async def _run_question_generate_task(
         processed_count = start_index
         executor = SlidingWindowExecutor()
 
-        # 提前创建输出文件，点击开始后前端立即显示输出文件名
-        source_file = db.query(File).filter(File.id == source_file_id).first()
-        output_file = create_output_file(
-            db=db,
-            user_id=user_id,
-            source_file=source_file,
-            stage=StageEnum.QUESTION_GENERATE,
-            output_filename=output_filename,
-            username=username,
-        )
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if task:
-            task.file_id = output_file.id
-            db.commit()
+        if start_index == 0:
+            # 提前创建输出文件，点击开始后前端立即显示输出文件名
+            source_file = db.query(File).filter(File.id == source_file_id).first()
+            output_file = create_output_file(
+                db=db,
+                user_id=user_id,
+                source_file=source_file,
+                stage=StageEnum.QUESTION_GENERATE,
+                output_filename=output_filename,
+                username=username,
+            )
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                task.file_id = output_file.id
+                db.commit()
+        else:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            output_file = db.query(File).filter(File.id == task.file_id).first()
+            _add_task_log(db, task_id, f"恢复任务，继续写入已有输出文件: {output_file.filename}")
 
         # ── helper: 处理单条完成结果 ──
         def _handle_result(fut, item):
