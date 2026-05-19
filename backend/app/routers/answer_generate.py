@@ -39,6 +39,7 @@ from app.services.thread_pool import (
 from app.services.field_mapper import apply_llm_fields_to_dataset, build_record_content
 from app.services.file_service import (
     create_output_file, clone_single_dataset, write_datasets_to_file,
+    ensure_datasets_for_file,
 )
 from app.services.validation_service import validate_file_fields
 
@@ -95,15 +96,7 @@ async def _run_answer_generate_task(
     db = SessionLocal()
     register_task()
     try:
-        source_datasets = (
-            db.query(Dataset)
-            .filter(
-                Dataset.file_id == file_id,
-                Dataset.user_id == user_id,
-            )
-            .order_by(Dataset.id.asc())
-            .all()
-        )
+        source_datasets = ensure_datasets_for_file(db, file_id, user_id)
 
         total = len(source_datasets)
 

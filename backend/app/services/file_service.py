@@ -107,6 +107,97 @@ _CLONABLE_FIELDS = [
 ]
 
 
+def ensure_datasets_for_file(db: Session, file_id: int, user_id: int) -> list:
+    """Query Dataset rows for file_id. If none exist (uploaded file), create them from the JSON file on disk.
+
+    Returns list of Dataset objects.
+    """
+    source_datasets = (
+        db.query(Dataset)
+        .filter(Dataset.file_id == file_id, Dataset.user_id == user_id)
+        .order_by(Dataset.id.asc())
+        .all()
+    )
+
+    if source_datasets:
+        return source_datasets
+
+    # No Dataset rows — this is a directly uploaded file. Read JSON and create rows.
+    file_obj = db.query(File).filter(File.id == file_id).first()
+    if not file_obj:
+        return []
+
+    try:
+        with open(file_obj.file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return []
+
+    if not isinstance(data, list):
+        data = [data]
+
+    if not data:
+        return []
+
+    # Known Dataset column names that can be mapped from JSON
+    _IMPORTABLE_FIELDS = {
+        "domain", "category", "task_type", "input", "output", "cot",
+        "step_count", "corpus_cate", "scene", "Assessment", "source",
+        "source_id", "source_type", "originContent", "knowledge",
+        "difficulty", "passed",
+    }
+
+    # Aliases (LLM-friendly names -> canonical column names)
+    _ALIASES = {
+        "question": "input",
+        "answer": "output",
+        "reasoning": "cot",
+        "content": "originContent",
+        "text": "originContent",
+    }
+
+    for record in data:
+        if not isinstance(record, dict):
+            continue
+
+        kwargs = {}
+        extra = {}
+
+        for key, value in record.items():
+            # Resolve alias
+            canonical = _ALIASES.get(key, key)
+
+            if canonical in _IMPORTABLE_FIELDS:
+                if isinstance(value, (list, dict)):
+                    kwargs[canonical] = json.dumps(value, ensure_ascii=False)
+                elif value is not None:
+                    kwargs[canonical] = str(value)
+            else:
+                # Skip internal fields
+                if key not in ("id", "user_id", "file_id", "current_stage", "created_at", "updated_at"):
+                    extra[key] = value
+
+        ds = Dataset(
+            user_id=user_id,
+            file_id=file_id,
+            current_stage=None,  # uploaded, not from any stage
+            **kwargs,
+        )
+        if extra:
+            ds.extra_fields = extra
+        db.add(ds)
+
+    db.commit()
+
+    # Re-query to get IDs
+    return (
+        db.query(Dataset)
+        .filter(Dataset.file_id == file_id, Dataset.user_id == user_id)
+        .order_by(Dataset.id.asc())
+        .all()
+    )
+
+
 def clone_single_dataset(db: Session, source: Dataset, new_file_id: int, new_stage: StageEnum) -> Dataset:
     """Clone one Dataset to a new file. Flushes but does NOT commit."""
     kwargs = {field: getattr(source, field) for field in _CLONABLE_FIELDS}
