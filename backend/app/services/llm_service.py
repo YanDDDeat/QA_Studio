@@ -39,6 +39,15 @@ class LLMCallError(Exception):
         self.status_code = status_code
         self.detail = detail
 
+    def __str__(self):
+        base = super().__str__()
+        parts = [base]
+        if self.status_code is not None:
+            parts.append(f"status={self.status_code}")
+        if self.detail:
+            parts.append(f"detail={self.detail}")
+        return " | ".join(parts)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers (async/sync shared logic)
@@ -147,7 +156,7 @@ def _parse_llm_response(
     content = response_json.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     if not content:
-        logger.warning(
+        logger.error(
             "LLM call returned empty content | %smodel=%s | elapsed=%.1fs | raw_response=%s",
             user_tag + " | " if user_tag else "", model, elapsed,
             json.dumps(response_json, ensure_ascii=False)[:500],
@@ -190,7 +199,7 @@ def _parse_llm_response(
 
     # 检查剥离思考标签后是否为空（原始内容不为空但剥离后空了 → 模型只返回了思考内容）
     if not content.strip() and original_content.strip():
-        logger.warning(
+        logger.error(
             "LLM content became empty after stripping thinking tags | model=%s | original_len=%d | first_chars=%s",
             model, len(original_content), repr(original_content[:200]),
         )

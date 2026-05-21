@@ -38,17 +38,33 @@
         </div>
       </div>
 
+      <div v-if="selectedFileIds.size > 0" class="selected-files-bar">
+        <span class="selected-label">已选 {{ selectedFileIds.size }} 个文件：</span>
+        <el-tag
+          v-for="[id, info] of selectedFileInfo"
+          :key="id"
+          closable
+          size="small"
+          class="selected-tag"
+          @close="removeSelection(id)"
+        >
+          {{ info.username ? `[${info.username}] ` : '' }}{{ info.filename }}
+        </el-tag>
+        <el-button type="primary" link size="small" @click="clearAllSelections">清空选择</el-button>
+      </div>
+
       <el-table
         ref="fileTableRef"
         :data="pagedFiles"
         v-loading="loading"
         stripe
         highlight-current-row
+        row-key="id"
         @current-change="handleFileSelect"
         @selection-change="handleSelectionChange"
         style="width: 100%"
       >
-        <el-table-column type="selection" width="45" />
+        <el-table-column type="selection" width="45" :reserve-selection="true" />
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="filename" label="文件名" min-width="200" show-overflow-tooltip />
         <el-table-column v-if="showAllFiles" prop="username" label="用户名" width="100" />
@@ -280,6 +296,7 @@ const selectedRecord = ref(null)
 const selectedFileIds = ref(new Set())
 const selectedFileInfo = ref(new Map()) // fileId → {filename, username}
 const fileTableRef = ref(null)
+let isReloading = false
 const syncLoading = ref(false)
 
 // Admin toggle
@@ -466,19 +483,22 @@ async function fetchFiles() {
     if (searchKeyword.value) params.search = searchKeyword.value
     if (showAllFiles.value) params.all_users = true
     const res = await getManagedFiles(params)
+    isReloading = true
     files.value = res.items || []
     fileTotal.value = res.total || 0
-    // Restore cross-page selections
     await nextTick()
     pagedFiles.value.forEach(row => {
       if (selectedFileIds.value.has(row.id)) {
         fileTableRef.value?.toggleRowSelection(row, true)
       }
     })
+    await nextTick()
+    isReloading = false
   } catch (err) {
     ElMessage.error('获取文件列表失败')
     files.value = []
     fileTotal.value = 0
+    isReloading = false
   } finally {
     loading.value = false
   }
@@ -586,12 +606,11 @@ function triggerDownload(blob, filename) {
 }
 
 function handleSelectionChange(selection) {
-  // Remove all current-page IDs from tracking
+  if (isReloading) return
   pagedFiles.value.forEach(row => {
     selectedFileIds.value.delete(row.id)
     selectedFileInfo.value.delete(row.id)
   })
-  // Add back only the currently selected ones
   selection.forEach(row => {
     selectedFileIds.value.add(row.id)
     selectedFileInfo.value.set(row.id, {
@@ -599,6 +618,23 @@ function handleSelectionChange(selection) {
       username: row.username || '',
     })
   })
+}
+
+function removeSelection(id) {
+  selectedFileIds.value.delete(id)
+  selectedFileInfo.value.delete(id)
+  const row = pagedFiles.value.find(r => r.id === id)
+  if (row) {
+    isReloading = true
+    fileTableRef.value?.toggleRowSelection(row, false)
+    isReloading = false
+  }
+}
+
+function clearAllSelections() {
+  selectedFileIds.value = new Set()
+  selectedFileInfo.value = new Map()
+  fileTableRef.value?.clearSelection()
 }
 
 async function handleMergeDownload() {
@@ -924,6 +960,28 @@ async function autoSelectFile(targetId) {
 }
 .empty-field {
   color: #c0c4cc;
+}
+.selected-files-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: #ecf5ff;
+  border-radius: 4px;
+  border: 1px solid #d9ecff;
+}
+.selected-files-bar .selected-label {
+  font-size: 13px;
+  color: #409eff;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.selected-files-bar .selected-tag {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .knowledge-json {
   font-size: 13px;
