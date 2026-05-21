@@ -141,13 +141,15 @@ async def _run_answer_generate_task(
             try:
                 result = fut.result()
             except Exception as e:
+                err_detail = getattr(e, 'detail', None)
+                err_msg = f"{e} | detail={err_detail}" if err_detail else str(e)
                 logger.error(
                     "Task %d: LLM call failed for dataset %d: %s",
-                    task_id, dataset.id, str(e),
+                    task_id, dataset.id, err_msg,
                 )
                 _add_task_log(
                     db, task_id,
-                    f"记录 {batch_idx + 1}: LLM调用失败 - {str(e)[:200]}",
+                    f"记录 {batch_idx + 1}: LLM调用失败 - {err_msg[:200]}",
                 )
                 consecutive_failures += 1
                 processed_count += 1
