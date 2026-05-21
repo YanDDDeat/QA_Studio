@@ -32,11 +32,11 @@ _DATASET_COLUMNS = frozenset(
 # -----------------------------------------------------------------
 _STAGE_DEFAULT_FIELDS = {
     "question_generate": [],       # 特殊：读上传 JSON 的 text_content
-    "knowledge_generate": ["input"],
+    "knowledge_generate": ["input", "task_type", "domain"],
     "question_validate": ["input", "knowledge"],
-    "answer_generate": ["input", "originContent"],
+    "answer_generate": ["input", "task_type", "originContent"],
     "answer_validate": ["input", "output", "cot", "knowledge"],
-    "data_evaluate": ["input", "output", "cot", "knowledge"],
+    "data_evaluate": ["input", "output", "cot", "knowledge", "task_type", "domain", "difficulty", "originContent"],
     "dataset_assessment": ["input", "output", "cot", "task_type", "domain", "difficulty", "originContent"],
 }
 

@@ -324,7 +324,7 @@ import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 // ----- Form state -----
 const fileFields = ref([])
 
-const referenceFields = ref(['input'])
+const referenceFields = ref(['input', 'task_type', 'domain'])
 
 
 function toggleRefField(field, checked) {
@@ -345,13 +345,13 @@ const form = ref({
 watch(() => form.value.file_id, async (fileId) => {
   if (!fileId) {
     fileFields.value = []
-    referenceFields.value = ['input']
+    referenceFields.value = ['input', 'task_type', 'domain']
     return
   }
   try {
     const res = await getFileFields(fileId)
     fileFields.value = res.fields || []
-    referenceFields.value = ['input'].filter(f => fileFields.value.includes(f))
+    referenceFields.value = ['input', 'task_type', 'domain'].filter(f => fileFields.value.includes(f))
   } catch {
     fileFields.value = []
   }

@@ -364,7 +364,7 @@ import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 // ----- Form state -----
 const fileFields = ref([])
 
-const referenceFields = ref(['input', 'output', 'cot', 'knowledge'])
+const referenceFields = ref(['input', 'output', 'cot', 'knowledge', 'task_type', 'domain', 'difficulty', 'originContent'])
 
 
 function toggleRefField(field, checked) {
@@ -385,14 +385,14 @@ const form = ref({
 watch(() => form.value.file_id, async (fileId) => {
   if (!fileId) {
     fileFields.value = []
-    referenceFields.value = ['input', 'output', 'cot', 'knowledge']
+    referenceFields.value = ['input', 'output', 'cot', 'knowledge', 'task_type', 'domain', 'difficulty', 'originContent']
     return
   }
   try {
     const res = await getFileFields(fileId)
     fileFields.value = res.fields || []
     // 只保留文件里存在的默认字段
-    referenceFields.value = ['input', 'output', 'cot', 'knowledge'].filter(f => fileFields.value.includes(f))
+    referenceFields.value = ['input', 'output', 'cot', 'knowledge', 'task_type', 'domain', 'difficulty', 'originContent'].filter(f => fileFields.value.includes(f))
   } catch {
     fileFields.value = []
   }

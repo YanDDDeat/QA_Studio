@@ -59,7 +59,7 @@
     <template #footer>
       <span class="selected-count">已选 {{ selectedFields.length }} 个字段</span>
       <el-button @click="$emit('cancel')">取消</el-button>
-      <el-button type="primary" @click="$emit('confirm', selectedFields)">确认导出</el-button>
+      <el-button type="primary" @click="$emit('confirm', sortByDefaultOrder(selectedFields))">确认导出</el-button>
     </template>
   </el-dialog>
 </template>
@@ -84,21 +84,32 @@ const emit = defineEmits(['confirm', 'cancel'])
 // Selected fields list (includes both top-level names and "extra.xxx" for extra sub-fields)
 const selectedFields = ref([])
 
-// Case-insensitive default matching
+// Case-insensitive default matching — output follows defaultFields order
 function matchDefaults() {
-  const lowerDefaults = props.defaultFields.map(f => f.toLowerCase())
+  const topLowerMap = new Map(props.fields.topLevel.map(f => [f.toLowerCase(), f]))
+  const extraLowerMap = new Map(props.fields.extra.map(f => [f.toLowerCase(), f]))
   const matched = []
-  for (const f of props.fields.topLevel) {
-    if (lowerDefaults.includes(f.toLowerCase())) {
-      matched.push(f)
-    }
-  }
-  for (const f of props.fields.extra) {
-    if (lowerDefaults.includes(f.toLowerCase())) {
-      matched.push('extra.' + f)
+  for (const df of props.defaultFields) {
+    const lower = df.toLowerCase()
+    if (topLowerMap.has(lower)) {
+      matched.push(topLowerMap.get(lower))
+    } else if (extraLowerMap.has(lower)) {
+      matched.push('extra.' + extraLowerMap.get(lower))
     }
   }
   return matched
+}
+
+// Sort selectedFields by defaultFields order, unmatched fields go to the end
+function sortByDefaultOrder(fields) {
+  const orderMap = new Map(props.defaultFields.map((f, i) => [f.toLowerCase(), i]))
+  return [...fields].sort((a, b) => {
+    const keyA = a.startsWith('extra.') ? a.slice(6) : a
+    const keyB = b.startsWith('extra.') ? b.slice(6) : b
+    const idxA = orderMap.has(keyA.toLowerCase()) ? orderMap.get(keyA.toLowerCase()) : Infinity
+    const idxB = orderMap.has(keyB.toLowerCase()) ? orderMap.get(keyB.toLowerCase()) : Infinity
+    return idxA - idxB
+  })
 }
 
 // Reset selection when dialog opens with new fields
