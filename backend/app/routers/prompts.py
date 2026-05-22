@@ -23,6 +23,7 @@ class PromptCreate(BaseModel):
     model: Optional[str] = None
     llm_config_id: Optional[int] = None
     reference_fields: Optional[List[str]] = None
+    name: Optional[str] = None
 
 
 class PromptUpdate(BaseModel):
@@ -41,6 +42,7 @@ class PromptResponse(BaseModel):
     model: Optional[str] = None
     llm_config_id: Optional[int] = None
     reference_fields: Optional[List[str]] = None
+    name: Optional[str] = None
     created_at: Optional[datetime] = None
 
 
@@ -119,6 +121,7 @@ async def create_prompt(
         model=data.model,
         llm_config_id=data.llm_config_id,
         reference_fields=data.reference_fields,
+        name=data.name,
     )
     db.add(prompt)
     db.commit()

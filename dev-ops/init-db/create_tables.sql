@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS `prompts` (
     `user_id`    INT          NOT NULL,
     `stage`      ENUM('question_generate','knowledge_generate','question_validate','answer_generate','answer_validate','data_evaluate','cot_filter','dataset_split','dataset_assessment') NOT NULL,
     `version`    INT          NOT NULL DEFAULT 1 COMMENT '版本号，修改时自增',
+    `name`       VARCHAR(128) DEFAULT NULL COMMENT '用户自定义名称',
     `content`    MEDIUMTEXT  NOT NULL COMMENT '提示词内容',
     `model`      VARCHAR(128) DEFAULT NULL COMMENT '选择的模型',
     `reference_fields` JSON DEFAULT NULL COMMENT '附加参考字段列表，如 ["input","output","domain"]',

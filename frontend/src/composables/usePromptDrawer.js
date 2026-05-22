@@ -1,5 +1,5 @@
 import { ref, computed, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { createPromptConfig, getPromptConfigs } from '../api'
 
 /**
@@ -17,6 +17,7 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
   const drawerVersion = ref(null)
   const drawerCreatedAt = ref(null)
   const drawerOriginalContent = ref('')
+  const drawerPromptName = ref('')
   const saveLoading = ref(false)
 
   const drawerContentChanged = computed(
@@ -34,11 +35,13 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
       drawerVersion.value = selectedPrompt.version
       drawerCreatedAt.value = selectedPrompt.created_at
       drawerOriginalContent.value = selectedPrompt.content || ''
+      drawerPromptName.value = selectedPrompt.name || ''
     } else {
       drawerContent.value = ''
       drawerVersion.value = null
       drawerCreatedAt.value = null
       drawerOriginalContent.value = ''
+      drawerPromptName.value = ''
     }
   }
 
@@ -72,6 +75,18 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
   async function saveAsNewVersion() {
     if (!drawerContent.value) return
 
+    let promptName = ''
+    try {
+      const { value } = await ElMessageBox.prompt('请输入版本名称', '保存新版本', {
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+        inputPlaceholder: '例如：增加难度评估、优化COT格式',
+      })
+      promptName = value?.trim() || ''
+    } catch {
+      return
+    }
+
     saveLoading.value = true
     try {
       const payload = {
@@ -79,17 +94,16 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
         content: drawerContent.value,
         model: formRef.value.model,
         llm_config_id: selectedLLMConfigIdRef.value || null,
+        name: promptName || null,
       }
       const res = await createPromptConfig(payload)
 
-      // Refresh prompt options list
       const newPrompts = await getPromptConfigs({ stage })
       promptOptionsRef.value = Array.isArray(newPrompts) ? newPrompts : []
 
-      // Auto-select the newly created version
       formRef.value.prompt_id = res.id
 
-      ElMessage.success(`已保存为新版本 v${res.version}`)
+      ElMessage.success(`已保存为新版本: ${res.name || 'v' + res.version}`)
     } catch (err) {
       const detail = err.response?.data?.detail || '保存失败'
       ElMessage.error(detail)
@@ -104,6 +118,7 @@ export function usePromptDrawer(stage, promptOptionsRef, formRef, selectedLLMCon
     drawerVersion,
     drawerCreatedAt,
     drawerContentChanged,
+    drawerPromptName,
     nextVersion,
     saveLoading,
     saveAsNewVersion,

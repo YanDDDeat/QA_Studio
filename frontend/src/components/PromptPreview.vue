@@ -2,7 +2,7 @@
   <div class="prompt-preview">
     <div v-if="version != null" class="preview-content">
       <div class="preview-header">
-        <el-tag size="small" type="primary">版本 v{{ version }}</el-tag>
+        <el-tag size="small" type="primary">{{ promptName || `v${version}` }}</el-tag>
         <span class="preview-time">{{ timeLabel }}</span>
       </div>
       <div v-if="recommendedJson" class="preview-fields">
@@ -24,7 +24,7 @@
           size="small"
           @click="$emit('save')"
         >
-          保存 (v{{ nextVersion }})
+          保存为新版本
         </el-button>
       </div>
     </div>
@@ -53,6 +53,7 @@ const LIST_STAGES = new Set(['question_generate'])
 
 const props = defineProps({
   version: { type: Number, default: null },
+  promptName: { type: String, default: '' },
   content: { type: String, default: '' },
   timeLabel: { type: String, default: '' },
   contentChanged: { type: Boolean, default: false },

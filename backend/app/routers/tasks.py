@@ -130,12 +130,12 @@ async def list_my_running_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """查看当前用户正在运行和已暂停的任务。"""
+    """查看当前用户正在运行的任务。"""
     tasks = (
         db.query(Task)
         .filter(
             Task.user_id == current_user.id,
-            Task.status.in_([TaskStatusEnum.RUNNING, TaskStatusEnum.PAUSED]),
+            Task.status == TaskStatusEnum.RUNNING,
         )
         .order_by(Task.id.desc())
         .all()

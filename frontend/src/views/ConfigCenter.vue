@@ -269,7 +269,7 @@
                     <el-card shadow="hover" class="version-card">
                       <div class="version-header">
                         <el-tag :type="ver.is_default ? 'warning' : (ver.version === latestVersion ? 'primary' : 'info')" size="small">
-                          v{{ ver.version }}
+                          {{ ver.name || `v${ver.version}` }}
                         </el-tag>
                         <el-tag v-if="ver.is_default" type="warning" size="small">默认</el-tag>
                         <span v-if="ver.model" class="version-model">{{ ver.model }}</span>

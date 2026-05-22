@@ -23,6 +23,7 @@ class PromptConfigCreate(BaseModel):
     content: str
     model: Optional[str] = None
     llm_config_id: Optional[int] = None
+    name: Optional[str] = None
 
 
 class PromptConfigResponse(BaseModel):
@@ -36,6 +37,7 @@ class PromptConfigResponse(BaseModel):
     model: Optional[str] = None
     llm_config_id: Optional[int] = None
     is_default: bool = False
+    name: Optional[str] = None
     created_at: Optional[datetime] = None
 
 
@@ -139,6 +141,7 @@ async def create_prompt_config(
         content=data.content,
         model=data.model,
         llm_config_id=data.llm_config_id,
+        name=data.name,
     )
     db.add(prompt)
     db.commit()

@@ -140,6 +140,7 @@ class Prompt(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # NULL=全局共享
     stage = Column(_stage_enum_type(), nullable=False)
     version = Column(Integer, default=1, nullable=False)
+    name = Column(String(128), nullable=True)
     content = Column(Text, nullable=False)
     model = Column(String(128), nullable=True)
     llm_config_id = Column(Integer, ForeignKey("llm_configs.id"), nullable=True, index=True)

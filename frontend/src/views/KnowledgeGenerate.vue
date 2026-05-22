@@ -26,8 +26,8 @@
 
             <el-form-item label="选择Prompt">
               <el-select v-model="form.prompt_id" placeholder="请选择知识体系生成阶段的Prompt" style="width: 100%" filterable>
-                <el-option v-for="p in promptOptions" :key="p.id" :label="`v${p.version}`" :value="p.id">
-                  <span>v{{ p.version }}{{ p.is_default ? '(默认)' : '' }}</span>
+                <el-option v-for="p in promptOptions" :key="p.id" :label="p.name || `v${p.version}`" :value="p.id">
+                  <span>{{ p.name || `v${p.version}` }}{{ p.is_default ? '(默认)' : '' }}</span>
                   <span style="float: right; color: #909399; font-size: 13px">
                     {{ p.content.substring(0, 50) }}{{ p.content.length > 50 ? '...' : '' }}
                   </span>
@@ -92,7 +92,7 @@
           </el-form>
         </div>
         <div class="config-preview">
-          <PromptPreview stage="knowledge_generate" :version="drawerVersion" :content="drawerContent" :time-label="formatTime(drawerCreatedAt)" :content-changed="drawerContentChanged" :next-version="nextVersion" :save-loading="saveLoading" @update:content="drawerContent = $event"
+          <PromptPreview stage="knowledge_generate" :version="drawerVersion" :prompt-name="drawerPromptName" :content="drawerContent" :time-label="formatTime(drawerCreatedAt)" :content-changed="drawerContentChanged" :next-version="nextVersion" :save-loading="saveLoading" @update:content="drawerContent = $event"
             :reference-fields-changed="drawerReferenceFieldsChanged" @save="saveAsNewVersion" />
         </div>
       </div>
@@ -385,6 +385,7 @@ const {
   drawerVersion,
   drawerCreatedAt,
   drawerContentChanged,
+  drawerPromptName,
   nextVersion,
   saveLoading,
   saveAsNewVersion,

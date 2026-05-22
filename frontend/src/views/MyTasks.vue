@@ -11,7 +11,7 @@
         :data="runningTasks"
         style="width: 100%"
         v-loading="runningLoading"
-        empty-text="暂无运行中或已暂停的任务"
+        empty-text="暂无运行中的任务"
       >
         <el-table-column label="阶段" width="140">
           <template #default="{ row }">
@@ -44,7 +44,7 @@
             {{ row.created_at ? new Date(row.created_at).toLocaleString() : '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'running'"
@@ -53,14 +53,6 @@
               @click="handleStop(row.task_id)"
             >
               暂停
-            </el-button>
-            <el-button
-              v-if="row.status === 'paused'"
-              type="primary"
-              size="small"
-              @click="handleResume(row.task_id)"
-            >
-              恢复
             </el-button>
           </template>
         </el-table-column>
@@ -146,6 +138,26 @@
             {{ row.updated_at ? new Date(row.updated_at).toLocaleString() : '-' }}
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.status === 'paused'"
+              type="primary"
+              size="small"
+              @click="handleResume(row.id)"
+            >
+              恢复
+            </el-button>
+            <el-button
+              v-if="row.status === 'failed' && stageSlugMap[row.stage]"
+              type="warning"
+              size="small"
+              @click="handleRetry(row)"
+            >
+              重试
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
       <div style="margin-top: 16px; display: flex; justify-content: flex-end;">
         <el-pagination
@@ -165,7 +177,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getMyRunningTasks, getTasks, stopTask, resumeTask } from '../api'
+import { getMyRunningTasks, getTasks, stopTask, resumeTask, retryStage } from '../api'
 
 // ---------- 常量映射 ----------
 const stageLabels = {
@@ -194,6 +206,15 @@ const statusTagType = {
   completed: 'success',
   failed: 'danger',
   pending: 'info',
+}
+
+const stageSlugMap = {
+  question_generate: 'question-generate',
+  knowledge_generate: 'knowledge-generate',
+  question_validate: 'question-validate',
+  answer_generate: 'answer-generate',
+  answer_validate: 'answer-validate',
+  data_evaluate: 'data-evaluate',
 }
 
 // ---------- 运行中任务 ----------
@@ -228,8 +249,22 @@ async function handleResume(taskId) {
     await resumeTask(taskId)
     ElMessage.success('任务已恢复')
     fetchRunning()
+    fetchHistory()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '恢复失败')
+  }
+}
+
+async function handleRetry(row) {
+  const slug = stageSlugMap[row.stage]
+  if (!slug) return
+  try {
+    await retryStage(slug, row.id)
+    ElMessage.success('重试任务已启动')
+    fetchRunning()
+    fetchHistory()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '重试失败')
   }
 }
 

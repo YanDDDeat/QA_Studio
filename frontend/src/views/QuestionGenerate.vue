@@ -78,10 +78,10 @@
                 <el-option
                   v-for="p in promptOptions"
                   :key="p.id"
-                  :label="`v${p.version}`"
+                  :label="p.name || `v${p.version}`"
                   :value="p.id"
                 >
-                  <span>v{{ p.version }}{{ p.is_default ? '(默认)' : '' }}</span>
+                  <span>{{ p.name || `v${p.version}` }}{{ p.is_default ? '(默认)' : '' }}</span>
                   <span style="float: right; color: #909399; font-size: 13px">
                     {{ p.content.substring(0, 50) }}{{ p.content.length > 50 ? '...' : '' }}
                   </span>
@@ -141,6 +141,7 @@
           <PromptPreview
             stage="question_generate"
             :version="drawerVersion"
+            :prompt-name="drawerPromptName"
             :content="drawerContent"
             :time-label="formatTime(drawerCreatedAt)"
             :content-changed="drawerContentChanged"
@@ -457,6 +458,7 @@ const {
   drawerContentChanged,
   drawerReferenceFields,
   drawerReferenceFieldsChanged,
+  drawerPromptName,
   nextVersion,
   saveLoading,
   saveAsNewVersion,
