@@ -112,12 +112,6 @@ def validate_records(records: List[Dict[str, Any]], test_count: int) -> List[str
     if test_count > len(records):
         raise ValueError(f"测试集数量({test_count})超过总记录数({len(records)})")
 
-    max_test_count = len(records) - len(task_types)
-    if test_count > max_test_count:
-        raise ValueError(
-            f"测试集数量过大，最多可选 {max_test_count} 条 (需为每种题型保留至少1条训练数据)"
-        )
-
     return task_types
 
 
@@ -239,8 +233,8 @@ def split_items(
     train_records = [record for record in qa_records if record["index"] not in test_indices]
 
     test_items = [{**record["item"], "corpus_cate": 2} for record in test_records]
-    train_items = [{**record["item"], "corpus_cate": 0} for record in train_records]
-    train_items.extend([{**item, "corpus_cate": 0} for item in other_items if isinstance(item, dict)])
+    train_items = [record["item"] for record in train_records]
+    train_items.extend([item for item in other_items if isinstance(item, dict)])
     train_items.extend([item for item in other_items if not isinstance(item, dict)])
 
     return test_items, train_items, len(other_items)

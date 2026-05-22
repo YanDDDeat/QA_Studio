@@ -18,7 +18,7 @@ import json
 import logging
 import traceback
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -165,6 +165,7 @@ async def _run_answer_generate_task(
                 cloned_ds = clone_single_dataset(db, dataset, output_file.id, StageEnum.ANSWER_GENERATE)
                 cloned_ds.output = output_text
                 cloned_ds.cot = cot_text
+                cloned_ds.corpus_cate = 1 if cot_text else 0
                 extra = apply_llm_fields_to_dataset(cloned_ds, llm_result)
                 cloned_ds.extra_fields = extra if extra else None
                 db.commit()
@@ -506,6 +507,8 @@ async def list_source_files(
 @router.post("/retry/{task_id}")
 async def retry_answer_generate(
     task_id: int,
+    prompt_id: Optional[int] = Body(None),
+    model_override: Optional[str] = Body(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -531,6 +534,13 @@ async def retry_answer_generate(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="只有失败或已完成的任务可以重试",
         )
+
+    if prompt_id is not None:
+        task.prompt_id = prompt_id
+    if model_override is not None:
+        task.model = model_override
+    if prompt_id is not None or model_override is not None:
+        db.commit()
 
     # Get the SOURCE file for this task
     source_fid = task.source_file_id or task.file_id
