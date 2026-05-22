@@ -535,10 +535,11 @@ async def retry_knowledge_generate(
             detail="只有失败或已完成的任务可以重试",
         )
 
-    # Get the file for this task
+    # Get the SOURCE file for this task
+    source_fid = task.source_file_id or task.file_id
     file_obj = (
         db.query(File)
-        .filter(File.id == task.file_id, File.user_id == current_user.id)
+        .filter(File.id == source_fid, File.user_id == current_user.id)
         .first()
     )
     if file_obj is None:
@@ -563,7 +564,7 @@ async def retry_knowledge_generate(
     remaining_count = (
         db.query(Dataset)
         .filter(
-            Dataset.file_id == task.file_id,
+            Dataset.file_id == source_fid,
             Dataset.user_id == current_user.id,
             Dataset.current_stage == StageEnum.QUESTION_GENERATE,
         )
@@ -590,7 +591,7 @@ async def retry_knowledge_generate(
     asyncio.create_task(
         _run_knowledge_generate_task(
             task_id=task.id,
-            file_id=task.file_id,
+            file_id=source_fid,
             prompt_content=prompt_obj.content,
             model=task.model,
             user_id=current_user.id,

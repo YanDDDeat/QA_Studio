@@ -634,10 +634,11 @@ async def retry_question_generate(
             detail="Only failed or completed tasks can be retried",
         )
 
-    # Get the file and prompt for this task
+    # Get the SOURCE file for this task
+    source_fid = task.source_file_id or task.file_id
     file_obj = (
         db.query(File)
-        .filter(File.id == task.file_id, File.user_id == current_user.id)
+        .filter(File.id == source_fid, File.user_id == current_user.id)
         .first()
     )
     if file_obj is None:
