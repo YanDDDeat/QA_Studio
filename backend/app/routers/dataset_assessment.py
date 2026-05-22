@@ -259,7 +259,7 @@ async def _run_assessment_task(
             db.commit()
 
     except Exception as e:
-        logger.error("Assessment task %d failed: %s\n%s", task_id, str(e), traceback.format_exc())
+        logger.error("Assessment task %d failed | user=%s: %s\n%s", task_id, username, str(e), traceback.format_exc())
         try:
             db.rollback()
             task = db.query(Task).filter(Task.id == task_id).first()

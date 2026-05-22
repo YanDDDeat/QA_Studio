@@ -105,7 +105,7 @@ async def _run_dataset_split_task(
             db.commit()
 
     except Exception as e:
-        logger.error("Dataset split task %d failed: %s\n%s", task_id, str(e), traceback.format_exc())
+        logger.error("Dataset split task %d failed | user=%s: %s\n%s", task_id, username, str(e), traceback.format_exc())
         try:
             task = db.query(Task).filter(Task.id == task_id).first()
             if task:

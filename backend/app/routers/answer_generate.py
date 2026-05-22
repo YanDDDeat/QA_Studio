@@ -144,8 +144,8 @@ async def _run_answer_generate_task(
                 err_detail = getattr(e, 'detail', None)
                 err_msg = f"{e} | detail={err_detail}" if err_detail else str(e)
                 logger.error(
-                    "Task %d: LLM call failed for dataset %d: %s",
-                    task_id, dataset.id, err_msg,
+                    "Task %d: LLM call failed for dataset %d | user=%s: %s",
+                    task_id, dataset.id, username, err_msg,
                 )
                 _add_task_log(
                     db, task_id,
@@ -272,8 +272,8 @@ async def _run_answer_generate_task(
 
     except Exception as e:
         logger.error(
-            "Task %d unexpected error: %s\n%s",
-            task_id, str(e), traceback.format_exc(),
+            "Task %d unexpected error | user=%s: %s\n%s",
+            task_id, username, str(e), traceback.format_exc(),
         )
         try:
             db.rollback()

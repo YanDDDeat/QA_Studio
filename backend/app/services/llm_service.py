@@ -200,8 +200,8 @@ def _parse_llm_response(
     # 检查剥离思考标签后是否为空（原始内容不为空但剥离后空了 → 模型只返回了思考内容）
     if not content.strip() and original_content.strip():
         logger.error(
-            "LLM content became empty after stripping thinking tags | model=%s | original_len=%d | first_chars=%s",
-            model, len(original_content), repr(original_content[:200]),
+            "LLM content became empty after stripping thinking tags | %smodel=%s | original_len=%d | first_chars=%s",
+            user_tag + " | " if user_tag else "", model, len(original_content), repr(original_content[:200]),
         )
         raise LLMCallError(
             "LLM response contained only thinking tags, no actual content",
@@ -420,6 +420,11 @@ def call_llm_sync(
 # ---------------------------------------------------------------------------
 
 
+def _fix_latex_backslashes(text: str) -> str:
+    """Fix unescaped backslashes common in LaTeX from LLMs (e.g. \\alpha → \\\\alpha)."""
+    return re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+
+
 def parse_llm_json(text: str) -> dict:
     """Parse a JSON object from LLM response text.
 
@@ -462,7 +467,10 @@ def parse_llm_json(text: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        pass
+        try:
+            return json.loads(_fix_latex_backslashes(text))
+        except json.JSONDecodeError:
+            pass
 
     # Strategy 2: Extract from markdown code block (```json ... ``` or ``` ... ```)
     code_block_pattern = re.compile(
@@ -470,10 +478,14 @@ def parse_llm_json(text: str) -> dict:
     )
     match = code_block_pattern.search(text)
     if match:
+        content = match.group(1).strip()
         try:
-            return json.loads(match.group(1).strip())
+            return json.loads(content)
         except json.JSONDecodeError:
-            pass
+            try:
+                return json.loads(_fix_latex_backslashes(content))
+            except json.JSONDecodeError:
+                pass
 
     # Strategy 3: Find the outermost curly-brace block
     brace_pattern = re.compile(r"\{.*\}", re.DOTALL)
