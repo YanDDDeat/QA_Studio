@@ -20,7 +20,7 @@ import logging
 import os
 import traceback
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -609,6 +609,8 @@ async def get_question_generate_status(
 @router.post("/retry/{task_id}")
 async def retry_question_generate(
     task_id: int,
+    prompt_id: Optional[int] = Body(None),
+    model_override: Optional[str] = Body(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -633,6 +635,13 @@ async def retry_question_generate(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only failed or completed tasks can be retried",
         )
+
+    if prompt_id is not None:
+        task.prompt_id = prompt_id
+    if model_override is not None:
+        task.model = model_override
+    if prompt_id is not None or model_override is not None:
+        db.commit()
 
     # Get the SOURCE file for this task
     source_fid = task.source_file_id or task.file_id

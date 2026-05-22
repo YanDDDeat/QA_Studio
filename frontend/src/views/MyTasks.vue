@@ -144,7 +144,7 @@
               v-if="row.status === 'paused'"
               type="primary"
               size="small"
-              @click="handleResume(row.id)"
+              @click="openConfigDialog(row, 'resume')"
             >
               恢复
             </el-button>
@@ -152,7 +152,7 @@
               v-if="row.status === 'failed' && stageSlugMap[row.stage]"
               type="warning"
               size="small"
-              @click="handleRetry(row)"
+              @click="openConfigDialog(row, 'retry')"
             >
               重试
             </el-button>
@@ -171,13 +171,54 @@
         />
       </div>
     </el-card>
+
+    <!-- 配置弹窗 -->
+    <el-dialog
+      v-model="configDialogVisible"
+      :title="configAction === 'retry' ? '重试任务配置' : '恢复任务配置'"
+      width="480px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="80px">
+        <el-form-item label="阶段">
+          <el-tag type="info">{{ stageLabels[configTask?.stage] || configTask?.stage }}</el-tag>
+        </el-form-item>
+        <el-form-item label="提示词">
+          <el-select
+            v-model="configPromptId"
+            placeholder="选择提示词"
+            style="width: 100%"
+            filterable
+            v-loading="promptsLoading"
+          >
+            <el-option
+              v-for="p in configPromptOptions"
+              :key="p.id"
+              :label="p.name || `v${p.version}`"
+              :value="p.id"
+            >
+              <span>{{ p.name || `v${p.version}` }}{{ p.is_default ? '(默认)' : '' }}</span>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="模型">
+          <el-input v-model="configModel" placeholder="模型名称" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="configDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="configSubmitting" @click="submitConfig">
+          确认{{ configAction === 'retry' ? '重试' : '恢复' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getMyRunningTasks, getTasks, stopTask, resumeTask, retryStage } from '../api'
+import { getMyRunningTasks, getTasks, stopTask, resumeTask, retryStage, getPromptConfigs } from '../api'
 
 // ---------- 常量映射 ----------
 const stageLabels = {
@@ -244,27 +285,68 @@ async function handleStop(taskId) {
   }
 }
 
-async function handleResume(taskId) {
+// ---------- 配置弹窗 ----------
+const configDialogVisible = ref(false)
+const configTask = ref(null)
+const configAction = ref('')
+const configPromptId = ref(null)
+const configModel = ref('')
+const configPromptOptions = ref([])
+const promptsLoading = ref(false)
+const configSubmitting = ref(false)
+
+async function openConfigDialog(row, action) {
+  configTask.value = row
+  configAction.value = action
+  configPromptId.value = row.prompt_id || null
+  configModel.value = row.model || ''
+  configPromptOptions.value = []
+  configDialogVisible.value = true
+
+  promptsLoading.value = true
   try {
-    await resumeTask(taskId)
-    ElMessage.success('任务已恢复')
-    fetchRunning()
-    fetchHistory()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '恢复失败')
+    const res = await getPromptConfigs({ stage: row.stage })
+    configPromptOptions.value = Array.isArray(res) ? res : []
+  } catch {
+    configPromptOptions.value = []
+  } finally {
+    promptsLoading.value = false
   }
 }
 
-async function handleRetry(row) {
-  const slug = stageSlugMap[row.stage]
-  if (!slug) return
+async function submitConfig() {
+  const row = configTask.value
+  if (!row) return
+
+  const overrides = {}
+  if (configPromptId.value && configPromptId.value !== row.prompt_id) {
+    overrides.prompt_id = configPromptId.value
+  }
+  if (configModel.value && configModel.value !== row.model) {
+    overrides.model_override = configModel.value
+  }
+
+  configSubmitting.value = true
   try {
-    await retryStage(slug, row.id)
-    ElMessage.success('重试任务已启动')
+    if (configAction.value === 'retry') {
+      const slug = stageSlugMap[row.stage]
+      if (!slug) return
+      await retryStage(slug, row.id, Object.keys(overrides).length > 0 ? overrides : undefined)
+      ElMessage.success('重试任务已启动')
+    } else {
+      const resumeData = {}
+      if (overrides.prompt_id) resumeData.prompt_id = overrides.prompt_id
+      if (overrides.model_override) resumeData.model = overrides.model_override
+      await resumeTask(row.id, Object.keys(resumeData).length > 0 ? resumeData : undefined)
+      ElMessage.success('任务已恢复')
+    }
+    configDialogVisible.value = false
     fetchRunning()
     fetchHistory()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '重试失败')
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  } finally {
+    configSubmitting.value = false
   }
 }
 

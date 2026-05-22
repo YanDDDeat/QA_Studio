@@ -743,19 +743,32 @@ async function handleSavePrompt() {
     return
   }
 
+  let promptName = ''
+  try {
+    const { value } = await ElMessageBox.prompt('请输入版本名称', '保存新版本', {
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputPlaceholder: '例如：增加难度评估、优化COT格式',
+    })
+    promptName = value?.trim() || ''
+  } catch {
+    return
+  }
+
   saveLoading.value = true
   try {
     const payload = {
       stage: activeStage.value,
       content: editableContent.value.trim(),
       model: promptModel.value || modelOptions.value[0] || null,
+      name: promptName || null,
     }
     // Add llm_config_id if selected
     if (promptLLMConfigId.value) {
       payload.llm_config_id = promptLLMConfigId.value
     }
     await createPromptConfig(payload)
-    ElMessage.success('Prompt已保存为新版本')
+    ElMessage.success(`已保存为新版本: ${promptName || 'v' + nextVersion.value}`)
     await fetchPromptsForStage(activeStage.value)
   } catch (err) {
     const detail = err.response?.data?.detail || '保存Prompt失败'

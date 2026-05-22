@@ -3,7 +3,7 @@
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from fastapi import APIRouter, Body, Depends, HTTPException, status as http_status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -345,6 +345,8 @@ async def stop_task(
 @router.post("/{task_id}/resume")
 async def resume_task(
     task_id: int,
+    prompt_id: Optional[int] = Body(None),
+    model: Optional[str] = Body(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -366,6 +368,13 @@ async def resume_task(
             detail="只能恢复已暂停的任务",
         )
 
+    if prompt_id is not None:
+        task.prompt_id = prompt_id
+    if model is not None:
+        task.model = model
+    if prompt_id is not None or model is not None:
+        db.commit()
+
     _ensure_resumers_loaded()
     handler = STAGE_TO_RESUMER.get(task.stage)
     if handler is None:
@@ -374,7 +383,6 @@ async def resume_task(
             detail=f"阶段 {task.stage.value} 不支持暂停/恢复",
         )
 
-    # 委托给对应阶段的 resume 函数（负责读取参数 + 创建后台协程）
     handler(task, db)
 
     return {

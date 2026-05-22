@@ -75,8 +75,8 @@ export function stopTask(taskId) {
   return api.post(`/tasks/${taskId}/stop`)
 }
 
-export function resumeTask(taskId) {
-  return api.post(`/tasks/${taskId}/resume`)
+export function resumeTask(taskId, data) {
+  return api.post(`/tasks/${taskId}/resume`, data)
 }
 
 // Stage APIs
@@ -108,8 +108,8 @@ export function getStageStatus(stage, taskId) {
   return api.get(`/${stage}/status/${taskId}`)
 }
 
-export function retryStage(stage, taskId) {
-  return api.post(`/${stage}/retry/${taskId}`)
+export function retryStage(stage, taskId, data) {
+  return api.post(`/${stage}/retry/${taskId}`, data)
 }
 
 // Source Files API (per-stage)
