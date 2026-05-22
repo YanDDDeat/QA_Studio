@@ -183,6 +183,32 @@
         <el-form-item label="阶段">
           <el-tag type="info">{{ stageLabels[configTask?.stage] || configTask?.stage }}</el-tag>
         </el-form-item>
+        <el-form-item label="LLM配置">
+          <el-select
+            v-model="configLLMConfigId"
+            placeholder="选择LLM配置"
+            style="width: 100%"
+            filterable
+            @change="handleLLMConfigChange"
+          >
+            <el-option
+              v-for="cfg in llmConfigs"
+              :key="cfg.id"
+              :label="cfg.name + (cfg.user_id ? ' (我的)' : ' (全局)')"
+              :value="cfg.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="模型">
+          <el-select
+            v-model="configModel"
+            placeholder="请选择模型"
+            style="width: 100%"
+            :disabled="!configLLMConfigId"
+          >
+            <el-option v-for="m in currentModelOptions" :key="m" :label="m" :value="m" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="提示词">
           <el-select
             v-model="configPromptId"
@@ -201,9 +227,6 @@
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="模型">
-          <el-input v-model="configModel" placeholder="模型名称" />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="configDialogVisible = false">取消</el-button>
@@ -216,9 +239,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getMyRunningTasks, getTasks, stopTask, resumeTask, retryStage, getPromptConfigs } from '../api'
+import { getMyRunningTasks, getTasks, stopTask, resumeTask, retryStage, getPromptConfigs, getLLMConfigs } from '../api'
 
 // ---------- 常量映射 ----------
 const stageLabels = {
@@ -294,23 +317,53 @@ const configModel = ref('')
 const configPromptOptions = ref([])
 const promptsLoading = ref(false)
 const configSubmitting = ref(false)
+const llmConfigs = ref([])
+const configLLMConfigId = ref(null)
+const currentModelOptions = computed(() => {
+  const cfg = llmConfigs.value.find(c => c.id === configLLMConfigId.value)
+  return cfg ? (cfg.models || []) : []
+})
 
 async function openConfigDialog(row, action) {
   configTask.value = row
   configAction.value = action
   configPromptId.value = row.prompt_id || null
   configModel.value = row.model || ''
+  configLLMConfigId.value = null
   configPromptOptions.value = []
   configDialogVisible.value = true
 
+  // 加载 LLM 配置和 prompts
   promptsLoading.value = true
   try {
-    const res = await getPromptConfigs({ stage: row.stage })
-    configPromptOptions.value = Array.isArray(res) ? res : []
+    const [promptRes, llmRes] = await Promise.all([
+      getPromptConfigs({ stage: row.stage }),
+      getLLMConfigs(),
+    ])
+    configPromptOptions.value = Array.isArray(promptRes) ? promptRes : []
+    llmConfigs.value = Array.isArray(llmRes) ? llmRes : []
+
+    // 根据当前 model 反查匹配的厂商
+    if (row.model) {
+      const matched = llmConfigs.value.find(c => (c.models || []).includes(row.model))
+      if (matched) {
+        configLLMConfigId.value = matched.id
+      }
+    }
   } catch {
     configPromptOptions.value = []
+    llmConfigs.value = []
   } finally {
     promptsLoading.value = false
+  }
+}
+
+function handleLLMConfigChange(cfgId) {
+  const cfg = llmConfigs.value.find(c => c.id === cfgId)
+  if (cfg) {
+    configModel.value = cfg.default_model || ''
+  } else {
+    configModel.value = ''
   }
 }
 
@@ -318,12 +371,15 @@ async function submitConfig() {
   const row = configTask.value
   if (!row) return
 
-  const overrides = {}
+  const data = {}
   if (configPromptId.value && configPromptId.value !== row.prompt_id) {
-    overrides.prompt_id = configPromptId.value
+    data.prompt_id = configPromptId.value
   }
   if (configModel.value && configModel.value !== row.model) {
-    overrides.model_override = configModel.value
+    data.model = configModel.value
+  }
+  if (configLLMConfigId.value) {
+    data.llm_config_id = configLLMConfigId.value
   }
 
   configSubmitting.value = true
@@ -331,13 +387,10 @@ async function submitConfig() {
     if (configAction.value === 'retry') {
       const slug = stageSlugMap[row.stage]
       if (!slug) return
-      await retryStage(slug, row.id, Object.keys(overrides).length > 0 ? overrides : undefined)
+      await retryStage(slug, row.id, Object.keys(data).length > 0 ? data : undefined)
       ElMessage.success('重试任务已启动')
     } else {
-      const resumeData = {}
-      if (overrides.prompt_id) resumeData.prompt_id = overrides.prompt_id
-      if (overrides.model_override) resumeData.model = overrides.model_override
-      await resumeTask(row.id, Object.keys(resumeData).length > 0 ? resumeData : undefined)
+      await resumeTask(row.id, Object.keys(data).length > 0 ? data : undefined)
       ElMessage.success('任务已恢复')
     }
     configDialogVisible.value = false

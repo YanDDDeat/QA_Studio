@@ -523,7 +523,8 @@ async def list_source_files(
 async def retry_answer_validate(
     task_id: int,
     prompt_id: Optional[int] = Body(None),
-    model_override: Optional[str] = Body(None),
+    model: Optional[str] = Body(None),
+    llm_config_id: Optional[int] = Body(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -551,9 +552,9 @@ async def retry_answer_validate(
 
     if prompt_id is not None:
         task.prompt_id = prompt_id
-    if model_override is not None:
-        task.model = model_override
-    if prompt_id is not None or model_override is not None:
+    if model is not None:
+        task.model = model
+    if prompt_id is not None or model is not None:
         db.commit()
 
     # Get the SOURCE file for this task
@@ -598,8 +599,9 @@ async def retry_answer_validate(
     # Resolve LLM config overrides
     base_url_override = None
     api_key_override = None
-    if prompt_obj.llm_config_id:
-        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == prompt_obj.llm_config_id).first()
+    config_id = llm_config_id or prompt_obj.llm_config_id
+    if config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == config_id).first()
         if llm_config_obj:
             base_url_override = llm_config_obj.base_url
             api_key_override = llm_config_obj.api_key
@@ -637,7 +639,7 @@ async def retry_answer_validate(
 # ---------------------------------------------------------------------------
 
 
-def resume_answer_validate_task(task: Task, db: Session):
+def resume_answer_validate_task(task: Task, db: Session, llm_config_id=None):
     """Resume a paused answer_validate task from progress_current."""
     source_fid = task.source_file_id or task.file_id
     file_obj = (
@@ -662,8 +664,9 @@ def resume_answer_validate_task(task: Task, db: Session):
 
     base_url_override = None
     api_key_override = None
-    if prompt_obj.llm_config_id:
-        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == prompt_obj.llm_config_id).first()
+    config_id = llm_config_id or prompt_obj.llm_config_id
+    if config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == config_id).first()
         if llm_config_obj:
             base_url_override = llm_config_obj.base_url
             api_key_override = llm_config_obj.api_key

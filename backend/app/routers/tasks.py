@@ -347,6 +347,7 @@ async def resume_task(
     task_id: int,
     prompt_id: Optional[int] = Body(None),
     model: Optional[str] = Body(None),
+    llm_config_id: Optional[int] = Body(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -383,7 +384,7 @@ async def resume_task(
             detail=f"阶段 {task.stage.value} 不支持暂停/恢复",
         )
 
-    handler(task, db)
+    handler(task, db, llm_config_id=llm_config_id)
 
     return {
         "task_id": task.id,

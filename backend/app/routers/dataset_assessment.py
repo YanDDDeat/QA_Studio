@@ -438,7 +438,7 @@ async def list_source_files(
 # ---------------------------------------------------------------------------
 
 
-def resume_dataset_assessment_task(task: Task, db: Session):
+def resume_dataset_assessment_task(task: Task, db: Session, llm_config_id=None):
     """Resume a paused dataset_assessment task from progress_current."""
     source_fid = task.source_file_id or task.file_id
     file_obj = (
@@ -462,8 +462,9 @@ def resume_dataset_assessment_task(task: Task, db: Session):
 
     base_url_override = None
     api_key_override = None
-    if prompt_obj.llm_config_id:
-        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == prompt_obj.llm_config_id).first()
+    config_id = llm_config_id or prompt_obj.llm_config_id
+    if config_id:
+        llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == config_id).first()
         if llm_config_obj:
             base_url_override = llm_config_obj.base_url
             api_key_override = llm_config_obj.api_key
