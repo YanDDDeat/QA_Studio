@@ -90,6 +90,12 @@ const routes = [
         component: () => import('../views/MyTasks.vue'),
         meta: { title: '我的任务' },
       },
+      {
+        path: 'json-merge-tool',
+        name: 'JsonMergeTool',
+        component: () => import('../views/JsonMergeTool.vue'),
+        meta: { title: 'JSON 文件合并工具' },
+      },
     ],
   },
 ]
