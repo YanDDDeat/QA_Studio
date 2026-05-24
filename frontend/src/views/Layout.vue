@@ -69,6 +69,17 @@
           </el-menu-item>
         </el-sub-menu>
 
+        <el-sub-menu index="group-tools">
+          <template #title>
+            <el-icon><Tools /></el-icon>
+            <span>工具</span>
+          </template>
+          <el-menu-item index="/json-merge-tool">
+            <el-icon><Connection /></el-icon>
+            <span>JSON 文件合并</span>
+          </el-menu-item>
+        </el-sub-menu>
+
         <el-sub-menu index="group-admin">
           <template #title>
             <el-icon><Setting /></el-icon>
@@ -172,7 +183,7 @@ import { getMe, changePassword } from '../api'
 import {
   EditPen, Share, Checked, Document, Select,
   DataAnalysis, Folder, Setting, ArrowDown, UserFilled,
-  Operation, Filter, Grid, List,
+  Operation, Filter, Grid, List, Tools, Connection,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()

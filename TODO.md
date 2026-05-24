@@ -63,6 +63,12 @@
   - [x] 8 个阶段页面（QG/KG/QV/AG/AV/DE/CF/DP）的恢复/重试按钮接入弹窗
   - [x] MyTasks.vue 改用公共组件，避免双份维护
 
+## JSON 文件合并工具（独立页面）
+- [ ] 分支 `feature/json-merge-tool`：详见 `docs/requirements/17_需求_JSON文件合并工具.md`
+  - [ ] 新建 `JsonMergeTool.vue`：上传多个 JSON 数组文件 → 校验必填字段（source_id/source/source_type）→ 取字段交集合并 → 浏览器下载
+  - [ ] 注册路由 `/json-merge-tool`，Layout 新增「工具」菜单分组
+  - [ ] 严格模式校验：任一文件/记录不合格则整次任务失败，提示具体位置
+
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
 - [x] 用户管理：管理员创建账号 + 登录认证 + 数据隔离
