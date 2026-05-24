@@ -93,6 +93,7 @@ class LLMConfigUpdate(BaseModel):
     proxy: Optional[str] = Field(None, max_length=512)
     models: Optional[List[str]] = Field(None, min_length=1)
     default_model: Optional[str] = Field(None, min_length=1, max_length=128)
+    is_global: Optional[bool] = Field(None, description="切换全局/私有(仅admin可用)")
 
 
 class LLMConfigResponse(BaseModel):
@@ -249,6 +250,17 @@ async def update_llm_config(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"默认模型 '{update_data['default_model']}' 不在模型列表中",
             )
+
+    # is_global → user_id 映射（仅 admin 可切换；user_id 不能直接 setattr）
+    if "is_global" in update_data:
+        new_is_global = update_data.pop("is_global")
+        if new_is_global is not None:
+            if not _is_admin(current_user):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="只有管理员可以切换全局/私有",
+                )
+            config.user_id = None if new_is_global else current_user.id
 
     for field, value in update_data.items():
         if hasattr(config, field):
