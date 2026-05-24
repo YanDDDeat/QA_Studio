@@ -173,75 +173,21 @@
     </el-card>
 
     <!-- 配置弹窗 -->
-    <el-dialog
-      v-model="configDialogVisible"
-      :title="configAction === 'retry' ? '重试任务配置' : '恢复任务配置'"
-      width="480px"
-      :close-on-click-modal="false"
-    >
-      <el-form label-width="80px">
-        <el-form-item label="阶段">
-          <el-tag type="info">{{ stageLabels[configTask?.stage] || configTask?.stage }}</el-tag>
-        </el-form-item>
-        <el-form-item label="LLM配置">
-          <el-select
-            v-model="configLLMConfigId"
-            placeholder="选择LLM配置"
-            style="width: 100%"
-            filterable
-            @change="handleLLMConfigChange"
-          >
-            <el-option
-              v-for="cfg in llmConfigs"
-              :key="cfg.id"
-              :label="cfg.name + (cfg.user_id ? ' (我的)' : ' (全局)')"
-              :value="cfg.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="模型">
-          <el-select
-            v-model="configModel"
-            placeholder="请选择模型"
-            style="width: 100%"
-            :disabled="!configLLMConfigId"
-          >
-            <el-option v-for="m in currentModelOptions" :key="m" :label="m" :value="m" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="提示词">
-          <el-select
-            v-model="configPromptId"
-            placeholder="选择提示词"
-            style="width: 100%"
-            filterable
-            v-loading="promptsLoading"
-          >
-            <el-option
-              v-for="p in configPromptOptions"
-              :key="p.id"
-              :label="p.name || `v${p.version}`"
-              :value="p.id"
-            >
-              <span>{{ p.name || `v${p.version}` }}{{ p.is_default ? '(默认)' : '' }}</span>
-            </el-option>
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="configDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="configSubmitting" @click="submitConfig">
-          确认{{ configAction === 'retry' ? '重试' : '恢复' }}
-        </el-button>
-      </template>
-    </el-dialog>
+    <TaskConfigDialog
+      v-model:visible="configDialogVisible"
+      :action="configAction"
+      :task="configTask"
+      :stage="configTask?.stage || ''"
+      @confirm="submitConfig"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getMyRunningTasks, getTasks, stopTask, resumeTask, retryStage, getPromptConfigs, getLLMConfigs } from '../api'
+import { getMyRunningTasks, getTasks, stopTask, resumeTask, retryStage } from '../api'
+import TaskConfigDialog from '../components/TaskConfigDialog.vue'
 
 // ---------- 常量映射 ----------
 const stageLabels = {
@@ -312,77 +258,16 @@ async function handleStop(taskId) {
 const configDialogVisible = ref(false)
 const configTask = ref(null)
 const configAction = ref('')
-const configPromptId = ref(null)
-const configModel = ref('')
-const configPromptOptions = ref([])
-const promptsLoading = ref(false)
-const configSubmitting = ref(false)
-const llmConfigs = ref([])
-const configLLMConfigId = ref(null)
-const currentModelOptions = computed(() => {
-  const cfg = llmConfigs.value.find(c => c.id === configLLMConfigId.value)
-  return cfg ? (cfg.models || []) : []
-})
 
-async function openConfigDialog(row, action) {
+function openConfigDialog(row, action) {
   configTask.value = row
   configAction.value = action
-  configPromptId.value = row.prompt_id || null
-  configModel.value = row.model || ''
-  configLLMConfigId.value = null
-  configPromptOptions.value = []
   configDialogVisible.value = true
-
-  // 加载 LLM 配置和 prompts
-  promptsLoading.value = true
-  try {
-    const [promptRes, llmRes] = await Promise.all([
-      getPromptConfigs({ stage: row.stage }),
-      getLLMConfigs(),
-    ])
-    configPromptOptions.value = Array.isArray(promptRes) ? promptRes : []
-    llmConfigs.value = Array.isArray(llmRes) ? llmRes : []
-
-    // 根据当前 model 反查匹配的厂商
-    if (row.model) {
-      const matched = llmConfigs.value.find(c => (c.models || []).includes(row.model))
-      if (matched) {
-        configLLMConfigId.value = matched.id
-      }
-    }
-  } catch {
-    configPromptOptions.value = []
-    llmConfigs.value = []
-  } finally {
-    promptsLoading.value = false
-  }
 }
 
-function handleLLMConfigChange(cfgId) {
-  const cfg = llmConfigs.value.find(c => c.id === cfgId)
-  if (cfg) {
-    configModel.value = cfg.default_model || ''
-  } else {
-    configModel.value = ''
-  }
-}
-
-async function submitConfig() {
+async function submitConfig(data) {
   const row = configTask.value
   if (!row) return
-
-  const data = {}
-  if (configPromptId.value && configPromptId.value !== row.prompt_id) {
-    data.prompt_id = configPromptId.value
-  }
-  if (configModel.value && configModel.value !== row.model) {
-    data.model = configModel.value
-  }
-  if (configLLMConfigId.value) {
-    data.llm_config_id = configLLMConfigId.value
-  }
-
-  configSubmitting.value = true
   try {
     if (configAction.value === 'retry') {
       const slug = stageSlugMap[row.stage]
@@ -393,13 +278,10 @@ async function submitConfig() {
       await resumeTask(row.id, Object.keys(data).length > 0 ? data : undefined)
       ElMessage.success('任务已恢复')
     }
-    configDialogVisible.value = false
     fetchRunning()
     fetchHistory()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '操作失败')
-  } finally {
-    configSubmitting.value = false
   }
 }
 

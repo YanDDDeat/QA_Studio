@@ -296,6 +296,15 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- 恢复/重试配置弹窗 -->
+    <TaskConfigDialog
+      v-model:visible="configDialogVisible"
+      :action="configAction"
+      :task="taskInfo"
+      stage="answer_validate"
+      @confirm="handleConfigConfirm"
+    />
   </div>
 </template>
 
@@ -318,6 +327,7 @@ import {
 } from '../api'
 import FileSelector from '../components/FileSelector.vue'
 import PromptPreview from '../components/PromptPreview.vue'
+import TaskConfigDialog from '../components/TaskConfigDialog.vue'
 import { usePromptDrawer } from '../composables/usePromptDrawer'
 import { useStageResults } from '../composables/useStageResults'
 import { useSourcePreview } from '../composables/useSourcePreview'
@@ -574,14 +584,8 @@ async function handleStop() {
 }
 
 async function handleResume() {
-  try {
-    await resumeTask(taskId.value)
-    ElMessage.success('任务已恢复运行')
-    if (taskInfo.value) taskInfo.value.status = 'running'
-    startPolling()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '恢复失败')
-  }
+  configAction.value = 'resume'
+  configDialogVisible.value = true
 }
 
 async function handleStart() {
@@ -618,20 +622,34 @@ async function handleStart() {
 
 async function handleRetry() {
   if (!taskId.value) return
+  configAction.value = 'retry'
+  configDialogVisible.value = true
+}
 
+// ----- 恢复/重试配置弹窗 -----
+const configDialogVisible = ref(false)
+const configAction = ref('resume')
+
+async function handleConfigConfirm(data) {
+  const payload = Object.keys(data || {}).length > 0 ? data : undefined
   startLoading.value = true
   try {
-    const res = await retryStage('answer-validate', taskId.value)
-    taskId.value = res.task_id
-    taskRunning.value = true
-
-    await pollStatus()
-    startPolling()
-
-    ElMessage.success('重试任务已启动')
-  } catch (err) {
-    const detail = err.response?.data?.detail || '重试失败'
-    ElMessage.error(detail)
+    if (configAction.value === 'retry') {
+      if (!taskId.value) return
+      const res = await retryStage('answer-validate', taskId.value, payload)
+      taskId.value = res.task_id
+      taskRunning.value = true
+      await pollStatus()
+      startPolling()
+      ElMessage.success('重试任务已启动')
+    } else {
+      await resumeTask(taskId.value, payload)
+      ElMessage.success('任务已恢复运行')
+      if (taskInfo.value) taskInfo.value.status = 'running'
+      startPolling()
+    }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
   } finally {
     startLoading.value = false
   }

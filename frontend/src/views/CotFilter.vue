@@ -165,6 +165,15 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- 恢复配置弹窗 -->
+    <TaskConfigDialog
+      v-model:visible="configDialogVisible"
+      action="resume"
+      :task="taskInfo"
+      stage="cot_filter"
+      @confirm="handleConfigConfirm"
+    />
   </div>
 </template>
 
@@ -183,6 +192,7 @@ import {
   resumeTask,
 } from '../api'
 import FileSelector from '../components/FileSelector.vue'
+import TaskConfigDialog from '../components/TaskConfigDialog.vue'
 import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
 
@@ -297,8 +307,16 @@ async function handleStop() {
 }
 
 async function handleResume() {
+  configDialogVisible.value = true
+}
+
+// ----- 恢复配置弹窗 -----
+const configDialogVisible = ref(false)
+
+async function handleConfigConfirm(data) {
+  const payload = Object.keys(data || {}).length > 0 ? data : undefined
   try {
-    await resumeTask(taskId.value)
+    await resumeTask(taskId.value, payload)
     ElMessage.success('任务已恢复运行')
     if (taskInfo.value) taskInfo.value.status = 'running'
     startPolling()

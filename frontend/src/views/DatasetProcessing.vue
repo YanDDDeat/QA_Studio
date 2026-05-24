@@ -329,6 +329,24 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- 切分恢复配置弹窗 -->
+    <TaskConfigDialog
+      v-model:visible="splitConfigDialogVisible"
+      action="resume"
+      :task="splitTaskInfo"
+      stage="dataset_split"
+      @confirm="handleSplitConfigConfirm"
+    />
+
+    <!-- 评分标准恢复配置弹窗 -->
+    <TaskConfigDialog
+      v-model:visible="assessConfigDialogVisible"
+      action="resume"
+      :task="assessTaskInfo"
+      stage="dataset_assessment"
+      @confirm="handleAssessConfigConfirm"
+    />
   </div>
 </template>
 
@@ -344,6 +362,7 @@ import {
 } from '../api'
 import FileSelector from '../components/FileSelector.vue'
 import PromptPreview from '../components/PromptPreview.vue'
+import TaskConfigDialog from '../components/TaskConfigDialog.vue'
 import { usePromptDrawer } from '../composables/usePromptDrawer'
 import { useSourcePreview } from '../composables/useSourcePreview'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
@@ -582,8 +601,16 @@ async function handleStopSplit() {
 }
 
 async function handleResumeSplit() {
+  splitConfigDialogVisible.value = true
+}
+
+// ----- 切分恢复配置弹窗 -----
+const splitConfigDialogVisible = ref(false)
+
+async function handleSplitConfigConfirm(data) {
+  const payload = Object.keys(data || {}).length > 0 ? data : undefined
   try {
-    await resumeTask(splitTaskId.value)
+    await resumeTask(splitTaskId.value, payload)
     ElMessage.success('任务已恢复运行')
     if (splitTaskInfo.value) splitTaskInfo.value.status = 'running'
     startSplitPolling()
@@ -691,8 +718,16 @@ async function handleStopAssess() {
 }
 
 async function handleResumeAssess() {
+  assessConfigDialogVisible.value = true
+}
+
+// ----- 评分标准恢复配置弹窗 -----
+const assessConfigDialogVisible = ref(false)
+
+async function handleAssessConfigConfirm(data) {
+  const payload = Object.keys(data || {}).length > 0 ? data : undefined
   try {
-    await resumeTask(assessTaskId.value)
+    await resumeTask(assessTaskId.value, payload)
     ElMessage.success('任务已恢复运行')
     if (assessTaskInfo.value) assessTaskInfo.value.status = 'running'
     startAssessPolling()
