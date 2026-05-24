@@ -70,6 +70,8 @@ class TaskResponse(BaseModel):
     file_id: Optional[int] = None
     source_file_id: Optional[int] = None
     filename: Optional[str] = None
+    source_filename: Optional[str] = None
+    output_filename: Optional[str] = None
     model: Optional[str] = None
     prompt_id: Optional[int] = None
     status: str
@@ -111,16 +113,26 @@ async def list_tasks(
     total = query.count()
     tasks = query.order_by(Task.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
-    file_ids = {t.file_id for t in tasks if t.file_id}
+    # 合并去重一次查完，避免 N+1
+    all_file_ids = set()
+    for t in tasks:
+        if t.source_file_id:
+            all_file_ids.add(t.source_file_id)
+        if t.file_id:
+            all_file_ids.add(t.file_id)
     file_map = {}
-    if file_ids:
-        files = db.query(File.id, File.filename).filter(File.id.in_(file_ids)).all()
+    if all_file_ids:
+        files = db.query(File.id, File.filename).filter(File.id.in_(all_file_ids)).all()
         file_map = {f.id: f.filename for f in files}
 
     items = []
     for t in tasks:
         d = TaskResponse.model_validate(t).model_dump()
-        d["filename"] = file_map.get(t.file_id) if t.file_id else None
+        src = file_map.get(t.source_file_id) if t.source_file_id else None
+        out = file_map.get(t.file_id) if t.file_id else None
+        d["source_filename"] = src
+        d["output_filename"] = out
+        d["filename"] = out  # 向后兼容
         items.append(d)
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
@@ -141,11 +153,16 @@ async def list_my_running_tasks(
         .all()
     )
 
-    # 批量查询 filename
-    file_ids = {t.file_id for t in tasks if t.file_id}
+    # 批量查询 filename（合并 source_file_id 和 file_id 去重一次查完）
+    all_file_ids = set()
+    for t in tasks:
+        if t.source_file_id:
+            all_file_ids.add(t.source_file_id)
+        if t.file_id:
+            all_file_ids.add(t.file_id)
     file_map = {}
-    if file_ids:
-        files = db.query(File.id, File.filename).filter(File.id.in_(file_ids)).all()
+    if all_file_ids:
+        files = db.query(File.id, File.filename).filter(File.id.in_(all_file_ids)).all()
         file_map = {f.id: f.filename for f in files}
 
     return [
@@ -158,7 +175,9 @@ async def list_my_running_tasks(
             "progress_total": t.progress_total or 0,
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "file_id": t.file_id,
-            "filename": file_map.get(t.file_id) if t.file_id else None,
+            "filename": file_map.get(t.file_id) if t.file_id else None,  # 向后兼容
+            "source_filename": file_map.get(t.source_file_id) if t.source_file_id else None,
+            "output_filename": file_map.get(t.file_id) if t.file_id else None,
         }
         for t in tasks
     ]
@@ -183,6 +202,18 @@ async def list_running_tasks(
         .all()
     )
 
+    # 批量查询 filename（合并 source_file_id 和 file_id 去重一次查完）
+    all_file_ids = set()
+    for t in tasks:
+        if t.source_file_id:
+            all_file_ids.add(t.source_file_id)
+        if t.file_id:
+            all_file_ids.add(t.file_id)
+    file_map = {}
+    if all_file_ids:
+        files = db.query(File.id, File.filename).filter(File.id.in_(all_file_ids)).all()
+        file_map = {f.id: f.filename for f in files}
+
     return [
         {
             "task_id": t.id,
@@ -192,6 +223,8 @@ async def list_running_tasks(
             "progress_current": t.progress_current or 0,
             "progress_total": t.progress_total or 0,
             "created_at": t.created_at.isoformat() if t.created_at else None,
+            "source_filename": file_map.get(t.source_file_id) if t.source_file_id else None,
+            "output_filename": file_map.get(t.file_id) if t.file_id else None,
         }
         for t in tasks
     ]
