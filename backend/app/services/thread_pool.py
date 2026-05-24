@@ -1,10 +1,10 @@
 """全局 LLM 线程池，供所有 Pipeline 阶段共用。"""
 
 import asyncio
-import threading
-from concurrent.futures import ThreadPoolExecutor
-
 import os
+import threading
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 _pool_size = int(os.environ.get("LLM_THREAD_POOL_SIZE", "40"))
 llm_thread_pool = ThreadPoolExecutor(
@@ -74,11 +74,95 @@ async def iter_completed_futures(fut_to_item: dict):
             yield fut, fut_to_item[fut]
 
 
+# ── 可动态调整的并发限制器 ──────────────────────────────────
+
+
+class AdjustableLimiter:
+    """可动态调整容量的并发限制器，不会因容量变化产生 permit 泄漏。"""
+
+    def __init__(self):
+        self._in_flight: int = 0
+        self._capacity: int = 0
+        self._waiters: "deque[asyncio.Future]" = deque()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+        return self._loop
+
+    @property
+    def in_flight(self) -> int:
+        return self._in_flight
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    def set_capacity(self, capacity: int) -> None:
+        """更新目标容量；扩容时唤醒等待者，缩容不撤回已发出的 slot。"""
+        capacity = max(0, int(capacity))
+        grew = capacity > self._capacity
+        self._capacity = capacity
+        if grew:
+            self._wake_waiters()
+
+    def _wake_waiters(self) -> None:
+        # 在容量允许范围内逐个唤醒等待者；唤醒时直接代表他们"占住"一个 slot
+        while self._waiters and self._in_flight < self._capacity:
+            waiter = self._waiters.popleft()
+            if waiter.done():
+                continue
+            self._in_flight += 1
+            waiter.set_result(None)
+
+    async def acquire(self) -> None:
+        """阻塞直到 in_flight < capacity，然后 in_flight += 1。"""
+        loop = self._ensure_loop()
+        # 快速路径：无人排队且有余量
+        if not self._waiters and self._in_flight < self._capacity:
+            self._in_flight += 1
+            return
+        waiter = loop.create_future()
+        self._waiters.append(waiter)
+        try:
+            await waiter
+        except BaseException:
+            # 两种情况：
+            #  1) 仍在队列里：未拿到 slot，移除即可
+            #  2) 已被弹出：唤醒后才取消，slot 已记到自己头上，需要归还
+            try:
+                self._waiters.remove(waiter)
+            except ValueError:
+                if self._in_flight > 0:
+                    self._in_flight -= 1
+                self._wake_waiters()
+            raise
+
+    def release(self) -> None:
+        """线程安全减计数；可以从任意线程（含 worker 线程）调用。"""
+        loop = self._loop
+        if loop is None:
+            return
+        if loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(self._release_impl)
+        except RuntimeError:
+            # 事件循环已结束的边缘场景：静默忽略
+            pass
+
+    def _release_impl(self) -> None:
+        if self._in_flight > 0:
+            self._in_flight -= 1
+        self._wake_waiters()
+
+
 # ── 滑动窗口执行器 ──────────────────────────────────────────
 
 
 class SlidingWindowExecutor:
-    """滑动窗口并发控制器：始终保持 window_size 个并发，完成一个补一个。
+    """滑动窗口并发控制器：按 active_task_count 动态分配窗口，完成一个补一个。
 
     用法::
 
@@ -94,9 +178,8 @@ class SlidingWindowExecutor:
     """
 
     def __init__(self):
-        self._sem: asyncio.Semaphore | None = None
+        self._limiter = AdjustableLimiter()
         self._pending: dict = {}
-        self._last_window_size: int = 0
 
     def _window_size(self) -> int:
         active = get_active_task_count()
@@ -104,16 +187,14 @@ class SlidingWindowExecutor:
 
     async def acquire(self):
         """获取一个窗口空位。窗口大小随活跃任务数动态调整。"""
-        ws = self._window_size()
-        if self._sem is None or ws != self._last_window_size:
-            self._sem = asyncio.Semaphore(ws)
-            self._last_window_size = ws
-        await self._sem.acquire()
+        self._limiter.set_capacity(self._window_size())
+        await self._limiter.acquire()
 
     def track(self, future, item):
         """跟踪一个已提交到线程池的 future，完成时自动释放窗口空位。"""
         self._pending[future] = item
-        future.add_done_callback(lambda _: self._sem.release())
+        limiter = self._limiter
+        future.add_done_callback(lambda _: limiter.release())
 
     @property
     def pending_count(self) -> int:
