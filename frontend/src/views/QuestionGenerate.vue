@@ -242,6 +242,15 @@
       </div>
     </el-card>
 
+    <!-- 任务恢复/重试配置弹窗 -->
+    <TaskConfigDialog
+      v-model:visible="configDialogVisible"
+      :action="configAction"
+      :task="taskInfo"
+      stage="question_generate"
+      @confirm="handleConfigConfirm"
+    />
+
     <!-- Results area (lazy-loaded) -->
     <el-card class="results-card">
       <template #header>
@@ -376,6 +385,7 @@ import { useStageResults } from '../composables/useStageResults'
 import { useSourcePreview } from '../composables/useSourcePreview'
 import FileSelector from '../components/FileSelector.vue'
 import PromptPreview from '../components/PromptPreview.vue'
+import TaskConfigDialog from '../components/TaskConfigDialog.vue'
 import { buildDefaultOutputFilename } from '../utils/stageLabels'
 import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
@@ -636,14 +646,42 @@ async function handleStop() {
   }
 }
 
-async function handleResume() {
+// ----- 任务恢复/重试配置弹窗 -----
+const configDialogVisible = ref(false)
+const configAction = ref('resume')
+
+function handleResume() {
+  configAction.value = 'resume'
+  configDialogVisible.value = true
+}
+
+function handleRetry() {
+  configAction.value = 'retry'
+  configDialogVisible.value = true
+}
+
+async function handleConfigConfirm(data) {
+  const payload = Object.keys(data || {}).length > 0 ? data : undefined
+  startLoading.value = true
   try {
-    await resumeTask(taskId.value)
-    ElMessage.success('任务已恢复运行')
-    if (taskInfo.value) taskInfo.value.status = 'running'
-    startPolling()
+    if (configAction.value === 'retry') {
+      if (!taskId.value) return
+      const res = await retryStage('question-generate', taskId.value, payload)
+      taskId.value = res.task_id
+      taskRunning.value = true
+      await pollStatus()
+      startPolling()
+      ElMessage.success('重试任务已启动')
+    } else {
+      await resumeTask(taskId.value, payload)
+      ElMessage.success('任务已恢复运行')
+      if (taskInfo.value) taskInfo.value.status = 'running'
+      startPolling()
+    }
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '恢复失败')
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  } finally {
+    startLoading.value = false
   }
 }
 
@@ -674,27 +712,6 @@ async function handleStart() {
     ElMessage.success('问题生成任务已启动')
   } catch (err) {
     const detail = err.response?.data?.detail || '启动任务失败'
-    ElMessage.error(detail)
-  } finally {
-    startLoading.value = false
-  }
-}
-
-async function handleRetry() {
-  if (!taskId.value) return
-
-  startLoading.value = true
-  try {
-    const res = await retryStage('question-generate', taskId.value)
-    taskId.value = res.task_id
-    taskRunning.value = true
-
-    await pollStatus()
-    startPolling()
-
-    ElMessage.success('重试任务已启动')
-  } catch (err) {
-    const detail = err.response?.data?.detail || '重试失败'
     ElMessage.error(detail)
   } finally {
     startLoading.value = false

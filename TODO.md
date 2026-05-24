@@ -57,6 +57,12 @@
   - [x] 用 `AdjustableLimiter`（in_flight 计数 + 等待队列）替换 `SlidingWindowExecutor` 内部的 `asyncio.Semaphore`，消除窗口缩放时的突击提交与 permit 泄漏
   - [x] 新增并发模拟测试 `tests/test_thread_pool_fairness.py`，断言两用户场景下完成数比例在 [0.8, 1.25] 之间
 
+## 各阶段页面恢复/重试支持重选配置
+- [ ] 分支 `feature/stage-resume-config`：详见 `docs/requirements/16_需求_各阶段页面恢复重试支持重选配置.md`
+  - [ ] 抽出公共组件 `TaskConfigDialog.vue`（厂商/模型/提示词三联选）
+  - [ ] 8 个阶段页面（QG/KG/QV/AG/AV/DE/CF/DP）的恢复/重试按钮接入弹窗
+  - [ ] MyTasks.vue 改用公共组件，避免双份维护
+
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
 - [x] 用户管理：管理员创建账号 + 登录认证 + 数据隔离
