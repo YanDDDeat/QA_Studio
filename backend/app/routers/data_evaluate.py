@@ -74,6 +74,8 @@ class TaskStatusResponse(BaseModel):
     avg_score: Optional[float] = None
     file_id: Optional[int] = None
     filename: Optional[str] = None
+    prompt_id: Optional[int] = None
+    model: Optional[str] = None
 
 
 class EvaluationReportResponse(BaseModel):
@@ -557,6 +559,8 @@ async def get_data_evaluate_status(
         avg_score=avg_score,
         file_id=task.file_id,
         filename=db.query(File).filter(File.id == task.file_id).first().filename if task.file_id else None,
+        prompt_id=task.prompt_id,
+        model=task.model,
     )
 
 

@@ -79,6 +79,8 @@ class TaskStatusResponse(BaseModel):
     fail_count: int = 0
     file_id: Optional[int] = None
     filename: Optional[str] = None
+    prompt_id: Optional[int] = None
+    model: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

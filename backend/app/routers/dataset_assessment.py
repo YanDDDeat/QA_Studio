@@ -64,6 +64,8 @@ class TaskStatusResponse(BaseModel):
     generated_count: int = 0
     file_id: Optional[int] = None
     file_name: Optional[str] = None
+    prompt_id: Optional[int] = None
+    model: Optional[str] = None
 
 
 def _add_task_log(db: Session, task_id: int, content: str):
@@ -404,6 +406,8 @@ async def get_dataset_assessment_status(
         generated_count=generated_count,
         file_id=task.file_id,
         file_name=file_obj.filename if file_obj else None,
+        prompt_id=task.prompt_id,
+        model=task.model,
     )
 
 

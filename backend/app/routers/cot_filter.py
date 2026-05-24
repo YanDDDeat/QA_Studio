@@ -44,6 +44,8 @@ class TaskStatusResponse(BaseModel):
     progress_total: int
     result: Optional[dict] = None
     file_id: Optional[int] = None
+    prompt_id: Optional[int] = None
+    model: Optional[str] = None
 
 
 def _add_task_log(db: Session, task_id: int, content: str):
@@ -187,6 +189,8 @@ async def get_cot_filter_status(
         progress_current=task.progress_current or 0,
         progress_total=task.progress_total or 0,
         file_id=task.file_id,
+        prompt_id=task.prompt_id,
+        model=task.model,
     )
 
 
