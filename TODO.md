@@ -53,9 +53,9 @@
   - [x] 前端配置中心系统设置标签页新增运行中任务面板（表格 + 自动刷新）
 
 ## 线程池公平调度修复
-- [ ] 分支 `feature/fair-thread-pool`：详见 `docs/requirements/15_需求_线程池公平调度修复.md`
-  - [ ] 用 `AdjustableLimiter`（in_flight 计数 + 等待队列）替换 `SlidingWindowExecutor` 内部的 `asyncio.Semaphore`，消除窗口缩放时的突击提交与 permit 泄漏
-  - [ ] 新增并发模拟测试 `tests/test_thread_pool_fairness.py`，断言两用户场景下完成数比例在 [0.8, 1.25] 之间
+- [x] 分支 `feature/fair-thread-pool`：详见 `docs/requirements/15_需求_线程池公平调度修复.md`
+  - [x] 用 `AdjustableLimiter`（in_flight 计数 + 等待队列）替换 `SlidingWindowExecutor` 内部的 `asyncio.Semaphore`，消除窗口缩放时的突击提交与 permit 泄漏
+  - [x] 新增并发模拟测试 `tests/test_thread_pool_fairness.py`，断言两用户场景下完成数比例在 [0.8, 1.25] 之间
 
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
