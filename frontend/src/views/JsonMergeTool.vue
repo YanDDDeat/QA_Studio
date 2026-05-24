@@ -140,6 +140,13 @@
         show-icon
       />
       <el-alert
+        v-else-if="hasPending"
+        title="文件校验中，请稍候..."
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <el-alert
         v-else-if="files.length < 2"
         title="至少需要 2 个文件才能合并"
         type="warning"
@@ -190,6 +197,8 @@ const allValid = computed(
   () => files.value.length > 0 && files.value.every(f => f.status === 'ok')
 )
 
+const hasPending = computed(() => files.value.some(f => f.status === 'pending'))
+
 const canMerge = computed(() => files.value.length >= 2 && allValid.value)
 
 const statsVisible = computed(() => files.value.length >= 2 && allValid.value)
@@ -221,40 +230,42 @@ const orderedCommonFields = computed(() => {
 })
 
 // ---------- Validation ----------
-function validateParsedContent(name, parsed) {
+// One-pass: validate every record and collect the field-name intersection at the
+// same time. Returns { error } on the first failure, or { fieldIntersection } on
+// success. Halves the work vs. validating then re-walking to compute fields.
+function validateAndExtractFields(name, parsed) {
   if (!Array.isArray(parsed)) {
-    return `文件 "${name}" 内容不是 JSON 数组（顶层必须是 []）`
+    return { error: `文件 "${name}" 内容不是 JSON 数组（顶层必须是 []）` }
   }
   if (parsed.length === 0) {
-    return `文件 "${name}" 是空数组，没有可合并的记录`
+    return { error: `文件 "${name}" 是空数组，没有可合并的记录` }
   }
+  let intersection = null
   for (let i = 0; i < parsed.length; i++) {
     const item = parsed[i]
     if (item === null || typeof item !== 'object' || Array.isArray(item)) {
-      return `文件 "${name}" 第 ${i + 1} 条记录不是合法对象`
+      return { error: `文件 "${name}" 第 ${i + 1} 条记录不是合法对象` }
     }
     for (const field of REQUIRED_FIELDS) {
       const val = item[field]
       if (val === undefined || val === null || val === '') {
-        return `文件 "${name}" 第 ${i + 1} 条记录缺少必填字段：${field}`
+        return { error: `文件 "${name}" 第 ${i + 1} 条记录缺少必填字段：${field}` }
       }
     }
-  }
-  return null
-}
-
-// Compute intersection of field names across all records of a single file.
-function computeFileFieldIntersection(records) {
-  let inter = null
-  for (const rec of records) {
-    const keys = new Set(Object.keys(rec))
-    if (inter === null) {
-      inter = keys
+    const keys = Object.keys(item)
+    if (intersection === null) {
+      intersection = new Set(keys)
     } else {
-      inter = new Set([...inter].filter(k => keys.has(k)))
+      // Shrink intersection by keeping only keys present in this record.
+      const next = new Set()
+      const keySet = new Set(keys)
+      for (const k of intersection) {
+        if (keySet.has(k)) next.add(k)
+      }
+      intersection = next
     }
   }
-  return inter || new Set()
+  return { fieldIntersection: intersection || new Set() }
 }
 
 // ---------- File handlers ----------
@@ -274,9 +285,14 @@ async function handleFileChange(uploadFile) {
     return
   }
 
-  // Add to list as pending
-  const entry = {
-    id: ++fileIdCounter,
+  // Add to list as pending. Important: push the raw object, then grab the
+  // reactive proxy back out of the array via find(). Mutating the local
+  // `entry` ref directly skips Vue's proxy and computed/watchers wouldn't
+  // be notified (the table column happens to re-render via other deps,
+  // but the merge-preview computed stays stale).
+  const entryId = ++fileIdCounter
+  files.value.push({
+    id: entryId,
     name,
     size: raw.size,
     raw,
@@ -285,8 +301,8 @@ async function handleFileChange(uploadFile) {
     records: null,
     recordCount: null,
     fieldIntersection: null,
-  }
-  files.value.push(entry)
+  })
+  const entry = files.value.find(f => f.id === entryId)
 
   // Read + parse + validate asynchronously
   try {
@@ -297,16 +313,22 @@ async function handleFileChange(uploadFile) {
     } catch (e) {
       throw new Error(`文件 "${name}" 不是合法 JSON：${e.message}`)
     }
-    const errMsg = validateParsedContent(name, parsed)
-    if (errMsg) throw new Error(errMsg)
+    const result = validateAndExtractFields(name, parsed)
+    if (result.error) throw new Error(result.error)
 
-    entry.records = parsed
-    entry.recordCount = parsed.length
-    entry.fieldIntersection = computeFileFieldIntersection(parsed)
-    entry.status = 'ok'
+    // entry may have been removed by the user during the await; guard.
+    const current = files.value.find(f => f.id === entryId)
+    if (!current) return
+    current.records = parsed
+    current.recordCount = parsed.length
+    current.fieldIntersection = result.fieldIntersection
+    current.status = 'ok'
   } catch (err) {
-    entry.status = 'error'
-    entry.error = err.message
+    const current = files.value.find(f => f.id === entryId)
+    if (current) {
+      current.status = 'error'
+      current.error = err.message
+    }
     ElMessage.error(err.message)
   }
 }
