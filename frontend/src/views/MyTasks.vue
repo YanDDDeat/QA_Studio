@@ -18,9 +18,14 @@
             {{ stageLabels[row.stage] || row.stage }}
           </template>
         </el-table-column>
-        <el-table-column label="输入文件" min-width="160">
+        <el-table-column label="输入文件" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ row.filename || '-' }}
+            {{ row.source_filename || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="输出文件" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.output_filename || '-' }}
           </template>
         </el-table-column>
         <el-table-column prop="model" label="模型" width="160" />
@@ -107,9 +112,14 @@
             {{ stageLabels[row.stage] || row.stage }}
           </template>
         </el-table-column>
-        <el-table-column label="输入文件" min-width="160">
+        <el-table-column label="输入文件" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ row.filename || '-' }}
+            {{ row.source_filename || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="输出文件" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.output_filename || '-' }}
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100">

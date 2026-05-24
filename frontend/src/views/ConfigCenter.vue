@@ -349,6 +349,16 @@
           <el-table-column prop="username" label="用户" width="100" />
           <el-table-column prop="stage" label="阶段" width="140" />
           <el-table-column prop="model" label="模型" width="160" />
+          <el-table-column label="输入文件" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.source_filename || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="输出文件" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.output_filename || '-' }}
+            </template>
+          </el-table-column>
           <el-table-column label="进度" width="180">
             <template #default="{ row }">
               <el-progress
