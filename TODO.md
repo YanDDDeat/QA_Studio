@@ -70,10 +70,10 @@
   - [x] 严格模式校验：任一文件/记录不合格则整次任务失败，提示具体位置
 
 ## 任务列表展示输入/输出文件名
-- [ ] 分支 `feature/task-output-filename`：详见 `docs/requirements/18_需求_任务列表展示输入输出文件.md`
-  - [ ] 后端 3 个接口（list_tasks / my-running / running）响应加 source_filename + output_filename，批量查 file 表
-  - [ ] MyTasks.vue 两个表格拆「输入文件」+「输出文件」两列
-  - [ ] ConfigCenter.vue 运行中任务面板加同样两列
+- [x] 分支 `feature/task-output-filename`：详见 `docs/requirements/18_需求_任务列表展示输入输出文件.md`
+  - [x] 后端 3 个接口（list_tasks / my-running / running）响应加 source_filename + output_filename，批量查 file 表
+  - [x] MyTasks.vue 两个表格拆「输入文件」+「输出文件」两列
+  - [x] ConfigCenter.vue 运行中任务面板加同样两列
 
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
