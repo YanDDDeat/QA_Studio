@@ -605,6 +605,8 @@ async def get_question_generate_status(
         generated_count=generated_count,
         file_id=task.file_id,
         filename=db.query(File).filter(File.id == task.file_id).first().filename if task.file_id else None,
+        prompt_id=task.prompt_id,
+        model=task.model,
     )
 
 
