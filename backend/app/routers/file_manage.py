@@ -339,13 +339,17 @@ async def gzip_upload_test(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """测试端点：接收 gzip 压缩文件，解压后当 JSON 处理。"""
+    """测试端点：接收 gzip 压缩文件，解压后当 JSON 处理并存入文件管理。"""
+    upload_dir = os.path.join("uploads", str(current_user.id))
+    os.makedirs(upload_dir, exist_ok=True)
+
     results = []
     errors = []
 
     for file in files:
         content_bytes = await file.read()
 
+        # Gzip 解压
         try:
             decompressed = gzip.decompress(content_bytes)
         except Exception as e:
@@ -355,6 +359,7 @@ async def gzip_upload_test(
             })
             continue
 
+        # JSON 解析
         try:
             parsed = json.loads(decompressed.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -374,17 +379,43 @@ async def gzip_upload_test(
                 available = [k for k in sample.keys() if isinstance(sample[k], str) and len(sample[k]) > 0]
                 text_field_warning = f"text字段「{text_field}」不存在，可用字段: {', '.join(available[:8])}" if available else f"text字段「{text_field}」不存在"
 
+        # 保存解压后的 JSON 到磁盘
+        json_filename = os.path.basename(file.filename).replace(".gz", "")
+        if not json_filename.endswith(".json"):
+            json_filename = os.path.splitext(json_filename)[0] + ".json"
+        file_path = os.path.join(upload_dir, json_filename)
+        if os.path.exists(file_path):
+            base, ext = os.path.splitext(json_filename)
+            counter = 1
+            while os.path.exists(os.path.join(upload_dir, f"{base}_{counter}{ext}")):
+                counter += 1
+            file_path = os.path.join(upload_dir, f"{base}_{counter}{ext}")
+            json_filename = f"{base}_{counter}{ext}"
+
+        with open(file_path, "wb") as f:
+            f.write(decompressed)
+
+        # 创建 DB 记录
+        file_record = File(
+            user_id=current_user.id,
+            filename=json_filename,
+            file_type="json",
+            file_path=file_path,
+            source_stage=None,
+            text_field=text_field,
+        )
+        db.add(file_record)
+        db.commit()
+        db.refresh(file_record)
+
         original_size = len(content_bytes)
         decompressed_size = len(decompressed)
         ratio = f"{original_size / max(decompressed_size, 1) * 100:.1f}%"
 
-        result_item = {
-            "filename": file.filename,
-            "compressed_bytes": original_size,
-            "decompressed_bytes": decompressed_size,
-            "ratio": ratio,
-            "record_count": len(records),
-        }
+        result_item = _serialize_file(file_record)
+        result_item["compressed_bytes"] = original_size
+        result_item["decompressed_bytes"] = decompressed_size
+        result_item["ratio"] = ratio
         if text_field_warning:
             result_item["warning"] = text_field_warning
         results.append(result_item)
