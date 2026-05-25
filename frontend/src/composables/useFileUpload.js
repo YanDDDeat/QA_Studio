@@ -78,8 +78,17 @@ export function useFileUpload(fetchFileOptionsFn, formRef) {
         formRef.value.file_id = uploaded[0].id
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || '上传失败'
-      ElMessage.error(detail)
+      // Surface the most useful info: the backend detail if present, otherwise
+      // the HTTP status (e.g. "上传失败 (HTTP 400)" — a 400 with empty body
+      // usually means Starlette rejected the multipart before our handler).
+      const detail = err.response?.data?.detail
+      const status = err.response?.status
+      const msg = detail
+        ? `上传失败: ${detail}`
+        : status
+          ? `上传失败 (HTTP ${status})${err.message ? ' ' + err.message : ''}`
+          : `上传失败: ${err.message || '未知错误'}`
+      ElMessage.error(msg)
     } finally {
       uploadLoading.value = false
     }

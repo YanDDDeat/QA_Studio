@@ -3,11 +3,14 @@
 import asyncio
 import bcrypt
 import logging
+import time
+import traceback
 from logging.handlers import TimedRotatingFileHandler
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # ---------------------------------------------------------------------------
 # Logging configuration: error/info split files (daily rotation) + console
@@ -104,6 +107,46 @@ app = FastAPI(
     version="0.1.0",
     redirect_slashes=False,
 )
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic logging: print every request enter/leave + traceback on exceptions
+# directly to stdout (bypasses logger config so it always shows in `docker logs`).
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def _diag_log_requests(request: Request, call_next):
+    start = time.time()
+    client = request.client.host if request.client else "-"
+    print(f"[REQ ] {request.method} {request.url.path} client={client}", flush=True)
+    try:
+        response = await call_next(request)
+        elapsed_ms = (time.time() - start) * 1000
+        print(
+            f"[RESP] {request.method} {request.url.path} -> {response.status_code} ({elapsed_ms:.0f}ms)",
+            flush=True,
+        )
+        return response
+    except Exception as exc:
+        elapsed_ms = (time.time() - start) * 1000
+        print(
+            f"[ERR ] {request.method} {request.url.path} -> {type(exc).__name__}: {exc} ({elapsed_ms:.0f}ms)",
+            flush=True,
+        )
+        traceback.print_exc()
+        raise
+
+
+@app.exception_handler(Exception)
+async def _diag_unhandled_exception(request: Request, exc: Exception):
+    print(
+        f"[EXC ] {request.method} {request.url.path}: {type(exc).__name__}: {exc}",
+        flush=True,
+    )
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}"},
+    )
 
 
 @app.on_event("startup")

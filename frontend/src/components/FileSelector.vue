@@ -239,8 +239,14 @@ async function submitUpload() {
       ElMessage.error(`上传失败: ${msg}`)
     }
   } catch (err) {
-    const detail = err.response?.data?.detail || '上传失败'
-    ElMessage.error(detail)
+    const detail = err.response?.data?.detail
+    const status = err.response?.status
+    const msg = detail
+      ? `上传失败: ${detail}`
+      : status
+        ? `上传失败 (HTTP ${status})${err.message ? ' ' + err.message : ''}`
+        : `上传失败: ${err.message || '未知错误'}`
+    ElMessage.error(msg)
   } finally {
     uploadLoading.value = false
   }

@@ -245,6 +245,17 @@ async def upload_managed_files(
         files: Multiple JSON files (multipart form data).
         text_field: The JSON field name that contains the text blocks (default "text").
     """
+    # Diagnostic: confirm the route handler was actually entered (vs being
+    # rejected at the multipart-parsing layer before us). Printed via stdout so
+    # it always shows up in `docker logs qa-studio-backend`.
+    try:
+        file_info = [(f.filename, getattr(f, "size", "?")) for f in files]
+    except Exception:
+        file_info = "<unreadable>"
+    print(
+        f"[UPLOAD] user={current_user.username} text_field={text_field!r} files={file_info}",
+        flush=True,
+    )
     upload_dir = os.path.join("uploads", str(current_user.id))
     os.makedirs(upload_dir, exist_ok=True)
 
