@@ -1,5 +1,6 @@
 """File Manage router - Combined file management for the workspace"""
 
+import gzip
 import json
 from typing import List, Optional
 import os
@@ -324,6 +325,66 @@ async def upload_managed_files(
         db.refresh(file_record)
 
         result_item = _serialize_file(file_record)
+        if text_field_warning:
+            result_item["warning"] = text_field_warning
+        results.append(result_item)
+
+    return {"uploaded": results, "errors": errors}
+
+
+@router.post("/gzip-upload-test")
+async def gzip_upload_test(
+    files: List[UploadFile] = FastAPIFile(...),
+    text_field: str = Form("text"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """测试端点：接收 gzip 压缩文件，解压后当 JSON 处理。"""
+    results = []
+    errors = []
+
+    for file in files:
+        content_bytes = await file.read()
+
+        try:
+            decompressed = gzip.decompress(content_bytes)
+        except Exception as e:
+            errors.append({
+                "filename": file.filename,
+                "error": f"Gzip 解压失败: {str(e)}",
+            })
+            continue
+
+        try:
+            parsed = json.loads(decompressed.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            errors.append({
+                "filename": file.filename,
+                "error": f"JSON 解析失败: {str(e)}",
+            })
+            continue
+
+        records = parsed if isinstance(parsed, list) else [parsed]
+
+        # 检查 text_field
+        text_field_warning = None
+        if records and isinstance(records[0], dict):
+            sample = records[0]
+            if text_field not in sample:
+                available = [k for k in sample.keys() if isinstance(sample[k], str) and len(sample[k]) > 0]
+                text_field_warning = f"text字段「{text_field}」不存在，可用字段: {', '.join(available[:8])}" if available else f"text字段「{text_field}」不存在"
+
+        original_size = len(content_bytes)
+        decompressed_size = len(decompressed)
+        ratio = f"{original_size / max(decompressed_size, 1) * 100:.1f}%"
+
+        result_item = {
+            "filename": file.filename,
+            "compressed_bytes": original_size,
+            "decompressed_bytes": decompressed_size,
+            "ratio": ratio,
+            "record_count": len(records),
+        }
         if text_field_warning:
             result_item["warning"] = text_field_warning
         results.append(result_item)

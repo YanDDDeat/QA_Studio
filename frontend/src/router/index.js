@@ -96,6 +96,12 @@ const routes = [
         component: () => import('../views/JsonMergeTool.vue'),
         meta: { title: 'JSON 文件合并工具' },
       },
+      {
+        path: 'gzip-upload-test',
+        name: 'GzipUploadTest',
+        component: () => import('../views/GzipUploadTest.vue'),
+        meta: { title: 'Gzip 压缩上传测试' },
+      },
     ],
   },
 ]
