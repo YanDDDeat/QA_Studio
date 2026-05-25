@@ -78,6 +78,10 @@
             <el-icon><Connection /></el-icon>
             <span>JSON 文件合并</span>
           </el-menu-item>
+          <el-menu-item index="/gzip-upload-test">
+            <el-icon><Upload /></el-icon>
+            <span>Gzip 压缩上传</span>
+          </el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu index="group-admin">
@@ -183,7 +187,7 @@ import { getMe, changePassword } from '../api'
 import {
   EditPen, Share, Checked, Document, Select,
   DataAnalysis, Folder, Setting, ArrowDown, UserFilled,
-  Operation, Filter, Grid, List, Tools, Connection,
+  Operation, Filter, Grid, List, Tools, Connection, Upload,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
