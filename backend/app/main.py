@@ -88,6 +88,8 @@ from app.routers import (
     answer_generate,
     answer_validate,
     data_evaluate,
+    quality_check,
+    generic_generate,
     data_manage,
     config_center,
     file_manage,
@@ -229,6 +231,8 @@ app.include_router(question_validate.router, prefix="/api/question-validate", ta
 app.include_router(answer_generate.router, prefix="/api/answer-generate", tags=["答案生成"])
 app.include_router(answer_validate.router, prefix="/api/answer-validate", tags=["答案校验"])
 app.include_router(data_evaluate.router, prefix="/api/data-evaluate", tags=["数据评估"])
+app.include_router(quality_check.router, prefix="/api/quality_check", tags=["质检"])
+app.include_router(generic_generate.router, prefix="/api/generic_generate", tags=["通用生成"])
 app.include_router(data_manage.router, prefix="/api/data-manage", tags=["数据管理"])
 app.include_router(config_center.router, prefix="/api/config-center", tags=["配置中心"])
 app.include_router(file_manage.router, prefix="/api/file-manage", tags=["文件管理"])

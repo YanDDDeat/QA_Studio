@@ -49,6 +49,18 @@ const routes = [
         meta: { title: '数据评估', stage: 'data_evaluate' },
       },
       {
+        path: 'quality-check',
+        name: 'QualityCheck',
+        component: () => import('../views/QualityCheck.vue'),
+        meta: { title: '质检', stage: 'quality_check' },
+      },
+      {
+        path: 'generic-generate',
+        name: 'GenericGenerate',
+        component: () => import('../views/GenericGenerate.vue'),
+        meta: { title: '通用生成', stage: 'generic' },
+      },
+      {
         path: 'cot-filter',
         name: 'CotFilter',
         component: () => import('../views/CotFilter.vue'),
