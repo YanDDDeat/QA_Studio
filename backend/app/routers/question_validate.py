@@ -136,6 +136,7 @@ async def _run_question_validate_task(
         else:
             task = db.query(Task).filter(Task.id == task_id).first()
             output_file = db.query(File).filter(File.id == task.file_id).first()
+            source_file = db.query(File).filter(File.id == file_id).first()
             _add_task_log(db, task_id, f"恢复任务，继续写入已有输出文件: {output_file.filename}")
 
         fail_records: list[dict] = []
