@@ -46,22 +46,11 @@
         <el-sub-menu index="group-evaluate">
           <template #title>
             <el-icon><DataAnalysis /></el-icon>
-            <span>数据评分</span>
+            <span>数据评估</span>
           </template>
           <el-menu-item index="/data-evaluate">
             <el-icon><DataAnalysis /></el-icon>
-            <span>数据评分</span>
-          </el-menu-item>
-        </el-sub-menu>
-
-        <el-sub-menu index="group-qc">
-          <template #title>
-            <el-icon><CircleCheck /></el-icon>
-            <span>数据质检</span>
-          </template>
-          <el-menu-item index="/quality-check">
-            <el-icon><CircleCheck /></el-icon>
-            <span>质检</span>
+            <span>数据评估</span>
           </el-menu-item>
         </el-sub-menu>
 
@@ -92,10 +81,6 @@
           <el-menu-item index="/gzip-upload-test">
             <el-icon><Upload /></el-icon>
             <span>Gzip 压缩上传</span>
-          </el-menu-item>
-          <el-menu-item index="/generic-generate">
-            <el-icon><Setting /></el-icon>
-            <span>通用生成</span>
           </el-menu-item>
         </el-sub-menu>
 
@@ -203,7 +188,6 @@ import {
   EditPen, Share, Checked, Document, Select,
   DataAnalysis, Folder, Setting, ArrowDown, UserFilled,
   Operation, Filter, Grid, List, Tools, Connection, Upload,
-  CircleCheck,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()

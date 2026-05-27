@@ -309,38 +309,7 @@ export function getDatasetAssessmentSourceFiles(params) {
   return api.get('/dataset-assessment/source-files', { params })
 }
 
-// Quality Check API
-export function startQualityCheck(data) {
-  return api.post('/quality_check/start', data)
-}
-
-export function getQualityCheckStatus(taskId) {
-  return api.get(`/quality_check/status/${taskId}`)
-}
-
-export function getQualityCheckSourceFiles(params) {
-  return api.get('/quality_check/source-files', { params })
-}
-
-export function retryQualityCheck(taskId, data) {
-  return api.post(`/quality_check/retry/${taskId}`, data)
-}
-
 // Prompts for Assessment stage
 export function getAssessmentPrompts(params) {
   return api.get('/prompts', { params })
-}
-
-// ========== 通用生成 API ==========
-export function startGenericGenerate(data) {
-  return api.post('/generic_generate/start', data)
-}
-export function getGenericGenerateStatus(taskId) {
-  return api.get(`/generic_generate/status/${taskId}`)
-}
-export function listGenericGenerateSourceFiles(params) {
-  return api.get('/generic_generate/source-files', { params })
-}
-export function retryGenericGenerate(taskId, data) {
-  return api.post(`/generic_generate/retry/${taskId}`, data)
 }

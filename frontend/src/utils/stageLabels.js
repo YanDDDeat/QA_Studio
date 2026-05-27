@@ -5,8 +5,6 @@ export const STAGE_LABELS = {
   answer_generate: '答案生成',
   answer_validate: '答案校验',
   data_evaluate: '数据评估',
-  quality_check: '质检',
-  generic: '通用生成',
   cot_filter: 'COT过滤',
   dataset_split: '数据集切分',
   dataset_assessment: '评分标准生成',
