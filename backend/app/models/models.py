@@ -20,9 +20,11 @@ class StageEnum(str, PyEnum):
     ANSWER_GENERATE = "answer_generate"
     ANSWER_VALIDATE = "answer_validate"
     DATA_EVALUATE = "data_evaluate"
+    QUALITY_CHECK = "quality_check"
     COT_FILTER = "cot_filter"
     DATASET_SPLIT = "dataset_split"
     DATASET_ASSESSMENT = "dataset_assessment"
+    GENERIC = "generic"
 
 
 # SQLAlchemy 2.0 解析混合 Enum 类时 dict keys 用的是 member 名称而非值
