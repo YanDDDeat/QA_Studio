@@ -75,6 +75,13 @@
   - [x] MyTasks.vue 两个表格拆「输入文件」+「输出文件」两列
   - [x] ConfigCenter.vue 运行中任务面板加同样两列
 
+## 数据评分改名 + 质检页面 + 通用生成页面
+- [x] 分支 `feature/score-rename-qc-generic`：详见 `docs/requirements/19_需求.md`
+  - [x] 子需求1：侧边栏「数据评估」改名为「数据评分」（仅 Layout.vue 文案）
+  - [x] 子需求2：新增「质检」页面（克隆 answer_validate 模板，PASS/FAIL 双文件输出，挂独立分组）
+  - [x] 子需求3：新增「通用生成」页面（任意文件 + 任意 Prompt + 任意 LLM，挂工具分组）
+  - [x] DB 迁移：scripts/migrate_quality_check_and_generic.py 扩展 4 个 ENUM 列加入 quality_check/generic，插入质检默认 Prompt（已执行）
+
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
 - [x] 用户管理：管理员创建账号 + 登录认证 + 数据隔离
