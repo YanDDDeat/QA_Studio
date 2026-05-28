@@ -23,6 +23,10 @@
             style="width: 180px"
             @input="onSearchChange"
           />
+          <el-select v-model="sourceStageFilter" size="small" style="width: 130px" clearable placeholder="来源阶段" @change="fetchFiles">
+            <el-option v-for="(label, key) in STAGE_MAP" :key="key" :label="label" :value="key" />
+            <el-option label="上传文件" value="upload" />
+          </el-select>
           <el-select v-model="sortMode" size="small" style="width: 140px" @change="fetchFiles">
             <el-option label="最新优先" value="time_desc" />
             <el-option label="最早优先" value="time_asc" />
@@ -265,6 +269,11 @@ const STAGE_MAP = {
   answer_generate: '答案生成',
   answer_validate: '答案校验',
   data_evaluate: '数据评估',
+  quality_check: '质检',
+  generic: '通用生成',
+  cot_filter: 'COT过滤',
+  dataset_split: '数据集切分',
+  dataset_assessment: '评分标准生成',
 }
 
 // File list state
@@ -275,6 +284,7 @@ const filePage = ref(1)
 const route = useRoute()
 const searchKeyword = ref('')
 const sortMode = ref('time_desc')
+const sourceStageFilter = ref(null)
 
 // Computed: current page slice (backend now paginated, so files already is the page slice)
 const pagedFiles = computed(() => files.value)
@@ -433,6 +443,11 @@ function stageTagType(stage) {
     answer_generate: '',
     answer_validate: 'success',
     data_evaluate: 'info',
+    quality_check: 'success',
+    generic: '',
+    cot_filter: 'warning',
+    dataset_split: 'info',
+    dataset_assessment: 'info',
   }
   return map[stage] || ''
 }
@@ -467,6 +482,7 @@ function onToggleAllFiles() {
   selectedFileIds.value = new Set()
   selectedFileInfo.value = new Map()
   selectedFile.value = null
+  sourceStageFilter.value = null
   previewData.value = null
   selectedRecord.value = null
   fetchFiles()
@@ -481,6 +497,8 @@ async function fetchFiles() {
       sort: sortMode.value,
     }
     if (searchKeyword.value) params.search = searchKeyword.value
+    if (sourceStageFilter.value && sourceStageFilter.value !== 'upload') params.source_stage = sourceStageFilter.value
+    if (sourceStageFilter.value === 'upload') params.source_stage = 'upload'
     if (showAllFiles.value) params.all_users = true
     const res = await getManagedFiles(params)
     isReloading = true

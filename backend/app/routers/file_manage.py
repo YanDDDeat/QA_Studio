@@ -67,7 +67,9 @@ async def list_managed_files(
 
     if search:
         query = query.filter(File.filename.like(f"%{search}%"))
-    if source_stage:
+    if source_stage == "upload":
+        query = query.filter(File.source_stage.is_(None))
+    elif source_stage:
         if source_stage not in [s.value for s in StageEnum]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
