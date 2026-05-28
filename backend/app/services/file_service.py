@@ -38,6 +38,8 @@ STAGE_LABELS = {
     StageEnum.ANSWER_GENERATE: "答案生成",
     StageEnum.ANSWER_VALIDATE: "答案校验",
     StageEnum.DATA_EVALUATE: "数据评估",
+    StageEnum.QUALITY_CHECK: "质检",
+    StageEnum.GENERIC: "通用生成",
     StageEnum.COT_FILTER: "COT过滤",
     StageEnum.DATASET_SPLIT: "数据集切分",
     StageEnum.DATASET_ASSESSMENT: "评分标准生成",
@@ -546,6 +548,7 @@ def clone_datasets_to_new_file(
 _FAIL_SUFFIXES = {
     StageEnum.QUESTION_VALIDATE: "问题校验失败",
     StageEnum.ANSWER_VALIDATE: "答案校验失败",
+    StageEnum.QUALITY_CHECK: "质检失败",
 }
 
 

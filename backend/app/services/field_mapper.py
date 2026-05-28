@@ -37,6 +37,8 @@ _STAGE_DEFAULT_FIELDS = {
     "answer_generate": ["input", "task_type", "originContent"],
     "answer_validate": ["input", "output", "cot", "knowledge"],
     "data_evaluate": ["input", "output", "cot", "knowledge", "task_type", "domain", "difficulty", "originContent"],
+    "quality_check": ["input", "output", "cot", "knowledge", "score", "relevance", "clarity", "reasoning", "terminology"],
+    "generic": [],
     "dataset_assessment": ["input", "output", "cot", "task_type", "domain", "difficulty", "originContent"],
 }
 
