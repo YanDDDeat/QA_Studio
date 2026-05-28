@@ -40,6 +40,7 @@ from app.services.thread_pool import (
 )
 from app.services.field_mapper import apply_llm_fields_to_dataset
 from app.services.file_service import create_output_file, write_datasets_to_file
+from app.services.preprocess_service import preprocess_chunks
 from app.services.validation_service import validate_file_fields
 
 logger = logging.getLogger("qa_studio.question_generate")
@@ -147,6 +148,35 @@ async def _run_question_generate_task(
             task.source_file_id = source_file_id
             db.commit()
 
+        # ── 预处理:清洗 + 过滤 + 合并(纯函数,确定性,可重跑) ──
+        processed_chunks, stats = preprocess_chunks(data, text_field)
+
+        _add_task_log(
+            db, task_id,
+            f"预处理:原始 {stats.original_count} 条 → 保留 {stats.kept_count} 条"
+            f"(其中 {stats.kept_by_merge_count} 条由合并产生),跳过 {stats.skipped_count} 条",
+        )
+        if stats.skip_breakdown:
+            _add_task_log(
+                db, task_id,
+                "跳过分布:" + " / ".join(
+                    f"{k}={v}" for k, v in stats.skip_breakdown.items()
+                ),
+            )
+        if stats.header_footer_blacklist:
+            preview = ", ".join(stats.header_footer_blacklist[:5])
+            more = " ..." if len(stats.header_footer_blacklist) > 5 else ""
+            _add_task_log(
+                db, task_id,
+                f"识别页眉/页脚 {len(stats.header_footer_blacklist)} 项:{preview}{more}",
+            )
+
+        # 更新 progress_total 为预处理后数量
+        if task and start_index == 0:
+            task.progress_total = len(processed_chunks)
+            db.commit()
+        total = len(processed_chunks)
+
         generated_count = 0
         loop = asyncio.get_event_loop()
         consecutive_failures = 0
@@ -168,6 +198,32 @@ async def _run_question_generate_task(
             if task:
                 task.file_id = output_file.id
                 db.commit()
+
+            # ── 写过滤文件(仅在首次启动时写一次) ──
+            if stats.skipped_records:
+                filtered_payload = [
+                    {
+                        "source_id": _safe_field(data[s.original_index], "source_id"),
+                        "source": _safe_field(data[s.original_index], "source"),
+                        text_field: s.text,
+                        "skip_reason": s.skip_reason,
+                    }
+                    for s in stats.skipped_records
+                ]
+                filtered_file = create_output_file(
+                    db=db,
+                    user_id=user_id,
+                    source_file=source_file,
+                    stage=StageEnum.QUESTION_GENERATE,
+                    output_filename=output_filename,
+                    username=username,
+                    name_suffix="preprocess_filtered",
+                    initial_content=filtered_payload,
+                )
+                _add_task_log(
+                    db, task_id,
+                    f"过滤详情已写入文件:{filtered_file.filename}",
+                )
         else:
             task = db.query(Task).filter(Task.id == task_id).first()
             output_file = db.query(File).filter(File.id == task.file_id).first()
@@ -291,41 +347,32 @@ async def _run_question_generate_task(
                     db.commit()
                 return
 
-            # ── 准备当前记录 ──
-            record = data[idx]
+            # ── 准备当前记录(来自预处理后的 chunk) ──
+            chunk = processed_chunks[idx]
+            text_content = chunk.text  # 已是清洗+合并后的版本
+            record = chunk.original_record  # 用于提取 source / source_id 等元信息
 
-            text_content = ""
-            if isinstance(record, dict):
-                text_content = record.get(text_field, "")
-                if not text_content:
-                    for alt in ["text", "content", "body", "paragraph"]:
-                        alt_val = record.get(alt, "")
-                        if alt_val:
-                            text_content = alt_val
-                            break
-            else:
-                text_content = str(record)
-
+            # 预处理保证 text_content 非空;留作防御性断言
             if not text_content:
-                logger.warning(
-                    "Task %d: record %d has no text content, skipping",
+                logger.error(
+                    "Task %d: chunk %d unexpectedly empty after preprocess",
                     task_id, idx,
                 )
-                _add_task_log(db, task_id, f"记录 {idx + 1}: 无文本内容，跳过")
+                _add_task_log(db, task_id, f"记录 {idx + 1}: 预处理后内容为空,跳过")
                 processed_count += 1
                 _update_progress(db, task_id, processed_count)
                 idx += 1
                 continue
 
             effective_source = source_override
-            if not effective_source and isinstance(record, dict):
-                effective_source = record.get("source", "")
+            if not effective_source:
+                effective_source = chunk.source
             if not effective_source:
                 effective_source = os.path.splitext(filename)[0]
 
             effective_source_id = source_id_override
-            if not effective_source_id and isinstance(record, dict):
-                effective_source_id = record.get("source_id", "")
+            if not effective_source_id:
+                effective_source_id = chunk.source_id
 
             llm_prompt = f"{prompt_content}\n\n---\n\n**参考内容：**\n\n{text_content}"
 
@@ -403,6 +450,14 @@ def _add_task_log(db: Session, task_id: int, content: str):
     log = TaskLog(task_id=task_id, log_content=content)
     db.add(log)
     db.commit()
+
+
+def _safe_field(record, field_name: str, default: str = "") -> str:
+    """安全从 record 取字段;非 dict 或缺失则返回 default。"""
+    if isinstance(record, dict):
+        val = record.get(field_name, default)
+        return val if val is not None else default
+    return default
 
 
 def _update_progress(db: Session, task_id: int, current: int):
