@@ -46,11 +46,11 @@
         <el-sub-menu index="group-evaluate">
           <template #title>
             <el-icon><DataAnalysis /></el-icon>
-            <span>数据评估</span>
+            <span>数据评分</span>
           </template>
           <el-menu-item index="/data-evaluate">
             <el-icon><DataAnalysis /></el-icon>
-            <span>数据评估</span>
+            <span>数据评分</span>
           </el-menu-item>
         </el-sub-menu>
 
