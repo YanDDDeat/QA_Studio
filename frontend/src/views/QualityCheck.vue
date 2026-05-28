@@ -340,7 +340,7 @@ import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 // ----- Form state -----
 const fileFields = ref([])
 
-const DEFAULT_REF_FIELDS = ['input', 'output', 'cot', 'knowledge', 'score', 'relevance', 'clarity', 'reasoning', 'terminology']
+const DEFAULT_REF_FIELDS = ['input', 'output', 'cot', 'knowledge', 'originContent', 'task_type', 'difficulty']
 const referenceFields = ref([...DEFAULT_REF_FIELDS])
 
 
