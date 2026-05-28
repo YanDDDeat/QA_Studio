@@ -82,6 +82,13 @@
   - [x] 子需求3：新增「通用生成」页面（任意文件 + 任意 Prompt + 任意 LLM，挂工具分组）
   - [x] DB 迁移：scripts/migrate_quality_check_and_generic.py 扩展 4 个 ENUM 列加入 quality_check/generic，插入质检默认 Prompt（已执行）
 
+## 问题生成前文本预处理
+- [ ] 分支 `feature/text-preprocess`：详见 `docs/requirements/20_需求_问题生成前文本预处理.md`
+  - [ ] 新建 `backend/app/services/preprocess_service.py`：纯函数模块（清洗/分类/合并/token估算/页眉识别）
+  - [ ] 改造 `backend/app/routers/question_generate.py`：主循环前插入预处理调用 + 写过滤文件 + 更新 progress_total
+  - [ ] 新建 `tests/test_preprocess_service.py`：单元测试覆盖每个规则
+  - [ ] 人工集成测试：典型脏数据 JSON → 验证过滤文件、task_logs、暂停恢复
+
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
 - [x] 用户管理：管理员创建账号 + 登录认证 + 数据隔离
