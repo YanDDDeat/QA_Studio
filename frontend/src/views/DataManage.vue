@@ -318,7 +318,7 @@ const DEFAULT_EXPORT_FIELDS = [
   'id', 'domain', 'category', 'task_type', 'input', 'output', 'cot',
   'corpus_cate', 'scene', 'source', 'source_id', 'originContent', 'source_type',
   'knowledge', 'difficulty', 'Relevance', 'Clarity', 'Scientific', 'Reasoning',
-  'Terminology', 'score', 'Assessment',
+  'Terminology', 'score', 'Assessment', 'step_count',
 ]
 
 // Field selection dialog state
