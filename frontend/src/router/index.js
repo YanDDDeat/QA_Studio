@@ -49,6 +49,12 @@ const routes = [
         meta: { title: '数据评估', stage: 'data_evaluate' },
       },
       {
+        path: 'quality-check',
+        name: 'QualityCheck',
+        component: () => import('../views/QualityCheck.vue'),
+        meta: { title: '质检', stage: 'quality_check' },
+      },
+      {
         path: 'cot-filter',
         name: 'CotFilter',
         component: () => import('../views/CotFilter.vue'),
@@ -59,6 +65,12 @@ const routes = [
         name: 'DatasetProcessing',
         component: () => import('../views/DatasetProcessing.vue'),
         meta: { title: '测试集切分', stage: 'dataset_processing' },
+      },
+      {
+        path: 'generic-generate',
+        name: 'GenericGenerate',
+        component: () => import('../views/GenericGenerate.vue'),
+        meta: { title: '通用生成', stage: 'generic' },
       },
       {
         path: 'data-manage',

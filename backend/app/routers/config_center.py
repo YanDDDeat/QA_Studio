@@ -60,7 +60,9 @@ STAGE_DISPLAY_NAMES = {
     "answer_generate": "答案生成",
     "answer_validate": "答案校验",
     "data_evaluate": "数据评估",
+    "quality_check": "质检",
     "dataset_assessment": "评分标准生成",
+    "generic": "通用生成",
 }
 
 # Stages that require a prompt (shown in config center prompt tab)
@@ -72,7 +74,9 @@ PROMPT_REQUIRED_STAGES = {
     "answer_generate",
     "answer_validate",
     "data_evaluate",
+    "quality_check",
     "dataset_assessment",
+    "generic",
 }
 
 # ---------- API endpoints ----------

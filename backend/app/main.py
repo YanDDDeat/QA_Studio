@@ -95,6 +95,8 @@ from app.routers import (
     cot_filter,
     dataset_split,
     dataset_assessment,
+    quality_check,
+    generic_generate,
 )
 from app.database import engine, Base, SessionLocal
 from app.models import User, Dataset, File, Prompt, Task, TaskLog, LLMConfig
@@ -229,6 +231,7 @@ app.include_router(question_validate.router, prefix="/api/question-validate", ta
 app.include_router(answer_generate.router, prefix="/api/answer-generate", tags=["答案生成"])
 app.include_router(answer_validate.router, prefix="/api/answer-validate", tags=["答案校验"])
 app.include_router(data_evaluate.router, prefix="/api/data-evaluate", tags=["数据评估"])
+app.include_router(quality_check.router, prefix="/api/quality-check", tags=["质检"])
 app.include_router(data_manage.router, prefix="/api/data-manage", tags=["数据管理"])
 app.include_router(config_center.router, prefix="/api/config-center", tags=["配置中心"])
 app.include_router(file_manage.router, prefix="/api/file-manage", tags=["文件管理"])
@@ -236,6 +239,7 @@ app.include_router(llm_config.router, prefix="/api/llm-configs", tags=["LLM配�
 app.include_router(cot_filter.router, prefix="/api/cot-filter", tags=["COT过滤"])
 app.include_router(dataset_split.router, prefix="/api/dataset-split", tags=["数据集切分"])
 app.include_router(dataset_assessment.router, prefix="/api/dataset-assessment", tags=["评分标准生成"])
+app.include_router(generic_generate.router, prefix="/api/generic-generate", tags=["通用生成"])
 
 
 @app.get("/")
