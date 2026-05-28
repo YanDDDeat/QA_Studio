@@ -23,9 +23,11 @@ STAGE_REQUIRED_FIELDS: Dict[str, List[str]] = {
     "answer_generate": ["input"],
     "answer_validate": ["input", "output"],
     "data_evaluate": ["input", "output"],
+    "quality_check": ["input", "output"],
     "cot_filter": ["cot"],
     "dataset_split": ["task_type"],
     "dataset_assessment": ["task_type", "output"],
+    "generic": [],
 }
 
 

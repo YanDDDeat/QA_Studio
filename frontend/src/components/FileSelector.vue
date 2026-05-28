@@ -121,6 +121,7 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   fetchFn: { type: Function, default: null },
   expectedStage: { type: String, default: null },
+  initialShowAll: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['update:modelValue', 'upload-success'])
@@ -129,7 +130,7 @@ const mode = ref('existing')
 const uploadFileList = ref([])
 const uploadForm = ref({ text_field: 'text' })
 const uploadLoading = ref(false)
-const showAllFiles = ref(false)
+const showAllFiles = ref(props.initialShowAll)
 const internalFileOptions = ref([])
 const fetchLoading = ref(false)
 

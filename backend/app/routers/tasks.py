@@ -31,6 +31,8 @@ def _ensure_resumers_loaded():
     from app.routers.answer_validate import resume_answer_validate_task
     from app.routers.data_evaluate import resume_data_evaluate_task
     from app.routers.dataset_assessment import resume_dataset_assessment_task
+    from app.routers.quality_check import resume_quality_check_task
+    from app.routers.generic_generate import resume_generic_task
 
     STAGE_TO_RESUMER.update({
         StageEnum.QUESTION_GENERATE: resume_question_generate_task,
@@ -40,6 +42,8 @@ def _ensure_resumers_loaded():
         StageEnum.ANSWER_VALIDATE: resume_answer_validate_task,
         StageEnum.DATA_EVALUATE: resume_data_evaluate_task,
         StageEnum.DATASET_ASSESSMENT: resume_dataset_assessment_task,
+        StageEnum.QUALITY_CHECK: resume_quality_check_task,
+        StageEnum.GENERIC: resume_generic_task,
     })
 
 

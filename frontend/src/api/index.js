@@ -104,6 +104,14 @@ export function startDataEvaluate(data) {
   return api.post('/data-evaluate/start', data)
 }
 
+export function startQualityCheck(data) {
+  return api.post('/quality-check/start', data)
+}
+
+export function startGenericGenerate(data) {
+  return api.post('/generic-generate/start', data)
+}
+
 export function getStageStatus(stage, taskId) {
   return api.get(`/${stage}/status/${taskId}`)
 }
@@ -139,6 +147,32 @@ export function getDataEvaluateSourceFiles(params) {
 
 export function getDataEvaluateReport(taskId) {
   return api.get(`/data-evaluate/report/${taskId}`)
+}
+
+// Quality Check API
+export function getQualityCheckSourceFiles(params) {
+  return api.get('/quality-check/source-files', { params })
+}
+
+export function getQualityCheckStatus(taskId) {
+  return api.get(`/quality-check/status/${taskId}`)
+}
+
+export function retryQualityCheck(taskId, data) {
+  return api.post(`/quality-check/retry/${taskId}`, data)
+}
+
+// Generic Generate API
+export function getGenericGenerateSourceFiles(params) {
+  return api.get('/generic-generate/source-files', { params })
+}
+
+export function getGenericGenerateStatus(taskId) {
+  return api.get(`/generic-generate/status/${taskId}`)
+}
+
+export function retryGenericGenerate(taskId, data) {
+  return api.post(`/generic-generate/retry/${taskId}`, data)
 }
 
 // Files API
