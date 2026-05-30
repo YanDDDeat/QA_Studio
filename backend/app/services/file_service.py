@@ -146,7 +146,8 @@ def ensure_datasets_for_file(db: Session, file_id: int, user_id: int) -> list:
         "domain", "category", "task_type", "input", "output", "cot",
         "step_count", "corpus_cate", "scene", "Assessment", "source",
         "source_id", "source_type", "originContent", "knowledge",
-        "difficulty", "passed",
+        "difficulty", "relevance", "clarity", "reasoning", "terminology",
+        "score", "passed",
     }
 
     # Aliases (LLM-friendly names -> canonical column names)
@@ -158,6 +159,39 @@ def ensure_datasets_for_file(db: Session, file_id: int, user_id: int) -> list:
         "text": "originContent",
     }
 
+    _CASE_INSENSITIVE_IMPORT_FIELDS = {
+        "relevance",
+        "clarity",
+        "reasoning",
+        "terminology",
+        "score",
+    }
+
+    def _is_number_like(value) -> bool:
+        if isinstance(value, (int, float)):
+            return True
+        if isinstance(value, str):
+            try:
+                float(value.strip())
+                return True
+            except ValueError:
+                return False
+        return False
+
+    def _resolve_import_field(key: str, value) -> str | None:
+        if str(key).lower() == "reasoning" and _is_number_like(value):
+            return "reasoning"
+
+        canonical = _ALIASES.get(key, key)
+        if canonical in _IMPORTABLE_FIELDS:
+            return canonical
+
+        canonical_lower = str(canonical).lower()
+        if canonical_lower in _CASE_INSENSITIVE_IMPORT_FIELDS:
+            return canonical_lower
+
+        return None
+
     for record in data:
         if not isinstance(record, dict):
             continue
@@ -166,10 +200,8 @@ def ensure_datasets_for_file(db: Session, file_id: int, user_id: int) -> list:
         extra = {}
 
         for key, value in record.items():
-            # Resolve alias
-            canonical = _ALIASES.get(key, key)
-
-            if canonical in _IMPORTABLE_FIELDS:
+            canonical = _resolve_import_field(key, value)
+            if canonical is not None:
                 if isinstance(value, (list, dict)):
                     kwargs[canonical] = json.dumps(value, ensure_ascii=False)
                 elif value is not None:
