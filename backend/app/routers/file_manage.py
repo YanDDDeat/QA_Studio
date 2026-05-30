@@ -54,6 +54,7 @@ async def list_managed_files(
     page: int = 1,
     page_size: int = 10,
     all_users: bool = False,
+    user_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -61,9 +62,12 @@ async def list_managed_files(
     Admin users can set all_users=true to see all users' files."""
     query = db.query(File)
 
+    is_admin_all = all_users and current_user.username == "admin"
     # Admin can see all users' files when all_users flag is set
-    if not (all_users and current_user.username == "admin"):
+    if not is_admin_all:
         query = query.filter(File.user_id == current_user.id)
+    elif user_id is not None:
+        query = query.filter(File.user_id == user_id)
 
     if search:
         query = query.filter(File.filename.like(f"%{search}%"))

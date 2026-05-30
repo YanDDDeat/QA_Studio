@@ -15,6 +15,22 @@
             inactive-text="仅自己"
             @change="onToggleAllFiles"
           />
+          <el-select
+            v-if="isAdmin && showAllFiles"
+            v-model="selectedUserId"
+            size="small"
+            style="width: 130px"
+            clearable
+            placeholder="筛选用户"
+            @change="onUserFilterChange"
+          >
+            <el-option
+              v-for="user in userOptions"
+              :key="user.id"
+              :label="user.username"
+              :value="user.id"
+            />
+          </el-select>
           <el-input
             v-model="searchKeyword"
             placeholder="搜索文件名"
@@ -259,6 +275,7 @@ import {
   batchDeleteManagedFiles,
   mergeAndDownloadFiles,
   syncFileToDisk,
+  listUsers,
 } from '../api'
 import { categorizeFields, FIELD_LABELS } from '../utils/fieldLabels'
 
@@ -285,6 +302,8 @@ const route = useRoute()
 const searchKeyword = ref('')
 const sortMode = ref('time_desc')
 const sourceStageFilter = ref(null)
+const selectedUserId = ref(null)
+const userOptions = ref([])
 
 // Computed: current page slice (backend now paginated, so files already is the page slice)
 const pagedFiles = computed(() => files.value)
@@ -318,7 +337,7 @@ const DEFAULT_EXPORT_FIELDS = [
   'id', 'domain', 'category', 'task_type', 'input', 'output', 'cot',
   'corpus_cate', 'scene', 'source', 'source_id', 'originContent', 'source_type',
   'knowledge', 'difficulty', 'Relevance', 'Clarity', 'Scientific', 'Reasoning',
-  'Terminology', 'score', 'Assessment', 'step_count',
+  'Terminology', 'score', 'Assessment', 'passed', 'step_count',
 ]
 
 // Field selection dialog state
@@ -483,9 +502,30 @@ function onToggleAllFiles() {
   selectedFileInfo.value = new Map()
   selectedFile.value = null
   sourceStageFilter.value = null
+  selectedUserId.value = null
   previewData.value = null
   selectedRecord.value = null
   fetchFiles()
+}
+
+function onUserFilterChange() {
+  filePage.value = 1
+  selectedFileIds.value = new Set()
+  selectedFileInfo.value = new Map()
+  selectedFile.value = null
+  previewData.value = null
+  selectedRecord.value = null
+  fetchFiles()
+}
+
+async function fetchUsers() {
+  if (!isAdmin.value) return
+  try {
+    const res = await listUsers()
+    userOptions.value = res.users || []
+  } catch {
+    userOptions.value = []
+  }
 }
 
 async function fetchFiles() {
@@ -500,6 +540,7 @@ async function fetchFiles() {
     if (sourceStageFilter.value && sourceStageFilter.value !== 'upload') params.source_stage = sourceStageFilter.value
     if (sourceStageFilter.value === 'upload') params.source_stage = 'upload'
     if (showAllFiles.value) params.all_users = true
+    if (showAllFiles.value && selectedUserId.value) params.user_id = selectedUserId.value
     const res = await getManagedFiles(params)
     isReloading = true
     files.value = res.items || []
@@ -845,6 +886,7 @@ function escapeHtml(text) {
 }
 
 onMounted(async () => {
+  await fetchUsers()
   await fetchFiles()
   // Auto-select file if file_id is in URL query params
   const fileId = route.query.file_id
