@@ -14,6 +14,10 @@
             <el-icon><EditPen /></el-icon>
             <span>问题生成</span>
           </template>
+          <el-menu-item index="/text-preprocess">
+            <el-icon><Operation /></el-icon>
+            <span>文本预处理</span>
+          </el-menu-item>
           <el-menu-item index="/question-generate">
             <el-icon><EditPen /></el-icon>
             <span>问题生成</span>

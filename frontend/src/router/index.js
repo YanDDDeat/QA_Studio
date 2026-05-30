@@ -13,6 +13,12 @@ const routes = [
     component: () => import('../views/Layout.vue'),
     children: [
       {
+        path: 'text-preprocess',
+        name: 'TextPreprocess',
+        component: () => import('../views/TextPreprocess.vue'),
+        meta: { title: '文本预处理' },
+      },
+      {
         path: 'question-generate',
         name: 'QuestionGenerate',
         component: () => import('../views/QuestionGenerate.vue'),

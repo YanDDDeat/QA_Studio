@@ -10,6 +10,7 @@ export const STAGE_LABELS = {
   dataset_split: '数据集切分',
   dataset_assessment: '评分标准生成',
   generic: '通用生成',
+  text_preprocess: '文本预处理',
 }
 
 export function getStageLabel(stageKey) {

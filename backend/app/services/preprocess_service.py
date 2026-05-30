@@ -136,6 +136,7 @@ _SKIP_REASONS = frozenset({
 def preprocess_chunks(
     raw_records: list,
     text_field: str,
+    min_token_threshold: int = MIN_TOKEN_THRESHOLD,
 ) -> "tuple[list[ProcessedChunk], PreprocessStats]":
     """对原始 chunks 做清洗 + 过滤 + 合并。
 
@@ -163,7 +164,7 @@ def preprocess_chunks(
             processed_items.append(("", "内容为空"))
             continue
         cleaned = clean_text(text, blacklist)
-        reason = classify(cleaned, raw=text)
+        reason = classify(cleaned, raw=text, min_token_threshold=min_token_threshold)
         processed_items.append((cleaned, reason))
 
     # ── 步骤 4:合并 too_short + 收集跳过 ──
@@ -177,7 +178,7 @@ def preprocess_chunks(
 
         if reason is None:
             tokens = estimate_tokens(text)
-            if tokens >= MIN_TOKEN_THRESHOLD:
+            if tokens >= min_token_threshold:
                 # 达标,直接通过
                 final_chunks.append(
                     _make_chunk(text, raw_records[i], merged_from=None)
@@ -187,9 +188,9 @@ def preprocess_chunks(
 
             # 触发合并:向后吸收(同 source、reason 为 None)
             merged_text, merged_indices, end = merge_forward(
-                processed_items, raw_records, i
+                processed_items, raw_records, i, min_token_threshold=min_token_threshold
             )
-            if estimate_tokens(merged_text) >= MIN_TOKEN_THRESHOLD:
+            if estimate_tokens(merged_text) >= min_token_threshold:
                 final_chunks.append(
                     _make_chunk(
                         merged_text,
@@ -335,7 +336,11 @@ def clean_text(text: str, header_footer_blacklist: "list[str]") -> str:
 # ---------------------------------------------------------------------------
 
 
-def classify(cleaned: str, raw: str) -> Optional[str]:
+def classify(
+    cleaned: str,
+    raw: str,
+    min_token_threshold: int = MIN_TOKEN_THRESHOLD,
+) -> Optional[str]:
     """按优先级判定 skip_reason,命中即返回;
     都不命中且不 too_short 时返回 None(留给步骤 4 决定合并或保留)。
 
@@ -367,7 +372,7 @@ def classify(cleaned: str, raw: str) -> Optional[str]:
     # 3. 图片为主(图片比例高 + 剥离后内容仍偏短)
     if (
         _image_char_ratio(raw) > IMAGE_CHAR_RATIO
-        and estimate_tokens(cleaned) < MIN_TOKEN_THRESHOLD
+        and estimate_tokens(cleaned) < min_token_threshold
     ):
         return "图片为主"
 
@@ -391,6 +396,7 @@ def merge_forward(
     processed_items: "list[tuple[str, Optional[str]]]",
     raw_records: list,
     start_idx: int,
+    min_token_threshold: int = MIN_TOKEN_THRESHOLD,
 ) -> "tuple[str, list[int], int]":
     """对 start_idx 处的过短 chunk 向后吸收邻居。
 
@@ -414,7 +420,7 @@ def merge_forward(
     end = start_idx + 1
     n = len(processed_items)
 
-    while end < n and estimate_tokens(merged_text) < MIN_TOKEN_THRESHOLD:
+    while end < n and estimate_tokens(merged_text) < min_token_threshold:
         next_text, next_reason = processed_items[end]
         # 不能吸收已被分类标记的 chunk(toc/references/...)
         if next_reason is not None:

@@ -112,6 +112,10 @@ export function startGenericGenerate(data) {
   return api.post('/generic-generate/start', data)
 }
 
+export function runTextPreprocess(data) {
+  return api.post('/text-preprocess/run', data)
+}
+
 export function getStageStatus(stage, taskId) {
   return api.get(`/${stage}/status/${taskId}`)
 }
@@ -123,6 +127,10 @@ export function retryStage(stage, taskId, data) {
 // Source Files API (per-stage)
 export function getQuestionGenerateSourceFiles(params) {
   return api.get('/question-generate/source-files', { params })
+}
+
+export function getTextPreprocessSourceFiles(params) {
+  return api.get('/text-preprocess/source-files', { params })
 }
 
 export function getKnowledgeGenerateSourceFiles(params) {
