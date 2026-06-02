@@ -30,7 +30,7 @@ import json
 import logging
 import os
 import traceback
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -246,13 +246,16 @@ def _read_file_content(db: Session, file_id: int) -> Optional[str]:
         return None
 
 
-def _get_step_output_file_id(db: Session, parent_task_id: int, step_name: str) -> Optional[int]:
-    """Find the output file_id for a completed sub-task of the given step."""
-    sub = db.query(Task).filter(
+def _get_step_output_file_id(db: Session, parent_task_id: int, step_name: str, chunk_index: Optional[int] = None) -> Optional[int]:
+    """Find the output file_id for a completed sub-task of the given step and chunk."""
+    query = db.query(Task).filter(
         Task.parent_task_id == parent_task_id,
         Task.step_name == step_name,
         Task.status == TaskStatusEnum.COMPLETED,
-    ).first()
+    )
+    if chunk_index is not None:
+        query = query.filter(Task.chunk_index == chunk_index)
+    sub = query.first()
     if sub and sub.file_id:
         return sub.file_id
     return None
@@ -294,11 +297,18 @@ def _assemble_step_inputs(
     parent_task_id: int,
     source_file_id: int,
     step_name: str,
+    chunk_content_override: Optional[str] = None,
+    chunk_index: Optional[int] = None,
 ) -> Optional[Dict[str, str]]:
     """Read all required input files for a step and return placeholder→content mapping.
 
     Returns dict like {"content": "论文全文...", "fact_cards_sanitized": "JSON..."}
     or None if any required input is missing.
+
+    chunk_content_override: when provided, used for {content} placeholder instead of
+        reading the entire source file. Used in per-chunk fact_card_gen.
+    chunk_index: when provided, used to find the correct prior-step output for
+        this specific chunk.
     """
     step_meta = PIPELINE_STEPS.get(step_name)
     if not step_meta:
@@ -314,6 +324,7 @@ def _assemble_step_inputs(
         step_order = get_step_order(mode)
 
         # Collect all CoT-related outputs (l2_cot, l1_cot, l0_cot for hcot; cot_gen for cot)
+        # For per-chunk pipelines, gather from ALL chunks
         cot_step_names = []
         if mode == "hcot":
             cot_step_names = ["l2_cot", "l1_cot", "l0_cot"]
@@ -322,7 +333,12 @@ def _assemble_step_inputs(
 
         all_cot_content = []
         for cot_step in cot_step_names:
-            file_id = _get_step_output_file_id(db, parent_task_id, cot_step)
+            if chunk_index is not None:
+                # Per-chunk pipeline: read only this chunk's CoT output
+                file_id = _get_step_output_file_id(db, parent_task_id, cot_step, chunk_index=chunk_index)
+            else:
+                # Single-chunk (legacy) pipeline: read the single output
+                file_id = _get_step_output_file_id(db, parent_task_id, cot_step)
             if file_id:
                 content = _read_file_content(db, file_id)
                 if content:
@@ -343,15 +359,18 @@ def _assemble_step_inputs(
     inputs = {}
     for placeholder, source_step in input_sources.items():
         if source_step is None:
-            # Use the pipeline's original source file
-            content = _read_file_content(db, source_file_id)
-            if content is None:
-                _add_task_log(db, parent_task_id, f"输入 '{placeholder}' 的源文件不存在")
-                return None
-            inputs[placeholder] = content
+            # Use chunk_content_override if provided (per-chunk pipeline), otherwise read the entire source file
+            if chunk_content_override is not None:
+                inputs[placeholder] = chunk_content_override
+            else:
+                content = _read_file_content(db, source_file_id)
+                if content is None:
+                    _add_task_log(db, parent_task_id, f"输入 '{placeholder}' 的源文件不存在")
+                    return None
+                inputs[placeholder] = content
         else:
-            # Use the output of a prior step
-            file_id = _get_step_output_file_id(db, parent_task_id, source_step)
+            # Use the output of a prior step (scoped to this chunk if chunk_index provided)
+            file_id = _get_step_output_file_id(db, parent_task_id, source_step, chunk_index=chunk_index)
             if file_id is None:
                 _add_task_log(db, parent_task_id, f"输入 '{placeholder}' 需要步骤 '{source_step}' 的输出，但该步骤尚未完成或没有输出文件")
                 return None
@@ -370,6 +389,36 @@ def _get_pipeline_mode(db: Session, parent_task_id: int) -> Optional[str]:
     if parent:
         return parent.pipeline_mode
     return None
+
+
+def _get_source_chunks(db: Session, source_file_id: int) -> List[Dict[str, Any]]:
+    """读取源文件关联的所有 Dataset，返回 chunk 列表。
+
+    每个 chunk 是一个 Dataset 条目，其 `input` 字段存文本内容。
+    如果源文件没有关联 Dataset，则将整个文件内容作为单个 chunk。
+    """
+    from app.models.models import Dataset
+
+    datasets = db.query(Dataset).filter(
+        Dataset.file_id == source_file_id,
+    ).order_by(Dataset.id.asc()).all()
+
+    if not datasets:
+        # 没有分 chunk——把整个文件内容当单个 chunk
+        content = _read_file_content(db, source_file_id)
+        if content:
+            return [{"chunk_index": 0, "content": content}]
+        return []
+
+    chunks = []
+    for i, ds in enumerate(datasets):
+        content = ds.input or ""
+        if not content:
+            content = ds.originContent or ""
+        if content.strip():
+            chunks.append({"chunk_index": i, "content": content})
+
+    return chunks
 
 
 def _build_step_prompt(prompt_template: str, inputs: Dict[str, str]) -> str:
@@ -397,6 +446,8 @@ def _execute_llm_step(
     username: str,
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
+    chunk_content_override: Optional[str] = None,
+    chunk_index: Optional[int] = None,
 ) -> bool:
     """Execute one LLM-based pipeline step using the given db session.
 
@@ -411,6 +462,8 @@ def _execute_llm_step(
     _update_progress(db, sub_task, phases[0][0], phases[0][2])
     inputs = _assemble_step_inputs(
         db, parent_task_id, sub_task.source_file_id, step_name,
+        chunk_content_override=chunk_content_override,
+        chunk_index=chunk_index,
     )
     if inputs is None:
         _fail_task(db, sub_task_id, f"步骤 '{step_name}' 所需的输入数据不完整")
@@ -498,22 +551,50 @@ def _execute_export_step(
     phases = PIPELINE_STEP_PHASES.get("export_jsonl", [(0, 100, "执行中")])
     _add_task_log(db, sub_task_id, "开始合成最终交付数据")
 
-    # Phase 0: 读取所有中间步骤数据
+    # Phase 0: 读取所有中间步骤数据（包含所有 chunk）
     _update_progress(db, sub_task, phases[0][0], phases[0][2])
 
     all_steps_data = {}
-    for step_name_iter in step_order:
-        if step_name_iter == "export_jsonl":
+
+    # Get all sub-tasks for this pipeline (all chunks)
+    all_subs = db.query(Task).filter(
+        Task.parent_task_id == parent_task_id,
+        Task.status == TaskStatusEnum.COMPLETED,
+        Task.file_id.isnot(None),
+    ).all()
+
+    for sub in all_subs:
+        if sub.step_name == "export_jsonl":
             continue
-        file_id = _get_step_output_file_id(db, parent_task_id, step_name_iter)
-        if file_id:
-            content = _read_file_content(db, file_id)
-            if content:
-                try:
-                    data = json.loads(content)
-                    all_steps_data[step_name_iter] = data
-                except json.JSONDecodeError as e:
-                    _add_task_log(db, sub_task_id, f"解析步骤 '{step_name_iter}' 输出失败: {e}")
+        if sub.step_name not in step_order:
+            continue
+        content = _read_file_content(db, sub.file_id)
+        if content:
+            try:
+                data = json.loads(content)
+                # Key format: "step_name_chunk_index" to avoid collision across chunks
+                chunk_idx = sub.chunk_index if sub.chunk_index is not None else 0
+                key = f"{sub.step_name}_chunk_{chunk_idx}"
+                all_steps_data[key] = data
+
+                # Also keep the original step_name key with merged data
+                if sub.step_name not in all_steps_data:
+                    all_steps_data[sub.step_name] = data
+                else:
+                    # Merge: combine lists/dicts from multiple chunks
+                    existing = all_steps_data[sub.step_name]
+                    if isinstance(data, dict) and isinstance(existing, dict):
+                        for k, v in data.items():
+                            if k not in existing:
+                                existing[k] = v
+                            elif isinstance(v, list) and isinstance(existing[k], list):
+                                existing[k].extend(v)
+                            elif isinstance(v, dict) and isinstance(existing[k], dict):
+                                existing[k].update(v)
+                    elif isinstance(data, list) and isinstance(existing, list):
+                        existing.extend(data)
+            except json.JSONDecodeError as e:
+                _add_task_log(db, sub_task_id, f"解析步骤 '{sub.step_name}' chunk {sub.chunk_index} 输出失败: {e}")
 
     if not all_steps_data:
         _add_task_log(db, sub_task_id, "没有找到任何中间步骤数据")
@@ -756,6 +837,8 @@ def _run_llm_step_in_thread(
     username: str,
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
+    chunk_content_override: Optional[str] = None,
+    chunk_index: Optional[int] = None,
 ) -> bool:
     """Thread wrapper: open fresh session, run _execute_llm_step, return success."""
     db = SessionLocal()
@@ -768,6 +851,7 @@ def _run_llm_step_in_thread(
             prompt_content=prompt_content, parent_task_id=parent_task_id,
             model=model, user_id=user_id, username=username,
             base_url_override=base_url_override, api_key_override=api_key_override,
+            chunk_content_override=chunk_content_override, chunk_index=chunk_index,
         )
     except Exception as e:
         logger.error(f"Thread wrapper: LLM step {step_name} error: {e}")
@@ -819,11 +903,10 @@ async def run_pipeline_auto_bg(
     api_key_override: Optional[str] = None,
     source_file_id: int = None,
 ):
-    """一键链式执行：当前步完成→自动启动下一步，直到全部完成或某步失败。
+    """一键链式执行：每个 chunk 独立走一遍完整流水线。
 
-    每步在独立线程+独立 session 中执行（不阻塞 FastAPI 事件循环），
-    主协程只负责创建子任务、检查结果、推进下一步。
-    前端轮询可正常获取实时进度。
+    外层循环 chunk，内层循环步骤。每个 chunk 生成自己的总问题和推理树。
+    export_jsonl 只在最后一个 chunk 的最后一步执行，合并所有 chunk 数据。
     """
     db = SessionLocal()
     register_task()
@@ -833,122 +916,153 @@ async def run_pipeline_auto_bg(
             logger.error(f"Auto-run: parent task {parent_task_id} not found")
             return
 
+        # 读取源文件的 chunk 列表
+        chunks = _get_source_chunks(db, source_file_id or parent.source_file_id)
+        total_chunks = len(chunks)
+
+        if total_chunks == 0:
+            parent.status = TaskStatusEnum.FAILED
+            parent.progress_label = "源文件没有可用的内容"
+            db.commit()
+            return
+
+        # 更新父任务的 total_chunks
+        parent.total_chunks = total_chunks
+        db.commit()
+
+        logger.info(f"Auto-run pipeline {parent_task_id}: {total_chunks} chunks to process")
+
         step_order = get_step_order(mode)
 
-        for step_name in step_order:
-            # 检查是否已有已完成的子任务（auto-continue 场景）
-            existing_completed = db.query(Task).filter(
-                Task.parent_task_id == parent_task_id,
-                Task.step_name == step_name,
-                Task.status == TaskStatusEnum.COMPLETED,
-            ).first()
-            if existing_completed:
-                logger.info(f"Auto-run: step '{step_name}' already completed, skipping")
-                continue
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_content = chunk["content"]
 
-            # 检查是否有失败的子任务需要重试
-            existing_failed = db.query(Task).filter(
-                Task.parent_task_id == parent_task_id,
-                Task.step_name == step_name,
-                Task.status == TaskStatusEnum.FAILED,
-            ).first()
-            if existing_failed:
-                existing_failed.status = TaskStatusEnum.PAUSED
-                db.commit()
-
-            step_meta = PIPELINE_STEPS.get(step_name)
-            display, prompt_pattern, input_sources, is_hcot_only = step_meta
-
-            input_file_id = _determine_primary_input_file_id(
-                db, parent_task_id, source_file_id or parent.source_file_id, step_name, step_order
-            )
-
-            # 更新父任务进度标签：当前执行到哪一步
-            parent.progress_label = f"正在执行: {display}"
+            # 更新父任务进度
+            parent = db.query(Task).filter(Task.id == parent_task_id).first()
+            parent.progress_label = f"处理 chunk {chunk_idx + 1}/{total_chunks}"
             db.commit()
 
-            # 创建子任务（状态=RUNNING）
-            sub_task = Task(
-                user_id=user_id,
-                stage=StageEnum.COT_HCOT_PIPELINE,
-                status=TaskStatusEnum.RUNNING,
-                model=model,
-                source_file_id=input_file_id,
-                parent_task_id=parent_task_id,
-                step_name=step_name,
-                progress_current=0,
-                progress_total=100,
-                progress_label="准备执行...",
-            )
+            for step_name in step_order:
+                # export_jsonl 只在最后一个 chunk 执行
+                if step_name == "export_jsonl" and chunk_idx < total_chunks - 1:
+                    continue
 
-            if step_name == "export_jsonl":
-                sub_task.source_file_id = parent.source_file_id
-            else:
-                prompt_obj = find_prompt_for_step(db, step_name, user_id)
-                if not prompt_obj:
-                    logger.error(f"Auto-run: no prompt found for step '{step_name}'")
+                # 检查是否已有同 chunk 同步骤的已完成子任务
+                existing_completed = db.query(Task).filter(
+                    Task.parent_task_id == parent_task_id,
+                    Task.step_name == step_name,
+                    Task.chunk_index == chunk_idx,
+                    Task.status == TaskStatusEnum.COMPLETED,
+                ).first()
+                if existing_completed:
+                    logger.info(f"Auto-run: step '{step_name}' chunk {chunk_idx} already completed, skipping")
+                    continue
+
+                # 检查是否有失败的需要重试
+                existing_failed = db.query(Task).filter(
+                    Task.parent_task_id == parent_task_id,
+                    Task.step_name == step_name,
+                    Task.chunk_index == chunk_idx,
+                    Task.status == TaskStatusEnum.FAILED,
+                ).first()
+                if existing_failed:
+                    existing_failed.status = TaskStatusEnum.PAUSED
+                    db.commit()
+
+                step_meta = PIPELINE_STEPS.get(step_name)
+                display, prompt_pattern, input_sources, is_hcot_only = step_meta
+
+                # 确定 input_file_id
+                input_file_id = source_file_id or parent.source_file_id
+
+                # 创建子任务
+                sub_task = Task(
+                    user_id=user_id,
+                    stage=StageEnum.COT_HCOT_PIPELINE,
+                    status=TaskStatusEnum.RUNNING,
+                    model=model,
+                    source_file_id=input_file_id,
+                    parent_task_id=parent_task_id,
+                    step_name=step_name,
+                    chunk_index=chunk_idx,
+                    total_chunks=total_chunks,
+                    progress_current=0,
+                    progress_total=100,
+                    progress_label="准备执行...",
+                )
+
+                if step_name == "export_jsonl":
+                    sub_task.source_file_id = parent.source_file_id
+                else:
+                    prompt_obj = find_prompt_for_step(db, step_name, user_id)
+                    if not prompt_obj:
+                        parent.status = TaskStatusEnum.FAILED
+                        parent.progress_label = f"找不到步骤 '{step_name}' 的提示词"
+                        db.commit()
+                        return
+                    sub_task.prompt_id = prompt_obj.id
+
+                db.add(sub_task)
+                db.commit()
+                db.refresh(sub_task)
+
+                # 确定该步骤是否需要 chunk_content_override
+                # 只有 fact_card_gen 步骤（input_sources={"content": None}）需要 chunk 内容
+                needs_chunk_override = (step_name == "fact_card_gen" and input_sources == {"content": None})
+
+                if step_name == "export_jsonl":
+                    # export_jsonl 只在最后一个 chunk 执行，合并所有数据
+                    success = await asyncio.to_thread(
+                        _run_export_step_in_thread,
+                        sub_task_id=sub_task.id,
+                        parent_task_id=parent_task_id,
+                        user_id=user_id,
+                        username=username,
+                    )
+                else:
+                    prompt_obj = find_prompt_for_step(db, step_name, user_id)
+                    success = await asyncio.to_thread(
+                        _run_llm_step_in_thread,
+                        sub_task_id=sub_task.id,
+                        step_name=step_name,
+                        prompt_content=prompt_obj.content,
+                        parent_task_id=parent_task_id,
+                        model=model,
+                        user_id=user_id,
+                        username=username,
+                        base_url_override=base_url_override,
+                        api_key_override=api_key_override,
+                        chunk_content_override=chunk_content if needs_chunk_override else None,
+                        chunk_index=chunk_idx,
+                    )
+
+                # 刷新主 session 以读取线程写入的最新状态
+                db.expire_all()
+
+                if not success:
+                    parent = db.query(Task).filter(Task.id == parent_task_id).first()
                     parent.status = TaskStatusEnum.FAILED
-                    parent.progress_label = f"找不到步骤 '{step_name}' 的提示词"
+                    parent.progress_label = f"chunk {chunk_idx + 1} 步骤 '{display}' 执行失败"
                     db.commit()
                     return
-                sub_task.prompt_id = prompt_obj.id
 
-            db.add(sub_task)
-            db.commit()
-            db.refresh(sub_task)
-
-            # 在独立线程中执行该步骤（不阻塞事件循环）
-            if step_name == "export_jsonl":
-                success = await asyncio.to_thread(
-                    _run_export_step_in_thread,
-                    sub_task_id=sub_task.id,
-                    parent_task_id=parent_task_id,
-                    user_id=user_id,
-                    username=username,
-                )
-            else:
-                prompt_obj = find_prompt_for_step(db, step_name, user_id)
-                success = await asyncio.to_thread(
-                    _run_llm_step_in_thread,
-                    sub_task_id=sub_task.id,
-                    step_name=step_name,
-                    prompt_content=prompt_obj.content,
-                    parent_task_id=parent_task_id,
-                    model=model,
-                    user_id=user_id,
-                    username=username,
-                    base_url_override=base_url_override,
-                    api_key_override=api_key_override,
-                )
-
-            # 刷新主 session 以读取线程写入的最新状态
-            db.expire_all()
-
-            if not success:
+                # 步骤完成 — 更新父任务进度
                 parent = db.query(Task).filter(Task.id == parent_task_id).first()
-                parent.status = TaskStatusEnum.FAILED
-                parent.progress_label = f"步骤 '{display}' 执行失败，链式执行终止"
+                parent.progress_label = f"chunk {chunk_idx + 1}/{total_chunks} 完成: {display}"
                 db.commit()
-                _add_task_log(db, parent_task_id, f"链式执行终止：步骤 '{display}' 失败")
-                return
 
-            # 步骤完成 — 更新父任务进度
-            parent = db.query(Task).filter(Task.id == parent_task_id).first()
-            parent.progress_label = f"已完成: {display}"
-            db.commit()
-
-            logger.info(f"Auto-run pipeline {parent_task_id}: step '{step_name}' completed, moving to next")
+                logger.info(f"Auto-run pipeline {parent_task_id}: step '{step_name}' chunk {chunk_idx} completed")
 
         # 全部完成
         parent = db.query(Task).filter(Task.id == parent_task_id).first()
         parent.status = TaskStatusEnum.COMPLETED
-        parent.progress_label = "全部步骤已完成"
+        parent.progress_label = f"全部 {total_chunks} chunk 已完成"
         parent.progress_current = 100
         parent.progress_total = 100
         db.commit()
 
-        _add_task_log(db, parent_task_id, f"一键链式执行完成：全部 {len(step_order)} 步已成功")
-        logger.info(f"Auto-run pipeline {parent_task_id}: all steps completed")
+        _add_task_log(db, parent_task_id, f"一键链式执行完成：{total_chunks} 个 chunk，每个 chunk 跑了完整流水线")
+        logger.info(f"Auto-run pipeline {parent_task_id}: all {total_chunks} chunks completed")
 
     except Exception as e:
         logger.error(f"Auto-run pipeline {parent_task_id}: unexpected error: {e}\n{traceback.format_exc()}")
@@ -1141,7 +1255,11 @@ def _extract_node_list(data: dict, list_key: str) -> list:
 
 
 def get_workflow_status(db: Session, parent_task_id: int, user_id: int) -> Optional[dict]:
-    """Get the full workflow status: parent task + all sub-tasks with files."""
+    """Get the full workflow status: parent task + all sub-tasks organized by chunk.
+
+    Returns a structure with per-chunk step status. For pipelines without chunks
+    (chunk_index is None on all sub-tasks), falls back to single-chunk view.
+    """
     parent = db.query(Task).filter(
         Task.id == parent_task_id,
         Task.user_id == user_id,
@@ -1152,69 +1270,114 @@ def get_workflow_status(db: Session, parent_task_id: int, user_id: int) -> Optio
 
     sub_tasks = db.query(Task).filter(
         Task.parent_task_id == parent_task_id,
-    ).order_by(Task.id.asc()).all()
+    ).order_by(Task.chunk_index.asc(), Task.id.asc()).all()
 
     mode = parent.pipeline_mode or "hcot"
     step_order = get_step_order(mode)
+    total_chunks = parent.total_chunks or 1
 
-    # Build step status map
-    completed_steps = []
-    steps_info = []
-    for step_name in step_order:
-        display, prompt_pattern, input_sources, is_hcot_only = PIPELINE_STEPS.get(
-            step_name, (step_name, "", None, False)
-        )
+    # Determine if this pipeline uses chunks
+    has_chunks = any(t.chunk_index is not None for t in sub_tasks)
+    if not has_chunks and total_chunks <= 1:
+        # Legacy single-chunk pipeline — use old flat format
+        total_chunks = 1
 
-        sub = next((t for t in sub_tasks if t.step_name == step_name), None)
+    # Build per-chunk step status
+    chunks_info = []
+    all_completed_steps = []
 
-        step_info = {
-            "step_name": step_name,
-            "display_name": display,
-            "is_hcot_only": is_hcot_only,
-            "needs_llm": prompt_pattern is not None,
-            "status": "pending",
-            "task_id": None,
-            "output_file_id": None,
-            "output_filename": None,
-            "progress_current": 0,
-            "progress_total": 100,
-            "progress_label": "",
-        }
+    for chunk_idx in range(total_chunks):
+        chunk_steps = []
+        for step_name in step_order:
+            # Skip export_jsonl for non-last chunks (it only runs on the last chunk)
+            if step_name == "export_jsonl" and has_chunks and chunk_idx < total_chunks - 1:
+                continue
 
-        if sub:
-            step_info["status"] = sub.status.value if isinstance(sub.status, TaskStatusEnum) else sub.status
-            step_info["task_id"] = sub.id
-            step_info["progress_current"] = sub.progress_current or 0
-            step_info["progress_total"] = 100
-            # Use progress_label from DB, fallback to status-based label
-            if sub.progress_label:
-                step_info["progress_label"] = sub.progress_label
-            else:
-                if sub.status == TaskStatusEnum.RUNNING:
-                    step_info["progress_label"] = "正在执行..."
-                elif sub.status == TaskStatusEnum.COMPLETED:
-                    step_info["progress_label"] = "已完成"
-                elif sub.status == TaskStatusEnum.FAILED:
-                    step_info["progress_label"] = "失败"
-            step_info["task_id"] = sub.id
-            if sub.file_id:
-                out_file = db.query(File).filter(File.id == sub.file_id).first()
-                if out_file:
-                    step_info["output_file_id"] = out_file.id
-                    step_info["output_filename"] = out_file.filename
+            display, prompt_pattern, input_sources, is_hcot_only = PIPELINE_STEPS.get(
+                step_name, (step_name, "", None, False)
+            )
 
-            if sub.status == TaskStatusEnum.COMPLETED:
-                completed_steps.append(step_name)
+            sub = next(
+                (t for t in sub_tasks if t.step_name == step_name and
+                 (t.chunk_index == chunk_idx if has_chunks else t.chunk_index is None)),
+                None,
+            )
 
-        steps_info.append(step_info)
+            step_info = {
+                "step_name": step_name,
+                "display_name": display,
+                "is_hcot_only": is_hcot_only,
+                "needs_llm": prompt_pattern is not None,
+                "status": "pending",
+                "task_id": None,
+                "output_file_id": None,
+                "output_filename": None,
+                "progress_current": 0,
+                "progress_total": 100,
+                "progress_label": "",
+            }
+
+            if sub:
+                step_info["status"] = sub.status.value if isinstance(sub.status, TaskStatusEnum) else sub.status
+                step_info["task_id"] = sub.id
+                step_info["progress_current"] = sub.progress_current or 0
+                step_info["progress_total"] = 100
+                if sub.progress_label:
+                    step_info["progress_label"] = sub.progress_label
+                else:
+                    if sub.status == TaskStatusEnum.RUNNING:
+                        step_info["progress_label"] = "正在执行..."
+                    elif sub.status == TaskStatusEnum.COMPLETED:
+                        step_info["progress_label"] = "已完成"
+                    elif sub.status == TaskStatusEnum.FAILED:
+                        step_info["progress_label"] = "失败"
+                step_info["task_id"] = sub.id
+                if sub.file_id:
+                    out_file = db.query(File).filter(File.id == sub.file_id).first()
+                    if out_file:
+                        step_info["output_file_id"] = out_file.id
+                        step_info["output_filename"] = out_file.filename
+
+                if sub.status == TaskStatusEnum.COMPLETED:
+                    all_completed_steps.append(f"{step_name}_chunk_{chunk_idx}")
+
+            chunk_steps.append(step_info)
+
+        chunks_info.append({
+            "chunk_index": chunk_idx,
+            "steps": chunk_steps,
+        })
 
     # Determine next runnable step
-    next_step = get_next_step(mode, completed_steps)
+    completed_step_names = []
+    for cs in all_completed_steps:
+        # Extract step_name from "step_name_chunk_N"
+        step_name = cs.split("_chunk_")[0]
+        if step_name not in completed_step_names:
+            completed_step_names.append(step_name)
+    next_step = get_next_step(mode, completed_step_names)
+
+    # Calculate overall progress
+    # For chunked pipelines: total steps = total_chunks * len(step_order) - (total_chunks - 1)
+    # (because export_jsonl only runs once)
+    if has_chunks and total_chunks > 1 and "export_jsonl" in step_order:
+        total_steps = total_chunks * len(step_order) - (total_chunks - 1)
+    else:
+        total_steps = len(step_order)
+    completed_count = len(all_completed_steps)
 
     # Determine overall pipeline status
-    any_running = any(s["status"] == "running" for s in steps_info)
-    any_failed = any(s["status"] == "failed" for s in steps_info)
-    all_completed = len(completed_steps) == len(step_order)
+    any_running = any(
+        s["status"] == "running"
+        for chunk in chunks_info
+        for s in chunk["steps"]
+    )
+    any_failed = any(
+        s["status"] == "failed"
+        for chunk in chunks_info
+        for s in chunk["steps"]
+    )
+    all_completed = completed_count >= total_steps
 
     if any_running:
         pipeline_status = "running"
@@ -1255,10 +1418,11 @@ def get_workflow_status(db: Session, parent_task_id: int, user_id: int) -> Optio
             "created_at": parent.created_at.isoformat() if parent.created_at else None,
             "source_file": source_file,
         },
-        "steps": steps_info,
-        "completed_steps": completed_steps,
+        "chunks": chunks_info,
+        "total_chunks": total_chunks,
+        "completed_steps": completed_count,
+        "total_steps": total_steps,
         "next_step": next_step,
-        "total_steps": len(step_order),
     }
 
 
