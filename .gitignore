@@ -44,6 +44,7 @@ backend/server.log
 # Local data / uploads (generated JSON files)
 uploads/
 backend/uploads/
+storage/
 
 # Vendor dependencies (installed packages, do not commit)
 backend/vendor/

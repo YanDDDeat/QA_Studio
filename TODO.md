@@ -26,6 +26,13 @@
   - [x] 后端下载接口支持 fields 参数过滤
 
 ## 新需求
+- [ ] 分支 `BIT/wj`：标注流水线2专业 CoT 构建，详见 `docs/requirements/26_需求_标注流水线2专业CoT构建.md`
+  - [ ] 在 COT/H-COT 标注分组下新增「标注流水线2」页面入口
+  - [ ] 实现系统已有单 chunk JSON 文件选择、字段下拉/默认 text 和一键 Pipeline，CoT 类型由 Step 3 模型自动判定
+  - [ ] 按固定 6 个逻辑步骤生成 Step 3 推荐的单个 CoT 类型样本，运行中步骤列表不得为空，阶段产物直接写 JSON 文件
+  - [ ] 流水线任务列表支持分页展示
+  - [ ] 最终产物区放在流水线步骤下方，生成并支持下载 `final_samples.json` / `final_samples.jsonl`
+
 - [x] 分支 `feature/llm-field-auto-mapping`：详见 `docs/requirements/12_需求_LLM返回字段自动映射到数据库列.md`
   - [x] 新建 `field_mapper.py`：动态映射 LLM 字段到数据库列
   - [x] 改造 6 个管线阶段：替换硬编码白名单为自动映射

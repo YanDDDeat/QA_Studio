@@ -1,0 +1,592 @@
+<template>
+  <div class="page-container">
+    <!-- 顶部基本信息 -->
+    <el-card class="info-card">
+      <template #header>
+        <div class="card-header">
+          <span>{{ run?.run_name || '标注流水线2详情' }}</span>
+          <div>
+            <el-tag :type="statusTagType(run?.status)" size="large">
+              {{ statusLabel(run?.status) }}
+            </el-tag>
+            <el-button @click="goBack" style="margin-left: 12px">
+              <el-icon><ArrowLeft /></el-icon>
+              返回列表
+            </el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-descriptions :column="3" border v-if="run">
+        <el-descriptions-item label="流水线">{{ run.pipeline_name }}</el-descriptions-item>
+        <el-descriptions-item label="Run ID">{{ run.run_id }}</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag :type="statusTagType(run.status)" size="small">{{ statusLabel(run.status) }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="源文件">{{ run.source_file?.filename || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="正文字段">{{ run.source_input?.text_field || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="模型判定 CoT 类型">{{ recommendedCotTypeLabel }}</el-descriptions-item>
+        <el-descriptions-item label="模型">{{ run.llm?.model || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="总步骤">{{ run.total_steps || 0 }}</el-descriptions-item>
+        <el-descriptions-item label="样本数">{{ run.sample_count || 0 }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ formatTime(run.created_at) }}</el-descriptions-item>
+      </el-descriptions>
+      <el-alert
+        v-if="run?.error_message"
+        type="error"
+        :title="run.error_message"
+        show-icon
+        style="margin-top: 12px"
+      />
+      <el-alert
+        v-else-if="run?.stop_reason"
+        type="warning"
+        :title="run.stop_reason"
+        show-icon
+        style="margin-top: 12px"
+      />
+    </el-card>
+
+    <!-- 总进度条 -->
+    <el-card style="margin-top: 16px" v-if="run">
+      <div class="overall-progress">
+        <div class="progress-header">
+          <span class="progress-title">流水线总进度</span>
+          <span class="progress-count">
+            完成 {{ run.completed_steps || 0 }}/{{ run.total_steps || 0 }} 步
+            <span v-if="run.skipped_steps">，跳过 {{ run.skipped_steps }}</span>
+          </span>
+        </div>
+        <el-progress
+          :percentage="run.progress_percentage || 0"
+          :status="overallStatus"
+          :stroke-width="20"
+        />
+        <div class="step-tracker">
+          <div
+            v-for="step in run.steps"
+            :key="step.step_key"
+            class="step-dot"
+            :class="stepDotClass(step)"
+            :title="step.display_name"
+          ></div>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 步骤列表 -->
+    <el-card style="margin-top: 16px" v-loading="loading">
+      <template #header>
+        <span>流水线步骤</span>
+      </template>
+
+      <div class="steps-container" v-if="run">
+        <div
+          v-for="(step, index) in run.steps"
+          :key="step.step_key"
+          class="step-card"
+          :class="{
+            'step-completed': step.status === 'completed',
+            'step-running': step.status === 'running',
+            'step-failed': step.status === 'failed',
+            'step-skipped': step.status === 'skipped',
+          }"
+        >
+          <div class="step-header">
+            <div class="step-index" :class="{
+              'index-completed': step.status === 'completed',
+              'index-failed': step.status === 'failed',
+              'index-skipped': step.status === 'skipped',
+            }">
+              {{ step.status === 'completed' ? '✓' : step.status === 'skipped' ? '—' : (index + 1) }}
+            </div>
+            <div class="step-info">
+              <div class="step-name">{{ step.display_name }}</div>
+              <div class="step-badges">
+                <el-tag :type="statusTagType(step.status)" size="small">
+                  {{ statusLabel(step.status) }}
+                </el-tag>
+                <el-tag v-if="step.cot_type" type="info" size="small" style="margin-left: 4px">
+                  {{ step.cot_type }}
+                </el-tag>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="step.status === 'running'" class="step-progress">
+            <el-progress
+              :percentage="step.progress_current || 0"
+              :stroke-width="12"
+              striped
+              striped-flow
+            >
+              <template #default>
+                <span>{{ step.progress_label || '正在执行...' }}</span>
+              </template>
+            </el-progress>
+          </div>
+
+          <div class="step-actions">
+            <span v-if="step.status === 'running'" class="running-indicator">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              {{ step.progress_label || '正在执行...' }}
+            </span>
+            <span v-else-if="step.progress_label" class="step-label">
+              {{ step.progress_label }}
+            </span>
+
+            <el-button
+              v-if="step.status === 'completed' && step.artifact_path"
+              type="success"
+              size="small"
+              link
+              @click="previewArtifact(step.artifact_path, step.display_name)"
+            >
+              <el-icon><Document /></el-icon>
+              查看产物
+            </el-button>
+          </div>
+
+          <div v-if="index < run.steps.length - 1" class="step-connector"></div>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 最终导出区 -->
+    <el-card style="margin-top: 16px" v-if="run">
+      <template #header>
+        <div class="card-header">
+          <span>最终产物</span>
+          <div>
+            <el-button
+              type="success"
+              size="small"
+              :disabled="!hasFinalJson"
+              @click="downloadExport('json')"
+            >
+              <el-icon><Download /></el-icon>
+              下载 final_samples.json
+            </el-button>
+            <el-button
+              type="success"
+              size="small"
+              :disabled="!hasFinalJsonl"
+              @click="downloadExport('jsonl')"
+            >
+              <el-icon><Download /></el-icon>
+              下载 final_samples.jsonl
+            </el-button>
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!hasFinalJson"
+              @click="previewArtifact('final_samples.json', 'final_samples.json')"
+            >
+              <el-icon><Document /></el-icon>
+              预览最终样本
+            </el-button>
+          </div>
+        </div>
+      </template>
+      <el-table :data="run.final_samples_preview || []" stripe style="width: 100%">
+        <el-table-column prop="cot_type" label="CoT 类型" min-width="180" />
+        <el-table-column prop="input" label="Input" min-width="260" show-overflow-tooltip />
+        <el-table-column prop="output" label="Output" min-width="260" show-overflow-tooltip />
+      </el-table>
+      <el-empty v-if="!run.final_samples_preview?.length" description="暂无最终样本" />
+    </el-card>
+
+    <!-- 输出文件预览弹窗 -->
+    <el-dialog
+      v-model="previewDialogVisible"
+      :title="previewFileName"
+      width="760px"
+      destroy-on-close
+    >
+      <div v-loading="previewLoading" class="preview-content">
+        <pre v-if="previewContent">{{ previewContent }}</pre>
+        <el-empty v-else description="文件内容为空" />
+      </div>
+      <template #footer>
+        <el-button @click="previewDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { ArrowLeft, Document, Download, Loading } from '@element-plus/icons-vue'
+import {
+  downloadProfessionalCotExport,
+  getProfessionalCotArtifact,
+  getProfessionalCotRunDetail,
+} from '../../api'
+
+const router = useRouter()
+const route = useRoute()
+const runId = computed(() => route.params.id)
+
+const loading = ref(false)
+const run = ref(null)
+let pollTimer = null
+
+async function fetchRunDetail() {
+  try {
+    const res = await getProfessionalCotRunDetail(runId.value)
+    run.value = res
+    scheduleNextPoll()
+  } catch (err) {
+    const detail = err.response?.data?.detail || '获取流水线2详情失败'
+    ElMessage.error(detail)
+  }
+}
+
+function scheduleNextPoll() {
+  stopPolling()
+  if (run.value?.status !== 'running' && !run.value?.steps?.some(s => s.status === 'running')) {
+    return
+  }
+  const runningStep = run.value?.steps?.find(s => s.status === 'running')
+  const interval = (runningStep?.progress_current > 10) ? 5000 : 2000
+  pollTimer = setTimeout(() => {
+    fetchRunDetail()
+  }, interval)
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+const hasFinalJson = computed(() => Boolean(run.value?.final_outputs?.json))
+const hasFinalJsonl = computed(() => Boolean(run.value?.final_outputs?.jsonl))
+const recommendedCotTypeLabel = computed(() => {
+  return run.value?.recommended_cot_type?.display_name || run.value?.target_cot_type?.display_name || '待判定'
+})
+
+const overallStatus = computed(() => {
+  if (!run.value) return ''
+  if (run.value.status === 'completed') return 'success'
+  if (run.value.status === 'failed') return 'exception'
+  return ''
+})
+
+const previewDialogVisible = ref(false)
+const previewLoading = ref(false)
+const previewContent = ref('')
+const previewFileName = ref('')
+
+async function previewArtifact(path, title) {
+  previewDialogVisible.value = true
+  previewLoading.value = true
+  previewContent.value = ''
+  previewFileName.value = title || path
+  try {
+    const res = await getProfessionalCotArtifact(runId.value, path)
+    if (res?.content) {
+      previewContent.value = res.content
+    } else {
+      previewContent.value = JSON.stringify(res, null, 2)
+    }
+  } catch (err) {
+    const detail = err.response?.data?.detail || '读取产物失败'
+    previewContent.value = detail
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function extractErrorDetail(err, fallback) {
+  const data = err.response?.data
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text()
+      const parsed = JSON.parse(text)
+      return parsed.detail || fallback
+    } catch {
+      return fallback
+    }
+  }
+  return data?.detail || fallback
+}
+
+async function downloadExport(type) {
+  try {
+    const blob = await downloadProfessionalCotExport(runId.value, type)
+    const suffix = type === 'jsonl' ? 'jsonl' : 'json'
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${runId.value}_final_samples.${suffix}`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (err) {
+    const detail = await extractErrorDetail(err, '下载失败')
+    ElMessage.error(detail)
+  }
+}
+
+function goBack() {
+  router.push('/professional-cot-runs')
+}
+
+function statusTagType(s) {
+  const map = { running: 'primary', completed: 'success', failed: 'danger', pending: 'info', paused: 'warning', skipped: 'info' }
+  return map[s] || 'info'
+}
+
+function statusLabel(s) {
+  const map = { running: '运行中', completed: '已完成', failed: '失败', pending: '未开始', paused: '已暂停', skipped: '已跳过' }
+  return map[s] || s || '—'
+}
+
+function stepDotClass(step) {
+  const map = {
+    completed: 'dot-completed',
+    running: 'dot-running',
+    failed: 'dot-failed',
+    pending: 'dot-pending',
+    skipped: 'dot-skipped',
+  }
+  return map[step.status] || 'dot-pending'
+}
+
+function formatTime(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return d.toLocaleString('zh-CN')
+}
+
+onMounted(async () => {
+  loading.value = true
+  try {
+    await fetchRunDetail()
+  } finally {
+    loading.value = false
+  }
+})
+
+onUnmounted(() => {
+  stopPolling()
+})
+</script>
+
+<style scoped>
+.page-container {
+  max-width: 1000px;
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.steps-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.step-card {
+  padding: 16px 20px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+  transition: all 0.3s;
+  margin-bottom: 4px;
+}
+
+.step-card.step-completed {
+  background: #f0f9eb;
+  border-color: #b3e19d;
+}
+
+.step-card.step-running {
+  background: #ecf5ff;
+  border-color: #b3d8ff;
+}
+
+.step-card.step-failed {
+  background: #fef0f0;
+  border-color: #fbc4c4;
+}
+
+.step-card.step-skipped {
+  background: #fafafa;
+  border-color: #dcdfe6;
+  opacity: 0.86;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.step-index {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #909399;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.step-index.index-completed {
+  background: #67c23a;
+}
+
+.step-index.index-failed {
+  background: #f56c6c;
+}
+
+.step-index.index-skipped {
+  background: #c0c4cc;
+}
+
+.step-card.step-running .step-index {
+  background: #409eff;
+}
+
+.step-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.step-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.step-badges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.step-progress {
+  margin-top: 8px;
+  padding: 4px 0;
+}
+
+.step-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0,0,0,0.06);
+}
+
+.running-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #409eff;
+  font-size: 13px;
+}
+
+.step-label {
+  color: #606266;
+  font-size: 13px;
+}
+
+.step-connector {
+  width: 2px;
+  height: 16px;
+  background: #dcdfe6;
+  margin-left: 36px;
+  border-radius: 1px;
+}
+
+.preview-content {
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.preview-content pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 13px;
+  line-height: 1.6;
+  background: #f5f7fa;
+  padding: 12px;
+  border-radius: 4px;
+}
+
+.overall-progress {
+  padding: 4px 0;
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.progress-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.progress-count {
+  font-size: 13px;
+  color: #666;
+}
+
+.step-tracker {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.step-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  transition: all 0.3s;
+}
+
+.dot-completed {
+  background: #67c23a;
+}
+
+.dot-running {
+  background: #409eff;
+  animation: pulse 1.5s infinite;
+}
+
+.dot-failed {
+  background: #f56c6c;
+}
+
+.dot-pending {
+  background: #c0c4cc;
+}
+
+.dot-skipped {
+  background: #dcdfe6;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+</style>

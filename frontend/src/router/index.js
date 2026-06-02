@@ -31,6 +31,18 @@ const routes = [
         meta: { title: '标注流水线详情' },
       },
       {
+        path: 'professional-cot-runs',
+        name: 'ProfessionalCotRuns',
+        component: () => import('../views/CotHcot/ProfessionalCotList.vue'),
+        meta: { title: '标注流水线2：专业 CoT 构建' },
+      },
+      {
+        path: 'professional-cot-runs/:id',
+        name: 'ProfessionalCotRunDetail',
+        component: () => import('../views/CotHcot/ProfessionalCotDetail.vue'),
+        meta: { title: '标注流水线2详情' },
+      },
+      {
         path: 'question-generate',
         name: 'QuestionGenerate',
         component: () => import('../views/QuestionGenerate.vue'),

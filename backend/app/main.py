@@ -99,6 +99,7 @@ from app.routers import (
     generic_generate,
     text_preprocess,
     cot_hcot_pipeline,
+    professional_cot,
 )
 from app.database import engine, Base, SessionLocal
 from app.models import User, Dataset, File, Prompt, Task, TaskLog, LLMConfig
@@ -244,6 +245,7 @@ app.include_router(dataset_assessment.router, prefix="/api/dataset-assessment", 
 app.include_router(generic_generate.router, prefix="/api/generic-generate", tags=["通用生成"])
 app.include_router(text_preprocess.router, prefix="/api/text-preprocess", tags=["文本预处理"])
 app.include_router(cot_hcot_pipeline.router, prefix="/api/cothcot", tags=["CoT/H-CoT Pipeline"])
+app.include_router(professional_cot.router, prefix="/api/professional-cot", tags=["标注流水线2"])
 
 
 @app.get("/")

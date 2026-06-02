@@ -396,3 +396,32 @@ export function autoRunCothcotPipeline(data) {
 export function autoContinueCothcotPipeline(taskId) {
   return api.post(`/cothcot/auto-continue/${taskId}`)
 }
+
+// Professional CoT Pipeline API（标注流水线2）
+export function getProfessionalCotTypes() {
+  return api.get('/professional-cot/cot-types')
+}
+
+export function getProfessionalCotSourceFiles(params = {}) {
+  return api.get('/file-manage', { params: { page_size: 1000, ...params } })
+}
+
+export function startProfessionalCotRun(data) {
+  return api.post('/professional-cot/runs', data)
+}
+
+export function listProfessionalCotRuns(params = {}) {
+  return api.get('/professional-cot/runs', { params })
+}
+
+export function getProfessionalCotRunDetail(runId) {
+  return api.get(`/professional-cot/runs/${runId}`)
+}
+
+export function getProfessionalCotArtifact(runId, path) {
+  return api.get(`/professional-cot/runs/${runId}/artifact`, { params: { path } })
+}
+
+export function downloadProfessionalCotExport(runId, type) {
+  return api.get(`/professional-cot/runs/${runId}/export/${type}`, { responseType: 'blob' })
+}

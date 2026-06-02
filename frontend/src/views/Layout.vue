@@ -93,6 +93,10 @@
             <el-icon><Tickets /></el-icon>
             <span>标注流水线</span>
           </el-menu-item>
+          <el-menu-item index="/professional-cot-runs">
+            <el-icon><Tickets /></el-icon>
+            <span>标注流水线2</span>
+          </el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu index="group-tools">
