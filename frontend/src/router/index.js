@@ -19,6 +19,18 @@ const routes = [
         meta: { title: '文本预处理' },
       },
       {
+        path: 'cot-hcot-workflows',
+        name: 'CotHcotWorkflows',
+        component: () => import('../views/CotHcot/WorkflowList.vue'),
+        meta: { title: 'CoT/H-CoT 标注' },
+      },
+      {
+        path: 'cot-hcot-workflows/:id',
+        name: 'CotHcotWorkflowDetail',
+        component: () => import('../views/CotHcot/WorkflowDetail.vue'),
+        meta: { title: '标注流水线详情' },
+      },
+      {
         path: 'question-generate',
         name: 'QuestionGenerate',
         component: () => import('../views/QuestionGenerate.vue'),

@@ -45,6 +45,9 @@ backend/server.log
 uploads/
 backend/uploads/
 
+# Vendor dependencies (installed packages, do not commit)
+backend/vendor/
+
 # Local DB
 *.db
 *.sqlite3
@@ -52,3 +55,9 @@ backend/uploads/
 # Test temp files
 test_body.json
 test_output_*.txt
+
+# Temp/debug scripts
+backend/fix_status.py
+
+# Exported data files
+*_export_jsonl.json

@@ -84,6 +84,17 @@
           </el-menu-item>
         </el-sub-menu>
 
+        <el-sub-menu index="group-cot-hcot">
+          <template #title>
+            <el-icon><Tickets /></el-icon>
+            <span>CoT/H-CoT 标注</span>
+          </template>
+          <el-menu-item index="/cot-hcot-workflows">
+            <el-icon><Tickets /></el-icon>
+            <span>标注流水线</span>
+          </el-menu-item>
+        </el-sub-menu>
+
         <el-sub-menu index="group-tools">
           <template #title>
             <el-icon><Tools /></el-icon>
@@ -207,7 +218,7 @@ import {
   EditPen, Share, Checked, Document, Select,
   DataAnalysis, Folder, Setting, ArrowDown, UserFilled,
   Operation, Filter, Grid, List, Tools, Connection, Upload,
-  CircleCheck, MagicStick,
+  CircleCheck, MagicStick, Tickets,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()

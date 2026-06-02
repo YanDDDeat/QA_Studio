@@ -43,6 +43,7 @@ STAGE_LABELS = {
     StageEnum.DATASET_SPLIT: "数据集切分",
     StageEnum.DATASET_ASSESSMENT: "评分标准生成",
     StageEnum.GENERIC: "通用生成",
+    StageEnum.COT_HCOT_PIPELINE: "CoT标注",
 }
 
 

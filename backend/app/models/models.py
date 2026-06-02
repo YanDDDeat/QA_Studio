@@ -22,15 +22,23 @@ class StageEnum(str, PyEnum):
     DATA_EVALUATE = "data_evaluate"
     QUALITY_CHECK = "quality_check"
     COT_FILTER = "cot_filter"
+    COT_FLOW = "cot_flow"              # 旧数据兼容（废弃值，勿主动使用）
     DATASET_SPLIT = "dataset_split"
     DATASET_ASSESSMENT = "dataset_assessment"
     GENERIC = "generic"
+    COT_HCOT_PIPELINE = "cot_hcot_pipeline"  # CoT/H-CoT 标注流水线
 
 
 # SQLAlchemy 2.0 解析混合 Enum 类时 dict keys 用的是 member 名称而非值
 # 通过 values_callable 让 SA 正确获取枚举的字符串值
+# native_enum=False → 用 VARCHAR 存储而非 MySQL ENUM，容忍未知值避免 LookupError
 def _stage_enum_type(**kw):
-    return Enum(StageEnum, values_callable=lambda x: [m.value for m in x], **kw)
+    return Enum(
+        StageEnum,
+        values_callable=lambda x: [m.value for m in x],
+        native_enum=False,
+        **kw,
+    )
 
 
 class TaskStatusEnum(str, PyEnum):
@@ -165,9 +173,15 @@ class Task(Base):
     source_file_id = Column(Integer, nullable=True)
     model = Column(String(128), nullable=True)
     prompt_id = Column(Integer, ForeignKey("prompts.id"), nullable=True)
-    status = Column(Enum(TaskStatusEnum), default=TaskStatusEnum.PENDING, nullable=False)
+    status = Column(Enum(TaskStatusEnum, native_enum=False, values_callable=lambda x: [m.value for m in x], create_constraint=False), default=TaskStatusEnum.PENDING, nullable=False)
     progress_current = Column(Integer, default=0, nullable=True)
     progress_total = Column(Integer, default=0, nullable=True)
+    progress_label = Column(String(100), nullable=True)  # 步骤进度阶段描述，如"调用 LLM..."
+    # --- CoT/H-CoT Pipeline fields ---
+    parent_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True, index=True)  # 子步骤链接到父流水线
+    pipeline_mode = Column(String(16), nullable=True)  # "hcot" or "cot"，仅父任务填写
+    pipeline_name = Column(String(128), nullable=True)  # 用户定义的流水线名称
+    step_name = Column(String(64), nullable=True)  # 步骤标识如 "fact_card_gen"，仅子任务填写
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

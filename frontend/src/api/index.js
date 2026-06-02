@@ -355,3 +355,40 @@ export function getDatasetAssessmentSourceFiles(params) {
 export function getAssessmentPrompts(params) {
   return api.get('/prompts', { params })
 }
+
+// CoT/H-CoT Pipeline API
+export function startCothcotPipeline(data) {
+  return api.post('/cothcot/start', data)
+}
+
+export function runCothcotStep(data) {
+  return api.post('/cothcot/run-step', data)
+}
+
+export function listCothcotWorkflows() {
+  return api.get('/cothcot/workflows')
+}
+
+export function getCothcotWorkflowDetail(taskId) {
+  return api.get(`/cothcot/workflow/${taskId}`)
+}
+
+export function getCothcotPipelineSteps(mode) {
+  return api.get(`/cothcot/steps/${mode}`)
+}
+
+export function getCothcotSourceFiles() {
+  return api.get('/cothcot/source-files')
+}
+
+export function getCothcotPipelinePrompts(mode) {
+  return api.get(`/cothcot/prompts/${mode}`)
+}
+
+export function autoRunCothcotPipeline(data) {
+  return api.post('/cothcot/auto-run', data)
+}
+
+export function autoContinueCothcotPipeline(taskId) {
+  return api.post(`/cothcot/auto-continue/${taskId}`)
+}
