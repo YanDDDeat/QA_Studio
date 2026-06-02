@@ -73,17 +73,45 @@
           <el-form-item label="转换策略">
             <el-radio-group v-model="mdForm.split_mode">
               <el-radio value="full">整篇不切分</el-radio>
-              <el-radio value="section">按章节切分</el-radio>
+              <el-radio value="section">按标题切分</el-radio>
               <el-radio value="paragraph">按段落切分</el-radio>
             </el-radio-group>
           </el-form-item>
 
           <template v-if="mdForm.split_mode === 'section'">
             <el-form-item label="标题层级">
-              <span style="margin-right: 4px">最小</span>
-              <el-input-number v-model="mdForm.min_title_level" :min="1" :max="6" size="small" style="width: 80px" />
-              <span style="margin: 0 8px">至 最大</span>
-              <el-input-number v-model="mdForm.max_title_level" :min="1" :max="6" size="small" style="width: 80px" />
+              <div class="heading-preview">
+                <div v-if="headingPreviewLoading" class="heading-status">
+                  <el-icon class="is-loading"><Loading /></el-icon>
+                  <span>正在解析标题层级...</span>
+                </div>
+                <el-alert
+                  v-else-if="headingPreviewError"
+                  :title="headingPreviewError"
+                  type="error"
+                  show-icon
+                  :closable="false"
+                />
+                <el-alert
+                  v-else-if="headingLevelOptions.length === 0"
+                  title="未识别到 Markdown 标题，不能按标题切分。可选择整篇不切分或按段落切分。"
+                  type="warning"
+                  show-icon
+                  :closable="false"
+                />
+                <div v-else class="heading-level-panel">
+                  <div class="heading-hint">选择一个实际存在的标题层级作为切分边界：</div>
+                  <el-radio-group v-model="mdForm.heading_level" class="heading-level-group">
+                    <el-radio-button
+                      v-for="item in headingLevelOptions"
+                      :key="item.level"
+                      :value="item.level"
+                    >
+                      {{ formatHeadingLevel(item.level) }}（{{ item.count }}个）
+                    </el-radio-button>
+                  </el-radio-group>
+                </div>
+              </div>
             </el-form-item>
           </template>
 
@@ -99,7 +127,7 @@
         <el-button
           type="primary"
           :loading="uploadLoading"
-          :disabled="uploadFileList.length === 0 || disabled"
+          :disabled="uploadDisabled"
           @click="submitUpload"
         >
           上传
@@ -112,8 +140,8 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { UploadFilled } from '@element-plus/icons-vue'
-import { uploadManagedFile, uploadMdFile } from '../api'
+import { Loading, UploadFilled } from '@element-plus/icons-vue'
+import { previewMdHeadings, uploadManagedFile, uploadMdFile } from '../api'
 
 const props = defineProps({
   modelValue: { type: [Number, null], default: null },
@@ -133,10 +161,19 @@ const uploadLoading = ref(false)
 const showAllFiles = ref(props.initialShowAll)
 const internalFileOptions = ref([])
 const fetchLoading = ref(false)
+const headingPreviewLoading = ref(false)
+const headingPreviewError = ref('')
+const headingPreview = ref({
+  headings: [],
+  available_levels: [],
+  level_counts: {},
+})
+let headingPreviewRequestId = 0
 
 const mdForm = ref({
   source_type: '图书',
   split_mode: 'full',
+  heading_level: null,
   min_title_level: 1,
   max_title_level: 6,
   min_chars: 100,
@@ -147,6 +184,29 @@ const currentFileIsMd = computed(() => {
   const name = uploadFileList.value[0]?.name || ''
   return name.toLowerCase().endsWith('.md')
 })
+
+const headingLevelOptions = computed(() => {
+  const counts = headingPreview.value.level_counts || {}
+  return (headingPreview.value.available_levels || []).map(level => ({
+    level,
+    count: counts[String(level)] || 0,
+  }))
+})
+
+const sectionUploadBlocked = computed(() => (
+  currentFileIsMd.value &&
+  mdForm.value.split_mode === 'section' &&
+  (headingPreviewLoading.value || !mdForm.value.heading_level)
+))
+
+const uploadDisabled = computed(() => (
+  uploadFileList.value.length === 0 || props.disabled || sectionUploadBlocked.value
+))
+
+function formatHeadingLevel(level) {
+  const labels = ['一级标题', '二级标题', '三级标题', '四级标题', '五级标题', '六级标题']
+  return labels[level - 1] || `${level}级标题`
+}
 
 onMounted(() => {
   if (props.fetchFn) {
@@ -180,12 +240,65 @@ async function loadFiles() {
   }
 }
 
+function resetHeadingPreview() {
+  headingPreviewRequestId += 1
+  headingPreviewLoading.value = false
+  headingPreviewError.value = ''
+  headingPreview.value = {
+    headings: [],
+    available_levels: [],
+    level_counts: {},
+  }
+  mdForm.value.heading_level = null
+}
+
+async function loadHeadingPreview(file) {
+  resetHeadingPreview()
+  const rawFile = file?.raw
+  if (!rawFile || !file.name?.toLowerCase().endsWith('.md')) return
+
+  const requestId = headingPreviewRequestId
+  headingPreviewLoading.value = true
+  const formData = new FormData()
+  formData.append('file', rawFile)
+
+  try {
+    const res = await previewMdHeadings(formData)
+    if (requestId !== headingPreviewRequestId) return
+    headingPreview.value = {
+      headings: res.headings || [],
+      available_levels: res.available_levels || [],
+      level_counts: res.level_counts || {},
+    }
+    if (headingPreview.value.available_levels.length === 1) {
+      mdForm.value.heading_level = headingPreview.value.available_levels[0]
+    }
+  } catch (err) {
+    if (requestId !== headingPreviewRequestId) return
+    headingPreviewError.value = err.response?.data?.detail || '标题解析失败，请检查文件编码或稍后重试'
+  } finally {
+    if (requestId === headingPreviewRequestId) {
+      headingPreviewLoading.value = false
+    }
+  }
+}
+
 function handleFileChange(file, fileList) {
   uploadFileList.value = fileList
+  if (fileList.length === 0) {
+    resetHeadingPreview()
+    return
+  }
+  if (file.name?.toLowerCase().endsWith('.md')) {
+    loadHeadingPreview(file)
+  } else {
+    resetHeadingPreview()
+  }
 }
 
 function handleFileRemove(file, fileList) {
   uploadFileList.value = fileList
+  resetHeadingPreview()
 }
 
 function handleExceed() {
@@ -198,6 +311,11 @@ async function submitUpload() {
     return
   }
 
+  if (sectionUploadBlocked.value) {
+    ElMessage.warning(headingPreviewLoading.value ? '标题层级仍在解析，请稍候' : '请选择标题层级')
+    return
+  }
+
   uploadLoading.value = true
   const formData = new FormData()
   formData.append('files', uploadFileList.value[0].raw)
@@ -207,6 +325,9 @@ async function submitUpload() {
     if (currentFileIsMd.value) {
       formData.append('source_type', mdForm.value.source_type)
       formData.append('split_mode', mdForm.value.split_mode)
+      if (mdForm.value.split_mode === 'section' && mdForm.value.heading_level) {
+        formData.append('heading_level', mdForm.value.heading_level)
+      }
       formData.append('min_title_level', mdForm.value.min_title_level)
       formData.append('max_title_level', mdForm.value.max_title_level)
       formData.append('min_chars', mdForm.value.min_chars)
@@ -229,7 +350,8 @@ async function submitUpload() {
       mode.value = 'existing'
       uploadFileList.value = []
       uploadForm.value = { text_field: 'text' }
-      mdForm.value = { source_type: '图书', split_mode: 'full', min_title_level: 1, max_title_level: 6, min_chars: 100 }
+      mdForm.value = { source_type: '图书', split_mode: 'full', heading_level: null, min_title_level: 1, max_title_level: 6, min_chars: 100 }
+      resetHeadingPreview()
       if (props.fetchFn) {
         showAllFiles.value = true
         await loadFiles()
@@ -319,6 +441,35 @@ defineExpose({ refresh: loadFiles })
 }
 .md-options :deep(.el-form-item:last-child) {
   margin-bottom: 0;
+}
+
+.heading-preview {
+  width: 100%;
+}
+.heading-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #606266;
+  font-size: 13px;
+}
+.heading-level-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.heading-hint {
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.heading-level-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.heading-level-group :deep(.el-radio-button__inner) {
+  border-radius: 4px;
 }
 
 .upload-actions {

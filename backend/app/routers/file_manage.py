@@ -15,7 +15,7 @@ from app.database import get_db
 from app.models.models import Dataset, File, Task, TaskStatusEnum, StageEnum, User
 from app.routers.auth import get_current_user
 from app.services.file_manage_service import filter_record_fields, filter_records_fields
-from app.services.md_parser import _split_by_section, _split_by_paragraph
+from app.services.md_parser import scan_md_headings, _split_by_heading_level, _split_by_section, _split_by_paragraph
 
 router = APIRouter()
 
@@ -432,11 +432,37 @@ async def gzip_upload_test(
 SOURCE_TYPE_CHOICES = ['文献', '图书', '其他']
 
 
+@router.post("/md-heading-preview")
+async def preview_md_headings(
+    file: UploadFile = FastAPIFile(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Parse Markdown headings for upload preview without saving files or writing DB."""
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext != ".md":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .md files are accepted",
+        )
+
+    content_bytes = await file.read()
+    try:
+        content = content_bytes.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Encoding error: {str(e)}",
+        )
+
+    return scan_md_headings(content)
+
+
 @router.post("/upload-md")
 async def upload_md_files(
     files: List[UploadFile] = FastAPIFile(...),
     source_type: str = Form(...),
     split_mode: str = Form('full'),
+    heading_level: Optional[int] = Form(None),
     min_title_level: int = Form(1),
     max_title_level: int = Form(6),
     min_chars: int = Form(100),
@@ -446,7 +472,8 @@ async def upload_md_files(
     """Upload MD files, convert to JSON, save only the JSON output (MD not saved).
 
     source_type: '文献' | '图书' | '其他'
-    split_mode: 'full' (整篇不切分) | 'section' (按章节) | 'paragraph' (按段落)
+    split_mode: 'full' (整篇不切分) | 'section' (按章节/指定标题级别) | 'paragraph' (按段落)
+    heading_level: optional 1-6, used when split_mode is 'section'
     """
     if source_type not in SOURCE_TYPE_CHOICES:
         raise HTTPException(
@@ -457,6 +484,11 @@ async def upload_md_files(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="split_mode must be one of: full, section, paragraph",
+        )
+    if heading_level is not None and not 1 <= heading_level <= 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="heading_level must be between 1 and 6",
         )
 
     upload_dir = os.path.join("uploads", str(current_user.id))
@@ -486,11 +518,17 @@ async def upload_md_files(
         else:
             try:
                 if split_mode == 'section':
-                    raw_chunks = _split_by_section(
-                        content, file.filename,
-                        min_title_level=min_title_level,
-                        max_title_level=max_title_level,
-                    )
+                    if heading_level is not None:
+                        raw_chunks = _split_by_heading_level(
+                            content, file.filename,
+                            heading_level=heading_level,
+                        )
+                    else:
+                        raw_chunks = _split_by_section(
+                            content, file.filename,
+                            min_title_level=min_title_level,
+                            max_title_level=max_title_level,
+                        )
                 else:  # paragraph
                     raw_chunks = _split_by_paragraph(
                         content, file.filename,

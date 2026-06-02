@@ -255,6 +255,10 @@ export function uploadManagedFile(data) {
   return api.post('/file-manage/upload', data)
 }
 
+export function previewMdHeadings(data) {
+  return api.post('/file-manage/md-heading-preview', data)
+}
+
 export function uploadMdFile(data) {
   return api.post('/file-manage/upload-md', data)
 }

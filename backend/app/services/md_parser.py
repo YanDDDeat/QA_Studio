@@ -1,6 +1,9 @@
 import re
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+
+
+HEADING_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$')
 
 
 def parse_md_file(file_path: Path, split_mode: str, **options) -> List[Dict[str, Any]]:
@@ -11,7 +14,7 @@ def parse_md_file(file_path: Path, split_mode: str, **options) -> List[Dict[str,
         file_path: Path to the Markdown file
         split_mode: 'section' or 'paragraph'
         **options: Additional options for the split mode
-            - For 'section': min_title_level (int), max_title_level (int)
+            - For 'section': min_title_level (int), max_title_level (int), heading_level (int)
             - For 'paragraph': min_chars (int)
 
     Returns:
@@ -26,11 +29,97 @@ def parse_md_file(file_path: Path, split_mode: str, **options) -> List[Dict[str,
         content = f.read()
 
     if split_mode == "section":
+        heading_level = options.pop("heading_level", None)
+        if heading_level is not None:
+            return _split_by_heading_level(content, file_path.name, heading_level=heading_level)
         return _split_by_section(content, file_path.name, **options)
     elif split_mode == "paragraph":
         return _split_by_paragraph(content, file_path.name, **options)
     else:
         raise ValueError(f"Unknown split mode: {split_mode}")
+
+
+def scan_md_headings(content: str) -> Dict[str, Any]:
+    """
+    Scan Markdown ATX headings in content.
+
+    A valid heading starts at the beginning of a line with 1-6 '#', followed by
+    at least one whitespace character and then heading text.
+    """
+    headings = []
+    level_counts: Dict[str, int] = {}
+
+    for line_no, line in enumerate(content.split('\n'), start=1):
+        match = HEADING_PATTERN.match(line)
+        if not match:
+            continue
+
+        level = len(match.group(1))
+        title = match.group(2).strip()
+        headings.append({
+            "level": level,
+            "title": title,
+            "line": line_no,
+        })
+        key = str(level)
+        level_counts[key] = level_counts.get(key, 0) + 1
+
+    available_levels = sorted({heading["level"] for heading in headings})
+    return {
+        "headings": headings,
+        "available_levels": available_levels,
+        "level_counts": level_counts,
+    }
+
+
+def _split_by_heading_level(content: str, filename: str, heading_level: int) -> List[Dict[str, Any]]:
+    """
+    Split Markdown content using only the specified heading level as chunk boundary.
+
+    Content before the first heading of the selected level is ignored. Lower-level
+    headings and body text are kept inside the current chunk. Higher-level headings
+    between two selected-level headings are also kept inside the current chunk.
+    """
+    if not 1 <= heading_level <= 6:
+        raise ValueError("heading_level must be between 1 and 6")
+
+    chunks = []
+    current_section: List[str] = []
+    current_title: Optional[str] = None
+
+    for line in content.split('\n'):
+        match = HEADING_PATTERN.match(line)
+        is_boundary = bool(match and len(match.group(1)) == heading_level)
+
+        if is_boundary:
+            if current_section and current_title is not None:
+                text = '\n'.join(current_section).strip()
+                if text:
+                    chunks.append({
+                        "text": text,
+                        "title": current_title,
+                        "title_level": heading_level,
+                        "md_file": filename,
+                    })
+
+            current_section = [line]
+            current_title = match.group(2).strip()
+            continue
+
+        if current_title is not None:
+            current_section.append(line)
+
+    if current_section and current_title is not None:
+        text = '\n'.join(current_section).strip()
+        if text:
+            chunks.append({
+                "text": text,
+                "title": current_title,
+                "title_level": heading_level,
+                "md_file": filename,
+            })
+
+    return chunks
 
 
 def _split_by_section(content: str, filename: str, min_title_level: int = 1, max_title_level: int = 6) -> List[Dict[str, Any]]:

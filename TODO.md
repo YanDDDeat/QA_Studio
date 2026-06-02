@@ -89,6 +89,12 @@
   - [x] 新建 `tests/test_preprocess_service.py`：单元测试覆盖每个规则
   - [x] 人工集成测试：典型脏数据 JSON → 验证过滤文件、task_logs、暂停恢复
 
+## MD 标题级别选择切分
+- [x] 分支 `feature/md-heading-level-select`：详见 `docs/requirements/24_需求_MD标题级别选择切分.md`
+  - [x] 上传 MD 后先解析并展示实际存在的标题层级
+  - [x] 用户选择指定标题级别后，按该级标题作为 chunk 边界切分
+  - [x] 保持 JSON 输出格式和文件管理流程不变
+
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
 - [x] 用户管理：管理员创建账号 + 登录认证 + 数据隔离
