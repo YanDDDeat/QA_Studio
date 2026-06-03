@@ -59,11 +59,11 @@
   - [ ] Step 4/5 改为接收 `step1_3_result`，并兼容提示词快照与旧模板补默认文件
 
 ## CoT质检功能
-- [ ] 分支 `feature/cot-quality-check`：详见 `docs/requirements/33_需求_CoT质检功能.md`
-  - [ ] StageEnum 新增 COT_QUALITY_CHECK 值
-  - [ ] 后端：新建 cot_quality_check 路由 + 服务
-  - [ ] 前端：新建 CotQualityCheck.vue 页面 + 路由 + 菜单
-  - [ ] CoT质检：上传带思维链 JSON → LLM 四维度评估 → 输出通过/不通过/评估结果三个文件
+- [x] 分支 `feature/cot-quality-check`：详见 `docs/requirements/33_需求_CoT质检功能.md`
+  - [x] StageEnum 新增 COT_QUALITY_CHECK 值
+  - [x] 后端：新建 cot_quality_check 路由 + 服务
+  - [x] 前端：新建 CotQualityCheck.vue 页面 + 路由 + 菜单
+  - [x] CoT质检：上传带思维链 JSON → LLM 四维度评估 → 输出通过/不通过/评估结果三个文件
 
 - [ ] 分支 `feature/document-stage-matrix`：单COT生成文献级阶段进度视图，详见 `docs/requirements/32_需求_单COT生成文献级阶段进度视图.md`
   - [ ] 详情接口返回 `document_stage_matrix`，按文献展示 Step1-3 / Step4 / Step5 / Step6 状态与中间产物路径
