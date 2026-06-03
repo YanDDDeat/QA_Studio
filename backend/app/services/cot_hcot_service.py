@@ -257,6 +257,45 @@ def _read_file_content(db: Session, file_id: int) -> Optional[str]:
         return None
 
 
+def _get_source_chunks(db: Session, source_file_id: int, user_id: int = None) -> List[Dict[str, Any]]:
+    """读取源文件的分段数据，返回 chunk 列表。
+
+    策略：优先从 Dataset 表读取。如果 Dataset 没有数据，
+    调用 ensure_datasets_for_file 将 JSON 文件解析并自动写入 Dataset 行
+    （该函数已内置 text_field + 别名映射机制，能处理不同字段名），
+    然后再从 Dataset 读取。
+    """
+    from app.models.models import Dataset
+
+    # 先尝试直接从 Dataset 表读
+    query = db.query(Dataset).filter(Dataset.file_id == source_file_id)
+    if user_id:
+        query = query.filter(Dataset.user_id == user_id)
+    datasets = query.order_by(Dataset.id.asc()).all()
+
+    if not datasets:
+        # Dataset 表没有数据——用 ensure_datasets_for_file 自动解析 JSON 并写入 Dataset
+        # 它会根据 file_obj.text_field + 别名映射，自动把各种字段名映射到 Dataset 的 input/originContent
+        file_obj = db.query(File).filter(File.id == source_file_id).first()
+        if not file_obj:
+            return []
+        datasets = ensure_datasets_for_file(db, source_file_id, file_obj.user_id)
+        db.flush()  # 确保新写入的 Dataset 行可以被读取
+
+    if not datasets:
+        return []
+
+    chunks = []
+    for i, ds in enumerate(datasets):
+        content = ds.input or ""
+        if not content:
+            content = ds.originContent or ""
+        if content.strip():
+            chunks.append({"chunk_index": i, "content": content})
+
+    return chunks
+
+
 def _get_step_output_file_id(db: Session, parent_task_id: int, step_name: str, chunk_index: Optional[int] = None, l0_question_index: Optional[int] = None) -> Optional[int]:
     """Find the output file_id for a completed sub-task of the given step, chunk, and L0 question.
 
@@ -1244,7 +1283,7 @@ async def run_pipeline_auto_bg(
             return
 
         # 读取源文件的 chunk 列表
-        chunks = _get_source_chunks(db, source_file_id or parent.source_file_id)
+        chunks = _get_source_chunks(db, source_file_id or parent.source_file_id, user_id=user_id)
         total_chunks = len(chunks)
 
         if total_chunks == 0:
@@ -2226,6 +2265,8 @@ def get_workflow_status(db: Session, parent_task_id: int, user_id: int) -> Optio
     # --- Phase 1: per-chunk fact_card_gen ---
     phase1_chunks = []
     all_completed_steps = []
+
+    total_chunks = parent.total_chunks or 0
 
     for chunk_idx in range(total_chunks):
         chunk_steps = []

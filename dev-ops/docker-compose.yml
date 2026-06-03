@@ -53,6 +53,8 @@ services:
     volumes:
       - backend-logs:/app/logs
       - backend-uploads:/app/uploads
+      - backend-storage:/app/storage
+      - backend-outputs:/app/outputs
     ports:
       - "8000:8000"
     depends_on:
@@ -97,6 +99,8 @@ volumes:
   mysql_data:
   backend-logs:
   backend-uploads:
+  backend-storage:
+  backend-outputs:
   frontend-dist:
 
 networks:
