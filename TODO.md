@@ -33,11 +33,25 @@
   - [ ] 流水线任务列表支持分页展示
   - [ ] 最终产物区放在流水线步骤下方，生成并支持下载 `final_samples.json` / `final_samples.jsonl`
 
+- [x] 分支 `BIT/wj`：标注流水线2支持批量文献 JSON 输入，详见 `docs/requirements/28_需求_标注流水线2支持批量文献JSON输入.md`
+  - [x] 取消 JSON 数组长度必须为 1 的限制，允许数组长度 `>= 1`
+  - [x] 一个任务内按数组顺序串行处理多篇文献，不创建多个独立任务
+  - [x] 单篇失败时记录失败明细并继续处理后续文献
+  - [x] 最终输出汇总 `input_count` / `success_count` / `failed_count` 和每篇文献状态
+  - [x] `final_samples.json` / `final_samples.jsonl` 保留下载能力，并能追溯 `source_index` / `source`
+
 - [x] 分支 `BIT/wj`：CoT/H-CoT 标注分组新增文本预处理入口，详见 `docs/requirements/27_需求_CoTHCoT标注文本预处理入口.md`
   - [x] 在 CoT/H-CoT 标注分组下新增「文本预处理」菜单项
   - [x] 复用现有文本预处理页面能力，原入口不受影响
   - [x] 支持一次上传多个 MD 文件并合并为 `[{source: 文件名, text: MD全文}]` JSON 数组
   - [x] 支持下载合并后的 JSON，或保存为系统文件供标注流水线2选择
+
+- [x] 分支 `BIT/wj`：标注流水线2提示词模板管理，详见 `docs/requirements/29_需求_标注流水线2提示词模板管理.md`
+  - [x] 在 COT/H-COT 下新增「标注流水线2提示词」管理入口
+  - [x] 系统默认模板共享只读，用户复制后形成个人独立模板版本
+  - [x] 模板包按通用步骤和 10 类 CoT 专属步骤树形展示并支持单项编辑
+  - [x] 新建标注流水线2任务时选择一个完整提示词模板包版本
+  - [x] 任务启动时保存完整提示词快照，历史 run 可追溯
 
 - [x] 分支 `feature/llm-field-auto-mapping`：详见 `docs/requirements/12_需求_LLM返回字段自动映射到数据库列.md`
   - [x] 新建 `field_mapper.py`：动态映射 LLM 字段到数据库列
