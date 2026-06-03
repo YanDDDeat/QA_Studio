@@ -1009,6 +1009,9 @@ def process_one_document(
     doc_dir = _document_output_dir(run_dir, source_index, source_label)
     doc_dir.mkdir(parents=True, exist_ok=True)
 
+    # Relative path prefix for artifact_path in manifest (e.g. "documents/0001_paper1/")
+    doc_rel_prefix = f"documents/{str(source_index + 1).zfill(4)}_{_sanitize_dirname(source_label)}/"
+
     # Write per-document input.json
     atomic_write_json(doc_dir / "input.json", {
         "source_index": source_index,
@@ -1034,7 +1037,8 @@ def process_one_document(
             "status": "completed", "result": step1,
         })
         _update_manifest_step("step1_screening", status="completed", progress_current=100,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：筛选完成")
+                              progress_label=f"文献 {source_index + 1}/{input_count}：筛选完成",
+                              artifact_path=f"{doc_rel_prefix}step1_screening.json")
 
         if not step1.get("can_generate"):
             stop_reason = step1.get("stop_reason") or "Step 1 判断该论文不适合构建当前支持的专业 CoT"
@@ -1065,7 +1069,8 @@ def process_one_document(
             "status": "completed", "result": step2,
         })
         _update_manifest_step("step2_case_card", status="completed", progress_current=100,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：案例卡完成")
+                              progress_label=f"文献 {source_index + 1}/{input_count}：案例卡完成",
+                              artifact_path=f"{doc_rel_prefix}step2_case_card.json")
 
         # Step 3: type judgement
         _update_manifest_step("step3_type_judgement", status="running", progress_current=10,
@@ -1086,7 +1091,8 @@ def process_one_document(
         if target:
             _update_manifest_step("step3_type_judgement", status="completed", progress_current=100,
                                   progress_label=f"文献 {source_index + 1}/{input_count}：判定为 {target['display_name']}",
-                                  cot_type=target["display_name"], cot_type_key=target["key"])
+                                  cot_type=target["display_name"], cot_type_key=target["key"],
+                                  artifact_path=f"{doc_rel_prefix}step3_type_judgement.json")
             for step_key, artifact_name in (
                 ("step4_input", "step4_input.json"),
                 ("step5_chain", "step5_chain.json"),
@@ -1097,11 +1103,12 @@ def process_one_document(
                     progress_label=f"文献 {source_index + 1}/{input_count}：等待执行 {target['display_name']}",
                     cot_type=target["display_name"],
                     cot_type_key=target["key"],
-                    artifact_path=f"documents/{str(source_index + 1).zfill(4)}_{_sanitize_dirname(source_label)}/{target['key']}/{artifact_name}",
+                    artifact_path=f"{doc_rel_prefix}{target['key']}/{artifact_name}",
                 )
         else:
             _update_manifest_step("step3_type_judgement", status="completed", progress_current=100,
-                                  progress_label=f"文献 {source_index + 1}/{input_count}：无可构建类型")
+                                  progress_label=f"文献 {source_index + 1}/{input_count}：无可构建类型",
+                                  artifact_path=f"{doc_rel_prefix}step3_type_judgement.json")
             reason = step3.get("recommendation_reason") or "Step 3 未推荐可构建的 CoT 类型"
             missing = step3.get("missing_information") or []
             if isinstance(missing, list) and missing:
@@ -1132,7 +1139,8 @@ def process_one_document(
             "result": step4,
         })
         _update_manifest_step("step4_input", status="completed", progress_current=100,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：input 完成")
+                              progress_label=f"文献 {source_index + 1}/{input_count}：input 完成",
+                              artifact_path=f"{doc_rel_prefix}{target['key']}/step4_input.json")
 
         # Step 5
         _update_manifest_step("step5_chain", status="running", progress_current=15,
@@ -1144,7 +1152,8 @@ def process_one_document(
             "result": step5,
         })
         _update_manifest_step("step5_chain", status="completed", progress_current=100,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：chainofThought 完成")
+                              progress_label=f"文献 {source_index + 1}/{input_count}：chainofThought 完成",
+                              artifact_path=f"{doc_rel_prefix}{target['key']}/step5_chain.json")
 
         # Step 6
         _update_manifest_step("step6_output", status="running", progress_current=15,
@@ -1158,7 +1167,8 @@ def process_one_document(
         }
         atomic_write_json(type_dir / "step6_output.json", step6_payload)
         _update_manifest_step("step6_output", status="completed", progress_current=100,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：output 完成")
+                              progress_label=f"文献 {source_index + 1}/{input_count}：output 完成",
+                              artifact_path=f"{doc_rel_prefix}{target['key']}/step6_output.json")
 
         # Enrich sample with source info
         sample["source_index"] = source_index
