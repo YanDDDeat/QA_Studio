@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.database import get_db, SessionLocal
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from app.models.models import (
     Dataset, File, Prompt, Task, TaskLog, TaskStatusEnum,
     StageEnum, User, LLMConfig,
@@ -457,13 +457,13 @@ async def get_answer_generate_status(
 
     # 任务完成后 task.file_id 指向新输出文件；以新文件下的克隆记录数为生成数。
     generated_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(
             Dataset.user_id == current_user.id,
             Dataset.current_stage == StageEnum.ANSWER_GENERATE,
             Dataset.file_id == task.file_id,
         )
-        .count() if task.file_id else 0
+        .scalar() if task.file_id else 0
     )
 
     return TaskStatusResponse(
@@ -574,14 +574,14 @@ async def retry_answer_generate(
 
     # Count remaining qualifying datasets for progress tracking
     remaining_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(
             Dataset.file_id == source_fid,
             Dataset.user_id == current_user.id,
             Dataset.current_stage == StageEnum.QUESTION_VALIDATE,
             Dataset.passed == "是",
         )
-        .count()
+        .scalar()
     )
 
     # Keep progress_current for breakpoint resume

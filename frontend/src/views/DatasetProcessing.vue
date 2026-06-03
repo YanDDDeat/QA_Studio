@@ -698,7 +698,7 @@ async function fetchSplitLogs() {
 
 function startSplitPolling() {
   stopSplitPolling()
-  splitPollTimer = setInterval(() => pollSplitStatus(), 3000)
+  splitPollTimer = setInterval(() => pollSplitStatus(), 10000)
   splitLogTimer = setInterval(() => fetchSplitLogs(), 5000)
 }
 function stopSplitPolling() {
@@ -830,7 +830,7 @@ async function fetchAssessLogs() {
 
 function startAssessPolling() {
   stopAssessPolling()
-  assessPollTimer = setInterval(() => pollAssessStatus(), 3000)
+  assessPollTimer = setInterval(() => pollAssessStatus(), 10000)
   assessLogTimer = setInterval(() => fetchAssessLogs(), 5000)
 }
 function stopAssessPolling() {

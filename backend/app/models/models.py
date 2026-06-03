@@ -5,7 +5,7 @@ from enum import Enum as PyEnum
 
 from sqlalchemy import (
     Column, Integer, String, Text, Float, DateTime, ForeignKey,
-    Enum, JSON, Boolean, DefaultClause,
+    Enum, JSON, Boolean, DefaultClause, Index,
 )
 from sqlalchemy.orm import relationship
 
@@ -93,6 +93,9 @@ class User(Base):
 
 class Dataset(Base):
     __tablename__ = "datasets"
+    __table_args__ = (
+        Index("idx_datasets_user_stage_created", "user_id", "current_stage", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)

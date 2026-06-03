@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from app.models.models import (
     Dataset, File, Prompt, Task, TaskLog, TaskStatusEnum,
     StageEnum, User, LLMConfig,
@@ -731,14 +731,14 @@ async def retry_data_evaluate(
 
     # Count remaining qualifying datasets for progress tracking
     remaining_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(
             Dataset.file_id == source_fid,
             Dataset.user_id == current_user.id,
             Dataset.current_stage == StageEnum.ANSWER_VALIDATE,
             Dataset.passed == "是",
         )
-        .count()
+        .scalar()
     )
 
     # Keep progress_current for breakpoint resume

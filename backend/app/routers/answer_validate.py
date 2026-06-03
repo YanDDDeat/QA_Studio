@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.database import get_db, SessionLocal
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from app.models.models import (
     Dataset, File, Prompt, Task, TaskLog, TaskStatusEnum,
     StageEnum, User, LLMConfig,
@@ -464,21 +464,21 @@ async def get_answer_validate_status(
 
     # Count pass/fail from task logs for this specific task
     pass_count = (
-        db.query(TaskLog)
+        db.query(func.count(TaskLog.id))
         .filter(
             TaskLog.task_id == task_id,
             TaskLog.log_content.contains("校验通过"),
         )
-        .count()
+        .scalar()
     )
 
     fail_count = (
-        db.query(TaskLog)
+        db.query(func.count(TaskLog.id))
         .filter(
             TaskLog.task_id == task_id,
             TaskLog.log_content.contains("校验失败"),
         )
-        .count()
+        .scalar()
     )
 
     return TaskStatusResponse(
@@ -589,13 +589,13 @@ async def retry_answer_validate(
 
     # Count remaining qualifying datasets for progress tracking
     remaining_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(
             Dataset.file_id == source_fid,
             Dataset.user_id == current_user.id,
             Dataset.current_stage == StageEnum.ANSWER_GENERATE,
         )
-        .count()
+        .scalar()
     )
 
     # Keep progress_current for breakpoint resume

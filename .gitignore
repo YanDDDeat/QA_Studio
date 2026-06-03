@@ -46,7 +46,6 @@ uploads/
 backend/uploads/
 backend/outputs/
 storage/
-
 # Vendor dependencies (installed packages, do not commit)
 backend/vendor/
 

@@ -416,7 +416,7 @@ async function fetchLogs() {
 
 function startPolling() {
   stopPolling()
-  pollTimer = setInterval(() => pollStatus(), 3000)
+  pollTimer = setInterval(() => pollStatus(), 10000)
   logTimer = setInterval(() => fetchLogs(), 5000)
 }
 
