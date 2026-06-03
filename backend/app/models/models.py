@@ -182,8 +182,6 @@ class Task(Base):
     pipeline_mode = Column(String(16), nullable=True)  # "hcot" or "cot"，仅父任务填写
     pipeline_name = Column(String(128), nullable=True)  # 用户定义的流水线名称
     step_name = Column(String(64), nullable=True)  # 步骤标识如 "fact_card_gen"，仅子任务填写
-    chunk_index = Column(Integer, nullable=True)  # chunk 序号（0-based），标识该子任务属于哪个 chunk
-    total_chunks = Column(Integer, nullable=True)  # 该流水线的总 chunk 数
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
