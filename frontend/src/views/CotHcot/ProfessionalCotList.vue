@@ -21,7 +21,7 @@
         <el-form-item v-if="inputMode === 'existing'" label="系统 JSON 文件" prop="source_file_id">
           <el-select
             v-model="createForm.source_file_id"
-            placeholder="优先选择系统已有单 chunk JSON 文件"
+            placeholder="优先选择系统已有单篇或多篇 JSON 文件"
             filterable
             style="width: 100%"
             @change="handleSourceFileChange"
@@ -38,7 +38,7 @@
               </span>
             </el-option>
           </el-select>
-          <div class="upload-tip">顶层必须是长度为 1 的数组，第一个元素为完整论文对象。</div>
+          <div class="upload-tip">顶层必须是非空数组，每个元素为一篇文献对象，支持单篇或多篇。</div>
         </el-form-item>
         <el-form-item v-else label="上传 JSON 文件" prop="file">
           <el-upload
@@ -51,7 +51,7 @@
           >
             <el-button type="primary" plain>
               <el-icon><Upload /></el-icon>
-              选择单 chunk JSON
+              选择单篇或多篇 JSON
             </el-button>
             <template #tip>
               <div class="upload-tip">上传入口为辅助入口；建议先通过文件管理上传并在此选择已有文件。</div>
@@ -123,7 +123,7 @@
         </el-form-item>
         <el-form-item label="生成规则">
           <el-alert
-            title="一次任务默认生成 1 条样本；CoT 类型由 Step 3 模型在 10 类枚举中自动判定，若无可构建类型将停止并展示原因。"
+            title="JSON 数组中每篇文献生成 1 条样本；CoT 类型由 Step 3 模型在 10 类枚举中自动判定，若无可构建类型将停止并展示原因。多篇文献时逐篇串行处理。"
             type="info"
             :closable="false"
           />
@@ -158,13 +158,18 @@
           </template>
         </el-table-column>
         <el-table-column prop="source_filename" label="源文件" min-width="150" />
+        <el-table-column prop="input_count" label="文献数" width="90">
+          <template #default="{ row }">
+            {{ row.input_count ?? 1 }}
+          </template>
+        </el-table-column>
         <el-table-column label="模型判定 CoT 类型" min-width="180">
           <template #default="{ row }">
             {{ row.recommended_cot_type?.display_name || row.target_cot_type?.display_name || '待判定' }}
           </template>
         </el-table-column>
         <el-table-column prop="model" label="模型" width="130" />
-        <el-table-column label="进度" width="170">
+        <el-table-column label="进度" width="200">
           <template #default="{ row }">
             <el-progress
               :percentage="row.progress_percentage || 0"
@@ -174,6 +179,10 @@
             <span style="font-size: 12px; color: #666">
               {{ row.completed_steps || 0 }}/{{ row.total_steps || 0 }} 步
               <span v-if="row.skipped_steps">，跳过 {{ row.skipped_steps }}</span>
+            </span>
+            <span v-if="row.input_count > 1 && (row.success_count || row.failed_count)" style="font-size: 12px; color: #666; display: block; margin-top: 2px">
+              成功 {{ row.success_count || 0 }}/{{ row.input_count }} 篇
+              <span v-if="row.failed_count" style="color: #f56c6c">，失败 {{ row.failed_count }} 篇</span>
             </span>
           </template>
         </el-table-column>
@@ -429,7 +438,8 @@ async function handleCreate() {
     }
 
     const res = await startProfessionalCotRun(formData)
-    ElMessage.success(`标注流水线2已启动 (Run: ${res.run_id})`)
+    const inputCountInfo = res.input_count ? `，包含 ${res.input_count} 篇文献` : ''
+    ElMessage.success(`标注流水线2已启动 (Run: ${res.run_id})${inputCountInfo}`)
     createDialogVisible.value = false
     pagination.value.page = 1
     await fetchRuns()

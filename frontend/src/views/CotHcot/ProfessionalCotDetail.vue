@@ -27,8 +27,16 @@
         <el-descriptions-item label="正文字段">{{ run.source_input?.text_field || '—' }}</el-descriptions-item>
         <el-descriptions-item label="模型判定 CoT 类型">{{ recommendedCotTypeLabel }}</el-descriptions-item>
         <el-descriptions-item label="模型">{{ run.llm?.model || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="总步骤">{{ run.total_steps || 0 }}</el-descriptions-item>
+        <el-descriptions-item label="输入文献数">{{ run.input_count ?? 1 }}</el-descriptions-item>
         <el-descriptions-item label="样本数">{{ run.sample_count || 0 }}</el-descriptions-item>
+        <el-descriptions-item label="成功/失败">
+          <span style="color: #67c23a">{{ run.success_count ?? 0 }}</span>
+          <span> / </span>
+          <span :style="{ color: (run.failed_count ?? 0) > 0 ? '#f56c6c' : '#606266' }">{{ run.failed_count ?? 0 }}</span>
+          <span style="color: #909399; font-size: 12px; margin-left: 4px">
+            （共 {{ run.input_count ?? 1 }} 篇）
+          </span>
+        </el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ formatTime(run.created_at) }}</el-descriptions-item>
       </el-descriptions>
       <el-alert
@@ -62,6 +70,11 @@
           :status="overallStatus"
           :stroke-width="20"
         />
+        <div v-if="run.input_count > 1 && run.progress_label" class="batch-progress-label">
+          <el-tag :type="run.status === 'completed' ? 'success' : run.status === 'failed' ? 'danger' : 'primary'" size="small">
+            {{ run.progress_label }}
+          </el-tag>
+        </div>
         <div class="step-tracker">
           <div
             v-for="step in run.steps"
@@ -150,6 +163,23 @@
           <div v-if="index < run.steps.length - 1" class="step-connector"></div>
         </div>
       </div>
+    </el-card>
+
+    <!-- 批量处理失败明细 -->
+    <el-card style="margin-top: 16px" v-if="run && run.batch_summary && failedBatchItems.length > 0">
+      <template #header>
+        <div class="card-header">
+          <span>失败文献明细</span>
+          <el-tag type="danger" size="small">
+            {{ failedBatchItems.length }} / {{ run.batch_summary.input_count }} 篇失败
+          </el-tag>
+        </div>
+      </template>
+      <el-table :data="failedBatchItems" stripe style="width: 100%">
+        <el-table-column prop="source_index" label="序号" width="70" />
+        <el-table-column prop="source" label="文献标识" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="error" label="失败原因" min-width="300" show-overflow-tooltip />
+      </el-table>
     </el-card>
 
     <!-- 最终导出区 -->
@@ -267,6 +297,11 @@ const hasFinalJson = computed(() => Boolean(run.value?.final_outputs?.json))
 const hasFinalJsonl = computed(() => Boolean(run.value?.final_outputs?.jsonl))
 const recommendedCotTypeLabel = computed(() => {
   return run.value?.recommended_cot_type?.display_name || run.value?.target_cot_type?.display_name || '待判定'
+})
+
+const failedBatchItems = computed(() => {
+  const items = run.value?.batch_summary?.items || []
+  return items.filter(item => item.status === 'failed' || item.status === 'skipped')
 })
 
 const overallStatus = computed(() => {
@@ -547,6 +582,10 @@ onUnmounted(() => {
 .progress-count {
   font-size: 13px;
   color: #666;
+}
+
+.batch-progress-label {
+  margin-top: 8px;
 }
 
 .step-tracker {
