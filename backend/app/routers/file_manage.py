@@ -61,28 +61,31 @@ async def list_managed_files(
 ):
     """List all files for the current user, with search and sort.
     Admin users can set all_users=true to see all users' files."""
-    query = db.query(File)
+    filters = []
 
     is_admin_all = all_users and current_user.username == "admin"
     # Admin can see all users' files when all_users flag is set
     if not is_admin_all:
-        query = query.filter(File.user_id == current_user.id)
+        filters.append(File.user_id == current_user.id)
     elif user_id is not None:
-        query = query.filter(File.user_id == user_id)
+        filters.append(File.user_id == user_id)
 
     if search:
-        query = query.filter(File.filename.like(f"%{search}%"))
+        filters.append(File.filename.like(f"%{search}%"))
     if source_stage == "upload":
-        query = query.filter(File.source_stage.is_(None))
+        filters.append(File.source_stage.is_(None))
     elif source_stage:
         if source_stage not in [s.value for s in StageEnum]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid source_stage: {source_stage}",
             )
-        query = query.filter(File.source_stage == StageEnum(source_stage))
+        filters.append(File.source_stage == StageEnum(source_stage))
+
+    total = db.query(func.count(File.id)).filter(*filters).scalar()
 
     # Sorting
+    query = db.query(File).filter(*filters)
     if sort == "time_asc":
         query = query.order_by(File.created_at.asc())
     elif sort == "name_asc":
@@ -90,7 +93,6 @@ async def list_managed_files(
     else:  # time_desc (default)
         query = query.order_by(File.id.desc())
 
-    total = query.count()
     offset = (page - 1) * page_size
     files = query.offset(offset).limit(page_size).all()
     return {
@@ -685,9 +687,9 @@ async def delete_managed_file(
 
     # Check if any RUNNING tasks reference this file — block deletion
     running_tasks = (
-        db.query(Task)
+        db.query(func.count(Task.id))
         .filter(Task.file_id == file_id, Task.status == TaskStatusEnum.RUNNING)
-        .count()
+        .scalar()
     )
     if running_tasks > 0:
         raise HTTPException(
@@ -739,9 +741,9 @@ async def batch_delete_managed_files(
             continue
 
         running_count = (
-            db.query(Task)
+            db.query(func.count(Task.id))
             .filter(Task.file_id == file_id, Task.status == TaskStatusEnum.RUNNING)
-            .count()
+            .scalar()
         )
         if running_count > 0:
             skipped.append({"id": file_id, "reason": "有运行中的任务引用此文件"})
@@ -868,9 +870,9 @@ async def sync_file_to_disk(
         )
 
     datasets_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(Dataset.file_id == file_id)
-        .count()
+        .scalar()
     )
 
     if datasets_count == 0:
