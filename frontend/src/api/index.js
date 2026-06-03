@@ -506,3 +506,16 @@ export function updateHcotPromptItem(templateId, promptKey, data) {
 export function restoreDefaultHcotPromptItem(templateId, promptKey) {
   return api.post(`/cothcot/prompts/templates/${templateId}/items/${promptKey}/restore-default`)
 }
+
+// ---- CoT质检 ----
+export function startCotQualityCheck(data) {
+  return api.post('/cot-quality-check/start', data)
+}
+
+export function getCotQualityCheckStatus(taskId) {
+  return api.get(`/cot-quality-check/status/${taskId}`)
+}
+
+export function getCotQualityCheckSourceFiles(params) {
+  return api.get('/cot-quality-check/source-files', { params })
+}

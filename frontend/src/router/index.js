@@ -109,6 +109,12 @@ const routes = [
         meta: { title: 'COT过滤', stage: 'cot_filter' },
       },
       {
+        path: 'cot-quality-check',
+        name: 'CotQualityCheck',
+        component: () => import('../views/CotHcot/CotQualityCheck.vue'),
+        meta: { title: 'CoT质检', stage: 'cot_quality_check' },
+      },
+      {
         path: 'dataset-processing',
         name: 'DatasetProcessing',
         component: () => import('../views/DatasetProcessing.vue'),

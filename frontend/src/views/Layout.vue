@@ -109,6 +109,10 @@
             <el-icon><Document /></el-icon>
             <span>单COT提示词</span>
           </el-menu-item>
+          <el-menu-item index="/cot-quality-check">
+            <el-icon><CircleCheck /></el-icon>
+            <span>CoT质检</span>
+          </el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu index="group-tools">

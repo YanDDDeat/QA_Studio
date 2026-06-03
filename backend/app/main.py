@@ -93,6 +93,7 @@ from app.routers import (
     file_manage,
     llm_config,
     cot_filter,
+    cot_quality_check,
     dataset_split,
     dataset_assessment,
     quality_check,
@@ -246,6 +247,7 @@ app.include_router(config_center.router, prefix="/api/config-center", tags=["配
 app.include_router(file_manage.router, prefix="/api/file-manage", tags=["文件管理"])
 app.include_router(llm_config.router, prefix="/api/llm-configs", tags=["LLM配置"])
 app.include_router(cot_filter.router, prefix="/api/cot-filter", tags=["COT过滤"])
+app.include_router(cot_quality_check.router, prefix="/api/cot-quality-check", tags=["CoT质检"])
 app.include_router(dataset_split.router, prefix="/api/dataset-split", tags=["数据集切分"])
 app.include_router(dataset_assessment.router, prefix="/api/dataset-assessment", tags=["评分标准生成"])
 app.include_router(generic_generate.router, prefix="/api/generic-generate", tags=["通用生成"])

@@ -23,6 +23,7 @@ class StageEnum(str, PyEnum):
     QUALITY_CHECK = "quality_check"
     COT_FILTER = "cot_filter"
     COT_FLOW = "cot_flow"              # 旧数据兼容（废弃值，勿主动使用）
+    COT_QUALITY_CHECK = "cot_quality_check"  # CoT质检
     DATASET_SPLIT = "dataset_split"
     DATASET_ASSESSMENT = "dataset_assessment"
     GENERIC = "generic"
