@@ -14,6 +14,34 @@
               <FileSelector v-model="form.file_id" :fetch-fn="fetchFileOptions" expected-stage="cot_filter" :disabled="taskRunning" />
             </el-form-item>
 
+            <el-form-item label="LLM配置">
+              <el-select
+                v-model="selectedLLMConfigId"
+                placeholder="选择LLM配置"
+                style="width: 100%"
+                filterable
+                @change="handleLLMConfigChange"
+              >
+                <el-option
+                  v-for="cfg in llmConfigs"
+                  :key="cfg.id"
+                  :label="cfg.name + (cfg.is_global ? ' (全局)' : ' (我的)')"
+                  :value="cfg.id"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="选择模型">
+              <el-select v-model="form.model" placeholder="请选择LLM模型" style="width: 100%" :disabled="!selectedLLMConfigId">
+                <el-option
+                  v-for="m in currentModelOptions"
+                  :key="m"
+                  :label="m"
+                  :value="m"
+                />
+              </el-select>
+            </el-form-item>
+
             <el-form-item label="输出名称">
               <el-input
                 v-model="form.output_name"
@@ -194,6 +222,7 @@ import {
   downloadManagedFile,
   stopTask,
   resumeTask,
+  getLLMConfigs,
 } from '../../api'
 import FileSelector from '../../components/FileSelector.vue'
 import TaskConfigDialog from '../../components/TaskConfigDialog.vue'
@@ -203,9 +232,17 @@ import { buildDefaultOutputFilename } from '../../utils/stageLabels'
 const form = ref({
   file_id: null,
   output_name: '',
+  model: '',
 })
 
 const fileOptions = ref([])
+const llmConfigs = ref([])
+const selectedLLMConfigId = ref(null)
+const currentModelOptions = computed(() => {
+  const cfg = llmConfigs.value.find(c => c.id === selectedLLMConfigId.value)
+  if (!cfg) return []
+  return cfg.models || []
+})
 const startLoading = ref(false)
 const username = computed(() => localStorage.getItem('username') || 'unknown')
 const taskInfo = ref(null)
@@ -218,7 +255,7 @@ const logLoading = ref(false)
 let pollTimer = null
 let logTimer = null
 
-const canStart = computed(() => form.value.file_id && form.value.output_name && !taskRunning.value)
+const canStart = computed(() => form.value.file_id && form.value.output_name && form.value.model && !taskRunning.value)
 
 // Auto-fill output name when source file changes
 watch(() => form.value.file_id, (newFileId) => {
@@ -300,6 +337,25 @@ async function fetchFileOptions(showAll) {
   }
 }
 
+function handleLLMConfigChange(configId) {
+  const cfg = llmConfigs.value.find(c => c.id === configId)
+  if (cfg) {
+    form.value.model = cfg.default_model || ''
+  } else {
+    form.value.model = ''
+  }
+}
+
+async function fetchLLMConfigs() {
+  try {
+    const res = await getLLMConfigs()
+    llmConfigs.value = Array.isArray(res) ? res : []
+  } catch (err) {
+    ElMessage.error('获取LLM配置失败')
+    llmConfigs.value = []
+  }
+}
+
 async function handleStop() {
   try {
     await stopTask(taskId.value)
@@ -336,6 +392,8 @@ async function handleStart() {
     const res = await startCotQualityCheck({
       file_id: form.value.file_id,
       output_name: form.value.output_name,
+      model: form.value.model,
+      llm_config_id: selectedLLMConfigId.value || null,
     })
     taskId.value = res.task_id
     taskRunning.value = true
@@ -468,6 +526,7 @@ async function restoreTaskState() {
 }
 
 onMounted(async () => {
+  await fetchLLMConfigs()
   await restoreTaskState()
 })
 
