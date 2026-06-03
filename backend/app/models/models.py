@@ -185,6 +185,7 @@ class Task(Base):
     chunk_index = Column(Integer, nullable=True)  # chunk 序号（0-based），标识该子任务属于哪个 chunk
     l0_question_index = Column(Integer, nullable=True)  # L0 总问题序号（0-based），标识 per-L0 步骤属于哪个总问题
     total_chunks = Column(Integer, nullable=True)  # 该流水线的总 chunk 数
+    prompt_template_id = Column(String(128), nullable=True)  # H-CoT prompt template ID
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

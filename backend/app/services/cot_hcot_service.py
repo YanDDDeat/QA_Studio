@@ -51,6 +51,38 @@ from app.services.thread_pool import (
 logger = logging.getLogger("qa_studio.cot_hcot_service")
 
 # ---------------------------------------------------------------------------
+# Step name → prompt template key mapping
+# ---------------------------------------------------------------------------
+
+def step_name_to_prompt_key(step_name: str) -> str:
+    """Map pipeline step_name to H-CoT prompt template key."""
+    common_steps = ("fact_card_gen", "sanitize", "quality_check")
+    hcot_steps = ("l0_gen", "l1_decompose", "l2_decompose", "l2_cot", "l1_cot", "l0_cot")
+    cot_steps = ("question_gen", "cot_gen")
+    if step_name in common_steps:
+        return f"common.{step_name}"
+    if step_name in hcot_steps:
+        return f"hcot.{step_name}"
+    if step_name in cot_steps:
+        return f"cot.{step_name}"
+    raise ValueError(f"Unknown step_name: {step_name}")
+
+
+def resolve_step_prompt_from_template(user_id: int, template_id: str, step_name: str) -> Optional[str]:
+    """Read prompt content from an H-CoT template for a given step."""
+    from app.services.hcot_prompt_template_service import (
+        resolve_template_for_run, get_prompt_item,
+    )
+    try:
+        prompt_key = step_name_to_prompt_key(step_name)
+        resolved = resolve_template_for_run(user_id, template_id)
+        item = get_prompt_item(resolved["template_id"], user_id, prompt_key)
+        return item["content"]
+    except Exception as e:
+        logger.warning(f"Template prompt resolution failed for {step_name}: {e}")
+        return None
+
+# ---------------------------------------------------------------------------
 # Pipeline step definitions
 # ---------------------------------------------------------------------------
 
@@ -208,8 +240,12 @@ def get_next_step(mode: str, completed_steps: List[str]) -> Optional[str]:
 # Prompt resolution
 # ---------------------------------------------------------------------------
 
-def find_prompt_for_step(db: Session, step_name: str, user_id: int) -> Optional[Prompt]:
-    """Find the default Prompt for a given pipeline step."""
+def find_prompt_for_step(db: Session, step_name: str, user_id: int, template_id: Optional[str] = None) -> Optional[Prompt]:
+    """Find the default Prompt for a given pipeline step.
+
+    If template_id is provided, try to resolve from H-CoT template first.
+    Fallback to database Prompt table for backward compatibility.
+    """
     if step_name not in PIPELINE_STEPS:
         return None
 
@@ -219,6 +255,21 @@ def find_prompt_for_step(db: Session, step_name: str, user_id: int) -> Optional[
     if prompt_pattern is None:
         return None
 
+    # Try template-based resolution first
+    if template_id:
+        prompt_content = resolve_step_prompt_from_template(user_id, template_id, step_name)
+        if prompt_content:
+            # Return a synthetic Prompt object with the template content
+            return Prompt(
+                id=0,
+                name=prompt_pattern,
+                content=prompt_content,
+                stage=StageEnum.COT_HCOT_PIPELINE,
+                is_default=True,
+                version=1,
+            )
+
+    # Fallback to database query
     from sqlalchemy import or_
     prompt = db.query(Prompt).filter(
         Prompt.stage == StageEnum.COT_HCOT_PIPELINE,
@@ -1265,6 +1316,7 @@ async def run_pipeline_auto_bg(
     base_url_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
     source_file_id: int = None,
+    prompt_template_id: Optional[str] = None,
 ):
     """三阶段式链式执行：分段→全文→推理树→质检导出。
 
@@ -1328,7 +1380,7 @@ async def run_pipeline_auto_bg(
                 db.commit()
 
             input_file_id = source_file_id or parent.source_file_id
-            prompt_obj = find_prompt_for_step(db, "fact_card_gen", user_id)
+            prompt_obj = find_prompt_for_step(db, "fact_card_gen", user_id, prompt_template_id)
             if not prompt_obj:
                 parent.status = TaskStatusEnum.FAILED
                 parent.progress_label = "找不到事实卡生成的提示词"
@@ -1467,7 +1519,7 @@ async def run_pipeline_auto_bg(
                 db.commit()
 
             input_file_id = source_file_id or parent.source_file_id
-            prompt_obj = find_prompt_for_step(db, "sanitize", user_id)
+            prompt_obj = find_prompt_for_step(db, "sanitize", user_id, prompt_template_id)
             if not prompt_obj:
                 parent.status = TaskStatusEnum.FAILED
                 parent.progress_label = "找不到数值抽象的提示词"
@@ -1542,7 +1594,7 @@ async def run_pipeline_auto_bg(
                     db.commit()
 
                 input_file_id = source_file_id or parent.source_file_id
-                prompt_obj = find_prompt_for_step(db, "l0_gen", user_id)
+                prompt_obj = find_prompt_for_step(db, "l0_gen", user_id, prompt_template_id)
                 if not prompt_obj:
                     parent.status = TaskStatusEnum.FAILED
                     parent.progress_label = "找不到 L0 总问题生成的提示词"
@@ -1645,7 +1697,7 @@ async def run_pipeline_auto_bg(
                         existing_failed.status = TaskStatusEnum.PAUSED
                         db.commit()
 
-                    prompt_obj = find_prompt_for_step(db, step_name, user_id)
+                    prompt_obj = find_prompt_for_step(db, step_name, user_id, prompt_template_id)
                     if not prompt_obj:
                         # 提示词缺失属于严重错误，但仍然继续其他总问题
                         logger.error(f"Auto-run: 找不到步骤 '{step_name}' 的提示词，跳过总问题 {l0_idx}")
@@ -1739,7 +1791,7 @@ async def run_pipeline_auto_bg(
                     db.commit()
 
                 input_file_id = source_file_id or parent.source_file_id
-                prompt_obj = find_prompt_for_step(db, step_name, user_id)
+                prompt_obj = find_prompt_for_step(db, step_name, user_id, prompt_template_id)
                 if not prompt_obj:
 
                     parent.status = TaskStatusEnum.FAILED
@@ -1823,7 +1875,7 @@ async def run_pipeline_auto_bg(
                 _add_task_log(db, parent_task_id, f"链式执行终止：步骤 '{display}' 失败")
                 return
 
-            prompt_obj = find_prompt_for_step(db, "quality_check", user_id)
+            prompt_obj = find_prompt_for_step(db, "quality_check", user_id, prompt_template_id)
             if prompt_obj:
                 input_file_id = source_file_id or parent.source_file_id
 

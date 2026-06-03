@@ -48,6 +48,26 @@
             </el-option>
           </el-select>
         </el-form-item>
+        <el-form-item label="提示词模板">
+          <el-select v-model="createForm.prompt_template_id" placeholder="使用默认模板" filterable clearable style="width: 100%">
+            <el-option-group label="系统模板">
+              <el-option
+                v-for="t in promptTemplates.filter(t => t.is_system)"
+                :key="t.template_id"
+                :label="t.name + (t.is_default ? '（默认）' : '')"
+                :value="t.template_id"
+              />
+            </el-option-group>
+            <el-option-group label="我的模板" v-if="promptTemplates.filter(t => !t.is_system).length">
+              <el-option
+                v-for="t in promptTemplates.filter(t => !t.is_system)"
+                :key="t.template_id"
+                :label="t.name + (t.is_default ? '（默认）' : '')"
+                :value="t.template_id"
+              />
+            </el-option-group>
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createDialogVisible = false">取消</el-button>
@@ -142,6 +162,7 @@ import {
   autoRunCothcotPipeline,
   getCothcotSourceFiles,
   getLLMConfigs,
+  listHcotPromptTemplates,
 } from '../../api'
 
 const router = useRouter()
@@ -179,12 +200,14 @@ const autoLoading = ref(false)
 const createFormRef = ref(null)
 const sourceFiles = ref([])
 const llmConfigs = ref([])
+const promptTemplates = ref([])
 
 const createForm = ref({
   pipeline_name: '',
   pipeline_mode: 'hcot',
   source_file_id: null,
   llm_config_id: null,
+  prompt_template_id: null,
 })
 
 const createRules = {
@@ -215,6 +238,12 @@ async function fetchDialogData() {
     llmConfigs.value = await getLLMConfigs()
   } catch (err) {
     ElMessage.error('获取 LLM 配置失败')
+  }
+  try {
+    const res = await listHcotPromptTemplates()
+    promptTemplates.value = res.templates || []
+  } catch (err) {
+    // 提示词模板可选，不阻断流程
   }
 }
 

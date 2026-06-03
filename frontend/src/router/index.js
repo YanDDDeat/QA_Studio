@@ -49,6 +49,12 @@ const routes = [
         meta: { title: '单COT提示词' },
       },
       {
+        path: 'hcot-prompts',
+        name: 'HcotPrompts',
+        component: () => import('../views/CotHcot/HcotPromptTemplates.vue'),
+        meta: { title: '多COT提示词' },
+      },
+      {
         path: 'professional-cot-runs/:id',
         name: 'ProfessionalCotRunDetail',
         component: () => import('../views/CotHcot/ProfessionalCotDetail.vue'),

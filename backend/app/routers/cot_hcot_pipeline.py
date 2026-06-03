@@ -31,6 +31,18 @@ from app.services.cot_hcot_service import (
     PIPELINE_STEPS,
     _run_merge_step_in_thread,
 )
+from app.services.hcot_prompt_template_service import (
+    list_templates as list_hcot_templates,
+    get_template_detail as get_hcot_template_detail,
+    get_prompt_item as get_hcot_prompt_item,
+    update_prompt_item as update_hcot_prompt_item,
+    restore_prompt_item_default as restore_hcot_prompt_default,
+    duplicate_template as duplicate_hcot_template,
+    rename_template as rename_hcot_template,
+    set_default_template as set_hcot_default_template,
+    delete_template as delete_hcot_template,
+    PromptTemplateError,
+)
 
 logger = logging.getLogger("qa_studio.cothcot_pipeline")
 
@@ -62,6 +74,7 @@ class PipelineStartRequest(BaseModel):
     pipeline_mode: str = Field(..., description="Mode: 'hcot' or 'cot'")
     llm_config_id: int = Field(..., description="ID of the LLM config to use")
     pipeline_name: str = Field(..., description="User-defined name for this pipeline task")
+    prompt_template_id: Optional[str] = Field(None, description="ID of the H-CoT prompt template to use")
 
 
 class PipelineStepRequest(BaseModel):
@@ -69,6 +82,14 @@ class PipelineStepRequest(BaseModel):
     step_name: str = Field(..., description="Name of the step to run (e.g., 'sanitize', 'l0_gen')")
     prompt_id: Optional[int] = Field(None, description="Optional: override prompt ID for this step")
     l0_question_index: Optional[int] = Field(None, description="L0 总问题序号，per-L0 步骤必须传入")
+
+
+class HcotTemplateNameRequest(BaseModel):
+    name: str = Field(..., description="New template name")
+
+
+class HcotPromptContentRequest(BaseModel):
+    content: str = Field(..., description="Prompt content text")
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +137,7 @@ async def start_pipeline(
         source_file_id=request.source_file_id,
         pipeline_mode=request.pipeline_mode,
         pipeline_name=request.pipeline_name,
+        prompt_template_id=request.prompt_template_id,
     )
     db.add(parent_task)
     db.commit()
@@ -127,7 +149,7 @@ async def start_pipeline(
 
     # Find the first step's prompt
     first_step = get_step_order(request.pipeline_mode)[0]  # always "fact_card_gen"
-    prompt_obj = find_prompt_for_step(db, first_step, current_user.id)
+    prompt_obj = find_prompt_for_step(db, first_step, current_user.id, request.prompt_template_id)
     if not prompt_obj:
         raise HTTPException(
             status_code=404,
@@ -698,6 +720,7 @@ async def auto_run_pipeline(
             base_url_override=base_url_override,
             api_key_override=api_key_override,
             source_file_id=request.source_file_id,
+            prompt_template_id=request.prompt_template_id,
         )
     )
 
@@ -811,6 +834,7 @@ async def auto_continue_pipeline(
             base_url_override=base_url_override,
             api_key_override=api_key_override,
             source_file_id=parent_task.source_file_id,
+            prompt_template_id=parent_task.prompt_template_id,
         )
     )
 
@@ -829,3 +853,133 @@ async def auto_continue_pipeline(
         "status": "running",
         "message": f"继续链式执行剩余 {remaining} 步",
     }
+
+
+# ---------------------------------------------------------------------------
+# H-CoT Prompt Template Management
+# ---------------------------------------------------------------------------
+
+def _hcot_prompt_error(exc: PromptTemplateError) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/prompts/templates")
+async def list_hcot_prompt_templates(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List all H-CoT prompt templates for the current user."""
+    try:
+        return list_hcot_templates(current_user.id)
+    except PromptTemplateError as exc:
+        raise _hcot_prompt_error(exc)
+
+
+@router.get("/prompts/templates/{template_id}")
+async def get_hcot_prompt_template_detail(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get detail + prompt tree for a specific H-CoT template."""
+    try:
+        return get_hcot_template_detail(template_id, current_user.id)
+    except PromptTemplateError as exc:
+        raise _hcot_prompt_error(exc)
+
+
+@router.post("/prompts/templates/{template_id}/duplicate")
+async def duplicate_hcot_prompt_template(
+    template_id: str,
+    payload: HcotTemplateNameRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Duplicate an H-CoT prompt template with a new name."""
+    try:
+        return duplicate_hcot_template(template_id, current_user.id, payload.name)
+    except PromptTemplateError as exc:
+        raise _hcot_prompt_error(exc)
+
+
+@router.put("/prompts/templates/{template_id}")
+async def rename_hcot_prompt_template(
+    template_id: str,
+    payload: HcotTemplateNameRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Rename an H-CoT prompt template."""
+    try:
+        return rename_hcot_template(template_id, current_user.id, payload.name)
+    except PromptTemplateError as exc:
+        raise _hcot_prompt_error(exc)
+
+
+@router.post("/prompts/templates/{template_id}/set-default")
+async def set_hcot_default_prompt_template(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set an H-CoT prompt template as the user's default."""
+    try:
+        return set_hcot_default_template(template_id, current_user.id)
+    except PromptTemplateError as exc:
+        raise _hcot_prompt_error(exc)
+
+
+@router.delete("/prompts/templates/{template_id}")
+async def delete_hcot_prompt_template(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete an H-CoT prompt template."""
+    try:
+        return delete_hcot_template(template_id, current_user.id)
+    except PromptTemplateError as exc:
+        raise _hcot_prompt_error(exc)
+
+
+@router.get("/prompts/templates/{template_id}/items/{prompt_key}")
+async def get_hcot_prompt_template_item(
+    template_id: str,
+    prompt_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get prompt content for a specific item in an H-CoT template."""
+    try:
+        return get_hcot_prompt_item(template_id, current_user.id, prompt_key)
+    except PromptTemplateError as exc:
+        raise _hcot_prompt_error(exc)
+
+
+@router.put("/prompts/templates/{template_id}/items/{prompt_key}")
+async def update_hcot_prompt_template_item(
+    template_id: str,
+    prompt_key: str,
+    payload: HcotPromptContentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update prompt content for a specific item in an H-CoT template."""
+    try:
+        return update_hcot_prompt_item(template_id, current_user.id, prompt_key, payload.content)
+    except PromptTemplateError as exc:
+        raise _hcot_prompt_error(exc)
+
+
+@router.post("/prompts/templates/{template_id}/items/{prompt_key}/restore-default")
+async def restore_hcot_prompt_template_item_default(
+    template_id: str,
+    prompt_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Restore the default content for a specific prompt item in an H-CoT template."""
+    try:
+        return restore_hcot_prompt_default(template_id, current_user.id, prompt_key)
+    except PromptTemplateError as exc:
+        raise _hcot_prompt_error(exc)

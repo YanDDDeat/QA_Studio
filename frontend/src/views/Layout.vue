@@ -105,6 +105,10 @@
             <el-icon><Document /></el-icon>
             <span>单COT提示词</span>
           </el-menu-item>
+          <el-menu-item index="/hcot-prompts">
+            <el-icon><Document /></el-icon>
+            <span>多COT提示词</span>
+          </el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu index="group-tools">

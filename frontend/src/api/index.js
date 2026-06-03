@@ -465,3 +465,40 @@ export function updateProfessionalCotPromptItem(templateId, promptKey, data) {
 export function restoreDefaultProfessionalCotPromptItem(templateId, promptKey) {
   return api.post(`/professional-cot/prompts/templates/${templateId}/items/${promptKey}/restore-default`)
 }
+
+// H-CoT Prompt Template API
+export function listHcotPromptTemplates() {
+  return api.get('/cothcot/prompts/templates')
+}
+
+export function getHcotPromptTemplate(templateId) {
+  return api.get(`/cothcot/prompts/templates/${templateId}`)
+}
+
+export function duplicateHcotPromptTemplate(templateId, data) {
+  return api.post(`/cothcot/prompts/templates/${templateId}/duplicate`, data)
+}
+
+export function renameHcotPromptTemplate(templateId, data) {
+  return api.put(`/cothcot/prompts/templates/${templateId}`, data)
+}
+
+export function setDefaultHcotPromptTemplate(templateId) {
+  return api.post(`/cothcot/prompts/templates/${templateId}/set-default`)
+}
+
+export function deleteHcotPromptTemplate(templateId) {
+  return api.delete(`/cothcot/prompts/templates/${templateId}`)
+}
+
+export function getHcotPromptItem(templateId, promptKey) {
+  return api.get(`/cothcot/prompts/templates/${templateId}/items/${promptKey}`)
+}
+
+export function updateHcotPromptItem(templateId, promptKey, data) {
+  return api.put(`/cothcot/prompts/templates/${templateId}/items/${promptKey}`, data)
+}
+
+export function restoreDefaultHcotPromptItem(templateId, promptKey) {
+  return api.post(`/cothcot/prompts/templates/${templateId}/items/${promptKey}/restore-default`)
+}
