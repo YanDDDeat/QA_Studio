@@ -263,6 +263,10 @@ export function uploadMdFile(data) {
   return api.post('/file-manage/upload-md', data)
 }
 
+export function saveJsonContent(data) {
+  return api.post('/file-manage/save-json-content', data)
+}
+
 export function deleteManagedFile(id) {
   return api.post(`/file-manage/${id}/delete`)
 }

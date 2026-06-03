@@ -45,6 +45,9 @@
             <el-button type="primary" :icon="Download" :disabled="!canDownload" @click="handleDownload">
               下载 JSON
             </el-button>
+            <el-button type="success" :icon="FolderAdd" :disabled="!canDownload" :loading="savingToDataCenter" @click="handleSaveToDataCenter">
+              保存到数据中心
+            </el-button>
             <el-button :icon="RefreshLeft" @click="handleClearAll">清空</el-button>
           </div>
         </div>
@@ -146,11 +149,13 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Download, RefreshLeft, UploadFilled } from '@element-plus/icons-vue'
+import { Delete, Download, RefreshLeft, UploadFilled, FolderAdd } from '@element-plus/icons-vue'
+import { saveJsonContent } from '../../api'
 import TextPreprocess from '../TextPreprocess.vue'
 
 const uploadRef = ref(null)
 const mdFiles = ref([])
+const savingToDataCenter = ref(false)
 let fileIdCounter = 0
 
 const readyFiles = computed(() => mdFiles.value.filter(file => file.status === 'ok'))
@@ -250,6 +255,31 @@ function handleDownload() {
   URL.revokeObjectURL(url)
 
   ElMessage.success(`已生成 ${readyFiles.value.length} 个文件的 JSON`)
+}
+
+async function handleSaveToDataCenter() {
+  if (!canDownload.value) {
+    ElMessage.warning('请等待文件读取完成，并移除读取失败的文件')
+    return
+  }
+  savingToDataCenter.value = true
+  try {
+    const res = await saveJsonContent({
+      filename: outputFilename.value,
+      content: JSON.stringify(mergedRecords.value, null, 2),
+      text_field: 'text',
+    })
+    const warning = res.warning
+    if (warning) {
+      ElMessage.warning({ message: `已保存到数据中心（文件ID: ${res.id}），但 ${warning}`, duration: 5000 })
+    } else {
+      ElMessage.success(`已保存到数据中心（文件ID: ${res.id}），可直接在流水线中使用`)
+    }
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '保存到数据中心失败')
+  } finally {
+    savingToDataCenter.value = false
+  }
 }
 
 function buildTimestamp() {
