@@ -194,11 +194,11 @@ import {
   downloadManagedFile,
   stopTask,
   resumeTask,
-} from '../api'
-import FileSelector from '../components/FileSelector.vue'
-import TaskConfigDialog from '../components/TaskConfigDialog.vue'
-import { useSourcePreview } from '../composables/useSourcePreview'
-import { buildDefaultOutputFilename } from '../utils/stageLabels'
+} from '../../api'
+import FileSelector from '../../components/FileSelector.vue'
+import TaskConfigDialog from '../../components/TaskConfigDialog.vue'
+import { useSourcePreview } from '../../composables/useSourcePreview'
+import { buildDefaultOutputFilename } from '../../utils/stageLabels'
 
 const form = ref({
   file_id: null,
