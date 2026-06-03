@@ -21,7 +21,49 @@ from app.services.thread_pool import register_task, unregister_task
 
 logger = logging.getLogger("qa_studio.professional_cot")
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+def _find_project_root() -> Path:
+    """Find the project root across local and container layouts."""
+    marker = Path("docs") / "background" / "3类COT提示词" / "专业Cot构建.md"
+    candidates = []
+
+    env_root = os.getenv("QA_STUDIO_ROOT") or os.getenv("PROJECT_ROOT")
+    if env_root:
+        candidates.append(Path(env_root))
+
+    current_file = Path(__file__).resolve()
+    candidates.extend(current_file.parents)
+
+    cwd = Path.cwd().resolve()
+    candidates.append(cwd)
+    candidates.extend(cwd.parents)
+
+    candidates.extend([Path("/app"), Path("/workspace"), Path("/code")])
+
+    seen = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if (resolved / marker).exists():
+            return resolved
+
+    # Keep the old local layout fallback, but log the checked roots to make
+    # deployment path issues diagnosable.
+    fallback = current_file.parents[3]
+    logger.warning(
+        "未找到专业 CoT 提示词目录，使用回退项目根目录: %s；已检查: %s",
+        fallback,
+        [str(item) for item in seen],
+    )
+    return fallback
+
+
+PROJECT_ROOT = _find_project_root()
 PROMPT_ROOT = PROJECT_ROOT / "docs" / "background" / "3类COT提示词"
 STORAGE_ROOT = PROJECT_ROOT / "storage" / "professional_cot_runs"
 SCHEMA_VERSION = "1.0"
