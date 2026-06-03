@@ -263,7 +263,6 @@ def find_prompt_for_step(db: Session, step_name: str, user_id: int, template_id:
             # The actual prompt content comes from the template, not from the DB
             return Prompt(
                 id=None,
-                prompt_id=None,
                 name=prompt_pattern,
                 content=prompt_content,
                 stage=StageEnum.COT_HCOT_PIPELINE,
