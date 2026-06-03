@@ -10,6 +10,15 @@
               {{ statusLabel(run?.status) }}
             </el-tag>
             <el-button
+              v-if="run?.status === 'running'"
+              type="warning"
+              :loading="pauseLoading"
+              style="margin-left: 12px"
+              @click="handlePause"
+            >
+              暂停运行
+            </el-button>
+            <el-button
               v-if="run?.status === 'paused' || run?.status === 'failed'"
               type="success"
               :loading="resumeLoading"
@@ -371,6 +380,7 @@ import {
   downloadProfessionalCotExport,
   getProfessionalCotArtifact,
   getProfessionalCotRunDetail,
+  pauseProfessionalCotRun,
   resumeProfessionalCotRun,
 } from '../../api'
 
@@ -380,6 +390,7 @@ const runId = computed(() => route.params.id)
 
 const loading = ref(false)
 const resumeLoading = ref(false)
+const pauseLoading = ref(false)
 const run = ref(null)
 let pollTimer = null
 
@@ -564,6 +575,20 @@ async function handleResume() {
     ElMessage.error(err.response?.data?.detail || '恢复失败')
   } finally {
     resumeLoading.value = false
+  }
+}
+
+async function handlePause() {
+  pauseLoading.value = true
+  try {
+    await pauseProfessionalCotRun(runId.value)
+    ElMessage.success('流水线已标记为暂停，将在当前文献完成后停止')
+    stopPolling()
+    await fetchRunDetail()
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '暂停失败')
+  } finally {
+    pauseLoading.value = false
   }
 }
 

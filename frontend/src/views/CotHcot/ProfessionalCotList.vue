@@ -212,8 +212,17 @@
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
+            <el-button
+              v-if="row.status === 'running'"
+              type="warning"
+              link
+              :loading="row._pauseLoading"
+              @click="handlePauseRun(row)"
+            >
+              暂停
+            </el-button>
             <el-button type="primary" link @click="goToDetail(row.run_id)">
               查看详情
             </el-button>
@@ -249,6 +258,7 @@ import {
   listProfessionalCotRuns,
   startProfessionalCotRun,
   listProfessionalCotPromptTemplates,
+  pauseProfessionalCotRun,
 } from '../../api'
 
 const router = useRouter()
@@ -501,6 +511,19 @@ async function handleCreate() {
 
 function goToDetail(id) {
   router.push(`/professional-cot-runs/${id}`)
+}
+
+async function handlePauseRun(row) {
+  row._pauseLoading = true
+  try {
+    await pauseProfessionalCotRun(row.run_id)
+    ElMessage.success('流水线已标记为暂停')
+    await fetchRuns()
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '暂停失败')
+  } finally {
+    row._pauseLoading = false
+  }
 }
 
 function statusTagType(s) {

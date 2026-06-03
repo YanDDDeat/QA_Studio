@@ -27,6 +27,10 @@ from app.services.thread_pool import register_task, unregister_task
 logger = logging.getLogger("qa_studio.professional_cot")
 
 
+class _PipelinePausedError(Exception):
+    """后台流水线检测到暂停请求时抛出。"""
+
+
 def _find_project_root() -> Path:
     """Find the project root across local and container layouts."""
     marker = Path("docs") / "background" / "3类COT提示词" / "专业Cot构建.md"
@@ -1670,6 +1674,13 @@ def process_one_document(
         """Update a step in the manifest and save, if manifest is provided."""
         if manifest is None:
             return
+        # Re-read manifest from disk to detect pause requests
+        fresh_manifest = load_manifest(manifest["run_id"])
+        if fresh_manifest.get("status") == "paused":
+            logger.info("检测到暂停请求，停止处理文献 run=%s", manifest.get("run_id"))
+            manifest["status"] = "paused"
+            manifest["stop_reason"] = fresh_manifest.get("stop_reason", "用户手动暂停")
+            raise _PipelinePausedError("流水线已被暂停")
         _update_step(manifest, step_key, **kwargs)
         save_manifest(manifest)
 
@@ -1837,6 +1848,14 @@ def process_one_document(
             "sample_count": 1,
         }
 
+    except _PipelinePausedError:
+        logger.info("文献 %s (#%d) 因暂停请求而中断", source_label, source_index + 1)
+        return {
+            "source_index": source_index,
+            "source": source_label,
+            "status": "paused",
+            "error": "因暂停请求中断",
+        }
     except (LLMCallError, FileNotFoundError, ValueError) as exc:
         logger.error("文献 %s (#%d) 处理失败: %s", source_label, source_index + 1, exc)
         return {
@@ -1884,7 +1903,51 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
         all_samples: List[Dict[str, Any]] = []
         batch_items: List[Dict[str, Any]] = []
 
+        # Initialize from existing artifacts (for resume support)
+        completed_indices: set = set()
+        batch_summary_path = run_dir / "batch_summary.json"
+        if batch_summary_path.exists():
+            batch_summary_data = read_json(batch_summary_path)
+            for item in batch_summary_data.get("items", []):
+                if isinstance(item, dict):
+                    batch_items.append(item)
+                    if item.get("status") in ("success", "failed", "skipped"):
+                        completed_indices.add(item.get("source_index", -1))
+                    if item.get("status") == "success":
+                        # Reload final_sample from per-doc artifact
+                        doc_dir_name = f"{str(item.get('source_index', 0) + 1).zfill(4)}_{_sanitize_dirname(item.get('source', ''))}"
+                        doc_dir = run_dir / "documents" / doc_dir_name
+                        sample_path = doc_dir / "final_sample.json"
+                        if sample_path.exists():
+                            sample = read_json(sample_path)
+                            if isinstance(sample, dict):
+                                all_samples.append(sample)
+
+            manifest["success_count"] = len([i for i in batch_items if i.get("status") == "success"])
+            manifest["failed_count"] = len([i for i in batch_items if i.get("status") != "success"])
+
         for idx, record in enumerate(source_data):
+            # ---- Cooperative cancellation: re-read manifest to detect pause ----
+            manifest = load_manifest(run_id)
+            if manifest.get("status") == "paused":
+                logger.info("检测到暂停请求，停止处理 run %s 于文献 %d/%d", run_id, idx + 1, input_count)
+                manifest["progress_label"] = f"已暂停（完成 {manifest.get('success_count', 0)} 篇，于第 {idx + 1}/{input_count} 篇中断）"
+                for step in manifest.get("steps", []):
+                    if step.get("status") == "running":
+                        step["status"] = "pending"
+                        step["progress_current"] = 0
+                        step["progress_label"] = "暂停后未执行"
+                        step["error_message"] = None
+                save_manifest(manifest)
+                return
+            # ---- End cooperative cancellation check ----
+
+            # ---- Skip already-processed documents (for resume) ----
+            if idx in completed_indices:
+                logger.info("跳过已处理的文献 %d/%d: %s", idx + 1, input_count, record.get("source", f"item_{idx + 1}"))
+                continue
+            # ---- End skip logic ----
+
             source_label = record.get("source", f"item_{idx + 1}")
             paper_text = record.get(text_field, "")
 
@@ -1908,6 +1971,11 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
             )
 
             batch_items.append(doc_result)
+
+            if doc_result.get("status") == "paused":
+                # Pipeline was paused during document processing — exit immediately
+                logger.info("文献 %d 因暂停中断，退出 run_pipeline_sync", idx + 1)
+                return
 
             if doc_result["status"] == "success":
                 all_samples.append(doc_result["final_sample"])
