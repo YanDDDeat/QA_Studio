@@ -383,6 +383,35 @@ async def resume_run(
     }
 
 
+@router.post("/runs/{run_id}/pause")
+async def pause_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Pause a running run. Writes paused status to manifest so the background loop detects it and exits."""
+    try:
+        manifest = load_manifest(run_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    if manifest.get("user_id") != current_user.id:
+        raise HTTPException(status_code=403, detail="无权操作此任务")
+    if manifest.get("status") != "running":
+        raise HTTPException(status_code=400, detail=f"当前状态为 {manifest.get('status')}，无法暂停；只有 running 的 run 可以暂停")
+
+    done_count = (manifest.get("success_count") or 0) + (manifest.get("failed_count") or 0)
+    total_count = manifest.get("input_count") or 1
+    manifest["status"] = "paused"
+    manifest["stop_reason"] = "用户手动暂停"
+    manifest["progress_label"] = f"已暂停（完成 {done_count}/{total_count} 篇文献）"
+    save_manifest(manifest)
+
+    return {
+        "run_id": run_id,
+        "status": "paused",
+        "message": "单COT生成流水线已标记为暂停，后台任务将在当前文献处理完成后停止",
+    }
+
+
 @router.get("/runs/{run_id}/export/json")
 async def export_json(
     run_id: str,

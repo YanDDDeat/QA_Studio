@@ -28,6 +28,7 @@ class StageEnum(str, PyEnum):
     DATASET_ASSESSMENT = "dataset_assessment"
     GENERIC = "generic"
     COT_HCOT_PIPELINE = "cot_hcot_pipeline"  # CoT/H-CoT 标注流水线
+    COT_QUALITY_CHECK = "cot_quality_check"  # 单COT质检（旧数据兼容）
 
 
 # SQLAlchemy 2.0 解析混合 Enum 类时 dict keys 用的是 member 名称而非值

@@ -434,6 +434,10 @@ export function resumeProfessionalCotRun(runId) {
   return api.post(`/professional-cot/runs/${runId}/resume`)
 }
 
+export function pauseProfessionalCotRun(runId) {
+  return api.post(`/professional-cot/runs/${runId}/pause`)
+}
+
 export function listProfessionalCotPromptTemplates() {
   return api.get('/professional-cot/prompts/templates')
 }
