@@ -7,6 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -142,7 +143,7 @@ async def list_managed_data(
     db: Session = Depends(get_db),
 ):
     """List managed datasets (user-scoped) with pagination and filters."""
-    query = db.query(Dataset).filter(Dataset.user_id == current_user.id)
+    filters = [Dataset.user_id == current_user.id]
 
     # Apply filters
     if current_stage:
@@ -152,14 +153,14 @@ async def list_managed_data(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid current_stage: {current_stage}",
             )
-        query = query.filter(Dataset.current_stage == StageEnum(current_stage))
+        filters.append(Dataset.current_stage == StageEnum(current_stage))
 
     if passed:
-        query = query.filter(Dataset.passed == passed)
+        filters.append(Dataset.passed == passed)
 
     if keyword:
         keyword_filter = f"%{keyword}%"
-        query = query.filter(
+        filters.append(
             (Dataset.domain.ilike(keyword_filter))
             | (Dataset.category.ilike(keyword_filter))
             | (Dataset.task_type.ilike(keyword_filter))
@@ -169,9 +170,9 @@ async def list_managed_data(
             | (Dataset.source.ilike(keyword_filter))
         )
 
-    total = query.count()
+    total = db.query(func.count(Dataset.id)).filter(*filters).scalar()
     offset = (page - 1) * page_size
-    datasets = query.order_by(Dataset.id.desc()).offset(offset).limit(page_size).all()
+    datasets = db.query(Dataset).filter(*filters).order_by(Dataset.id.desc()).offset(offset).limit(page_size).all()
 
     return {
         "total": total,

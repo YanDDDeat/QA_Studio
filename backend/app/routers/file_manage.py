@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File as FastAPIFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db

@@ -5,6 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status as http_status
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db

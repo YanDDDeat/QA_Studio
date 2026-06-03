@@ -5,6 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -107,18 +108,18 @@ async def list_datasets(
     db: Session = Depends(get_db),
 ):
     """List datasets belonging to the current user, with optional filters and pagination."""
-    query = db.query(Dataset).filter(Dataset.user_id == current_user.id)
+    filters = [Dataset.user_id == current_user.id]
     if current_stage:
         if current_stage not in [s.value for s in StageEnum]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid stage: {current_stage}",
             )
-        query = query.filter(Dataset.current_stage == StageEnum(current_stage))
+        filters.append(Dataset.current_stage == StageEnum(current_stage))
     if file_id is not None:
-        query = query.filter(Dataset.file_id == file_id)
-    total = query.count()
-    items = query.order_by(Dataset.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        filters.append(Dataset.file_id == file_id)
+    total = db.query(func.count(Dataset.id)).filter(*filters).scalar()
+    items = db.query(Dataset).filter(*filters).order_by(Dataset.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return PaginatedDatasetResponse(items=items, total=total, page=page, page_size=page_size)
 
 
