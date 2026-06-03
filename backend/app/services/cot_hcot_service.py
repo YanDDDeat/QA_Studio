@@ -310,15 +310,70 @@ def _read_file_content(db: Session, file_id: int) -> Optional[str]:
         return None
 
 
+def _stringify_chunk_content(value) -> str:
+    """Convert a JSON field value into prompt-ready chunk content."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _pick_chunk_content_from_record(record: Dict[str, Any], source_text_field: str = "") -> str:
+    """Pick content from a JSON record without writing long text into Dataset columns."""
+    candidate_fields = []
+    if source_text_field:
+        candidate_fields.append(source_text_field)
+    candidate_fields.extend(["input", "originContent", "content", "text"])
+
+    seen = set()
+    for field in candidate_fields:
+        if field in seen:
+            continue
+        seen.add(field)
+        if field not in record:
+            continue
+        content = _stringify_chunk_content(record.get(field))
+        if content.strip():
+            return content
+    return ""
+
+
+def _get_source_chunks_from_json_file(file_obj: File) -> List[Dict[str, Any]]:
+    """Read source chunks directly from JSON file to avoid DB TEXT length limits."""
+    source_text_field = (file_obj.text_field or "").strip()
+    try:
+        abs_path = _resolve_file_path(file_obj.file_path)
+        with open(abs_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to parse source JSON file_id={file_obj.id}: {e}")
+        return []
+
+    records = data if isinstance(data, list) else [data]
+    chunks = []
+    for i, record in enumerate(records):
+        if not isinstance(record, dict):
+            continue
+        content = _pick_chunk_content_from_record(record, source_text_field)
+        if content.strip():
+            chunks.append({"chunk_index": i, "content": content})
+    return chunks
+
+
 def _get_source_chunks(db: Session, source_file_id: int, user_id: int = None) -> List[Dict[str, Any]]:
     """读取源文件的分段数据，返回 chunk 列表。
 
-    策略：优先从 Dataset 表读取。如果 Dataset 没有数据，
-    调用 ensure_datasets_for_file 将 JSON 文件解析并自动写入 Dataset 行
-    （该函数已内置 text_field + 别名映射机制，能处理不同字段名），
-    然后再从 Dataset 读取。
+    CoT/H-CoT 的源文本可能很长，不能为了读取指定字段而强制写入
+    datasets.originContent（MySQL TEXT 约 64KB，长论文 chunk 会溢出）。
+    因此：已有 Dataset 时从 Dataset/extra_fields 读取；没有 Dataset 时直接从
+    JSON 源文件按 File.text_field/input/originContent/content/text 读取 chunks。
     """
     from app.models.models import Dataset
+
+    file_obj = db.query(File).filter(File.id == source_file_id).first()
+    if not file_obj:
+        return []
 
     # 先尝试直接从 Dataset 表读
     query = db.query(Dataset).filter(Dataset.file_id == source_file_id)
@@ -326,37 +381,30 @@ def _get_source_chunks(db: Session, source_file_id: int, user_id: int = None) ->
         query = query.filter(Dataset.user_id == user_id)
     datasets = query.order_by(Dataset.id.asc()).all()
 
-    file_obj = db.query(File).filter(File.id == source_file_id).first()
     if not datasets:
-        # Dataset 表没有数据——用 ensure_datasets_for_file 自动解析 JSON 并写入 Dataset
-        # 它会根据 file_obj.text_field + 别名映射，自动把各种字段名映射到 Dataset 的 input/originContent
-        if not file_obj:
-            return []
+        direct_chunks = _get_source_chunks_from_json_file(file_obj)
+        if direct_chunks:
+            return direct_chunks
+
+        # 兼容旧逻辑：如果直接读取失败，再尝试通过 Dataset 导入读取。
         datasets = ensure_datasets_for_file(db, source_file_id, file_obj.user_id)
         db.flush()  # 确保新写入的 Dataset 行可以被读取
 
     if not datasets:
         return []
 
-    source_text_field = (file_obj.text_field or "").strip() if file_obj else ""
-    prefer_origin_content = bool(source_text_field)
-
+    source_text_field = (file_obj.text_field or "").strip()
     chunks = []
     for i, ds in enumerate(datasets):
-        if prefer_origin_content:
+        content = ""
+        if source_text_field and ds.extra_fields and source_text_field in ds.extra_fields:
+            content = _stringify_chunk_content(ds.extra_fields.get(source_text_field))
+        if not content and source_text_field:
             content = ds.originContent or ""
-            if not content and ds.extra_fields and source_text_field in ds.extra_fields:
-                extra_value = ds.extra_fields.get(source_text_field)
-                if isinstance(extra_value, (list, dict)):
-                    content = json.dumps(extra_value, ensure_ascii=False)
-                elif extra_value is not None:
-                    content = str(extra_value)
-            if not content:
-                content = ds.input or ""
-        else:
+        if not content:
             content = ds.input or ""
-            if not content:
-                content = ds.originContent or ""
+        if not content:
+            content = ds.originContent or ""
         if content.strip():
             chunks.append({"chunk_index": i, "content": content})
 
