@@ -467,21 +467,21 @@ async def get_question_validate_status(
 
     # Count pass/fail from task logs for this specific task
     pass_count = (
-        db.query(TaskLog)
+        db.query(func.count(TaskLog.id))
         .filter(
             TaskLog.task_id == task_id,
             TaskLog.log_content.contains("校验通过"),
         )
-        .count()
+        .scalar()
     )
 
     fail_count = (
-        db.query(TaskLog)
+        db.query(func.count(TaskLog.id))
         .filter(
             TaskLog.task_id == task_id,
             TaskLog.log_content.contains("校验失败"),
         )
-        .count()
+        .scalar()
     )
 
     return TaskStatusResponse(
@@ -592,13 +592,13 @@ async def retry_question_validate(
 
     # Count remaining qualifying datasets for progress tracking
     remaining_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(
             Dataset.file_id == source_fid,
             Dataset.user_id == current_user.id,
             Dataset.current_stage == StageEnum.KNOWLEDGE_GENERATE,
         )
-        .count()
+        .scalar()
     )
 
     # Keep progress_current for breakpoint resume
