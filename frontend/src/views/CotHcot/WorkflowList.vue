@@ -19,7 +19,13 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="源文件" prop="source_file_id">
-          <el-select v-model="createForm.source_file_id" placeholder="选择源文件" filterable style="width: 100%">
+          <el-select
+            v-model="createForm.source_file_id"
+            placeholder="选择源文件"
+            filterable
+            style="width: 100%"
+            @change="handleSourceFileChange"
+          >
             <el-option
               v-for="f in sourceFiles"
               :key="f.id"
@@ -32,6 +38,15 @@
               </span>
             </el-option>
           </el-select>
+        </el-form-item>
+        <el-form-item label="内容字段名" prop="content_field">
+          <el-input
+            v-model="createForm.content_field"
+            placeholder="例如：text、content、originContent、paper_text"
+          />
+          <div class="form-tip">
+            用于从 JSON 每条记录中读取正文内容；留空时使用 input/originContent 兼容逻辑
+          </div>
         </el-form-item>
         <el-form-item label="LLM 配置" prop="llm_config_id">
           <el-select v-model="createForm.llm_config_id" placeholder="选择 LLM 配置" filterable style="width: 100%">
@@ -211,6 +226,7 @@ const createForm = ref({
   pipeline_name: '',
   pipeline_mode: 'hcot',
   source_file_id: null,
+  content_field: 'text',
   llm_config_id: null,
   prompt_template_id: null,
 })
@@ -227,10 +243,17 @@ function openCreateDialog() {
     pipeline_name: '',
     pipeline_mode: 'hcot',
     source_file_id: null,
+    content_field: 'text',
     llm_config_id: null,
+    prompt_template_id: null,
   }
   createDialogVisible.value = true
   fetchDialogData()
+}
+
+function handleSourceFileChange(fileId) {
+  const selectedFile = sourceFiles.value.find(f => f.id === fileId)
+  createForm.value.content_field = selectedFile?.text_field || 'text'
 }
 
 async function fetchDialogData() {
@@ -334,5 +357,11 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.form-tip {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
 }
 </style>

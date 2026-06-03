@@ -169,6 +169,20 @@ def ensure_datasets_for_file(db: Session, file_id: int, user_id: int) -> list:
         "score",
     }
 
+    source_text_field = (file_obj.text_field or "").strip()
+
+    def _serialize_import_value(value):
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
+    def _has_content(value) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str) and not value.strip():
+            return False
+        return True
+
     def _is_number_like(value) -> bool:
         if isinstance(value, (int, float)):
             return True
@@ -202,12 +216,13 @@ def ensure_datasets_for_file(db: Session, file_id: int, user_id: int) -> list:
         extra = {}
 
         for key, value in record.items():
+            if source_text_field and key == source_text_field and _has_content(value):
+                kwargs["originContent"] = _serialize_import_value(value)
+
             canonical = _resolve_import_field(key, value)
             if canonical is not None:
-                if isinstance(value, (list, dict)):
-                    kwargs[canonical] = json.dumps(value, ensure_ascii=False)
-                elif value is not None:
-                    kwargs[canonical] = str(value)
+                if value is not None:
+                    kwargs[canonical] = _serialize_import_value(value)
             else:
                 # Skip internal fields
                 if key not in ("id", "user_id", "file_id", "current_stage", "created_at", "updated_at"):

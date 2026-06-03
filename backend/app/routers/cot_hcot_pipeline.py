@@ -75,6 +75,7 @@ class PipelineStartRequest(BaseModel):
     llm_config_id: int = Field(..., description="ID of the LLM config to use")
     pipeline_name: str = Field(..., description="User-defined name for this pipeline task")
     prompt_template_id: Optional[str] = Field(None, description="ID of the H-CoT prompt template to use")
+    content_field: Optional[str] = Field(None, description="JSON field to use as source content")
 
 
 class PipelineStepRequest(BaseModel):
@@ -90,6 +91,12 @@ class HcotTemplateNameRequest(BaseModel):
 
 class HcotPromptContentRequest(BaseModel):
     content: str = Field(..., description="Prompt content text")
+
+
+def _apply_content_field(source_file: File, content_field: Optional[str]):
+    """Persist user-selected JSON content field on the source File."""
+    if content_field is not None:
+        source_file.text_field = content_field.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +132,8 @@ async def start_pipeline(
     # Validate pipeline mode
     if request.pipeline_mode not in ("hcot", "cot"):
         raise HTTPException(status_code=400, detail="pipeline_mode 必须为 'hcot' 或 'cot'")
+
+    _apply_content_field(source_file, request.content_field)
 
     model = llm_config.default_model
 
@@ -607,6 +616,7 @@ async def list_source_files(
             "filename": f.filename,
             "file_type": f.file_type,
             "source_stage": f.source_stage.value if f.source_stage else None,
+            "text_field": f.text_field,
             "created_at": f.created_at.isoformat() if f.created_at else None,
         }
         for f in files
@@ -678,6 +688,8 @@ async def auto_run_pipeline(
     if request.pipeline_mode not in ("hcot", "cot"):
         raise HTTPException(status_code=400, detail="pipeline_mode 必须为 'hcot' 或 'cot'")
 
+    _apply_content_field(source_file, request.content_field)
+
     # Validate that prompts exist for ALL steps
     step_order = get_step_order(request.pipeline_mode)
     for step_name in step_order:
@@ -703,6 +715,7 @@ async def auto_run_pipeline(
         source_file_id=request.source_file_id,
         pipeline_mode=request.pipeline_mode,
         pipeline_name=request.pipeline_name,
+        prompt_template_id=request.prompt_template_id,
         progress_label="链式执行启动中...",
     )
     db.add(parent_task)

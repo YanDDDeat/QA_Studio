@@ -59,6 +59,10 @@
   - [ ] Step 4/5 改为接收 `step1_3_result`，并兼容提示词快照与旧模板补默认文件
 
 ## CoT质检功能
+- [ ] 分支 `feature/multi-cot-content-field`：多COT生成支持指定内容字段，详见 `docs/requirements/34_需求_多COT生成指定内容字段.md`
+  - [ ] 新建多COT生成弹窗新增「内容字段名」
+  - [ ] 后端按用户指定字段读取 JSON 正文内容
+
 - [x] 分支 `feature/cot-quality-check`：详见 `docs/requirements/33_需求_CoT质检功能.md`
   - [x] StageEnum 新增 COT_QUALITY_CHECK 值
   - [x] 后端：新建 cot_quality_check 路由 + 服务

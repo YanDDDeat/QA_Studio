@@ -326,10 +326,10 @@ def _get_source_chunks(db: Session, source_file_id: int, user_id: int = None) ->
         query = query.filter(Dataset.user_id == user_id)
     datasets = query.order_by(Dataset.id.asc()).all()
 
+    file_obj = db.query(File).filter(File.id == source_file_id).first()
     if not datasets:
         # Dataset 表没有数据——用 ensure_datasets_for_file 自动解析 JSON 并写入 Dataset
         # 它会根据 file_obj.text_field + 别名映射，自动把各种字段名映射到 Dataset 的 input/originContent
-        file_obj = db.query(File).filter(File.id == source_file_id).first()
         if not file_obj:
             return []
         datasets = ensure_datasets_for_file(db, source_file_id, file_obj.user_id)
@@ -338,11 +338,25 @@ def _get_source_chunks(db: Session, source_file_id: int, user_id: int = None) ->
     if not datasets:
         return []
 
+    source_text_field = (file_obj.text_field or "").strip() if file_obj else ""
+    prefer_origin_content = bool(source_text_field)
+
     chunks = []
     for i, ds in enumerate(datasets):
-        content = ds.input or ""
-        if not content:
+        if prefer_origin_content:
             content = ds.originContent or ""
+            if not content and ds.extra_fields and source_text_field in ds.extra_fields:
+                extra_value = ds.extra_fields.get(source_text_field)
+                if isinstance(extra_value, (list, dict)):
+                    content = json.dumps(extra_value, ensure_ascii=False)
+                elif extra_value is not None:
+                    content = str(extra_value)
+            if not content:
+                content = ds.input or ""
+        else:
+            content = ds.input or ""
+            if not content:
+                content = ds.originContent or ""
         if content.strip():
             chunks.append({"chunk_index": i, "content": content})
 
