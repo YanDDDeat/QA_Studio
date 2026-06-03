@@ -1,7 +1,7 @@
 <template>
   <div class="page-container">
     <!-- 顶部基本信息 -->
-    <el-card class="info-card">
+    <el-card class="info-card" v-loading="loading">
       <template #header>
         <div class="card-header">
           <span>{{ workflow?.parent_task?.pipeline_name || '流水线详情' }}</span>
@@ -23,17 +23,19 @@
 
       <el-descriptions :column="3" border v-if="workflow">
         <el-descriptions-item label="模式">
-          <el-tag :type="workflow.parent_task.pipeline_mode === 'hcot' ? 'warning' : 'success'" size="small">
-            {{ workflow.parent_task.pipeline_mode === 'hcot' ? 'H-CoT（博士论文）' : 'CoT（研究论文）' }}
+          <el-tag :type="isHcotMode ? 'warning' : 'success'" size="small">
+            {{ isHcotMode ? 'H-CoT（博士论文）' : 'CoT（研究论文）' }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="模型">{{ workflow.parent_task.model }}</el-descriptions-item>
+        <el-descriptions-item label="模型">{{ workflow.parent_task?.model || '—' }}</el-descriptions-item>
         <el-descriptions-item label="源文件">
-          {{ workflow.parent_task.source_file?.filename || '—' }}
+          {{ workflow.parent_task?.source_file?.filename || '—' }}
         </el-descriptions-item>
-        <el-descriptions-item label="总步骤">{{ workflow.total_steps }}</el-descriptions-item>
-        <el-descriptions-item label="已完成">{{ workflow.completed_steps?.length || 0 }}</el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ formatTime(workflow.parent_task.created_at) }}</el-descriptions-item>
+        <el-descriptions-item label="总分段">{{ workflow.total_chunks || 0 }}</el-descriptions-item>
+        <el-descriptions-item label="总步骤">{{ displayTotalSteps }}</el-descriptions-item>
+        <el-descriptions-item label="已完成步骤">{{ workflow.completed_steps || 0 }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ formatTime(workflow.parent_task?.created_at) }}</el-descriptions-item>
+
       </el-descriptions>
     </el-card>
 
@@ -42,129 +44,163 @@
       <div class="overall-progress">
         <div class="progress-header">
           <span class="progress-title">流水线总进度</span>
-          <span class="progress-count">{{ completedCount }}/{{ workflow.total_steps }} 步</span>
+          <span class="progress-count">{{ workflow.completed_steps || 0 }}/{{ displayTotalSteps }} 步</span>
+
         </div>
         <el-progress
           :percentage="overallPercentage"
           :status="overallStatus"
           :stroke-width="20"
         />
-        <div class="step-tracker">
-          <div
-            v-for="step in workflow.steps"
-            :key="step.step_name"
-            class="step-dot"
-            :class="stepDotClass(step)"
-            :title="step.display_name"
-          ></div>
-        </div>
       </div>
     </el-card>
 
-    <!-- 步骤列表 -->
-    <el-card style="margin-top: 16px" v-loading="loading">
-      <template #header>
-        <span>流水线步骤</span>
-      </template>
+    <!-- 阶段渲染：使用 backend workflow.phases -->
+    <template v-for="phase in phases" :key="phase.phase_name">
+      <!-- phase_name=per_chunk：chunk grid，点击 chunk 展示 fact_card_gen 详情 -->
+      <el-card v-if="phase.phase_name === 'per_chunk'" class="phase-card">
+        <template #header>
+          <div class="phase-header">
+            <el-tag type="warning" size="small" style="margin-right: 8px">分段级</el-tag>
+            <span>{{ phase.label || '分段事实卡生成' }}</span>
+          </div>
+        </template>
 
-      <div class="steps-container" v-if="workflow">
-        <div
-          v-for="(step, index) in workflow.steps"
-          :key="step.step_name"
-          class="step-card"
-          :class="{ 'step-completed': step.status === 'completed', 'step-running': step.status === 'running', 'step-failed': step.status === 'failed' }"
-        >
-          <!-- 步骤头部 -->
-          <div class="step-header">
-            <div class="step-index" :class="{ 'index-completed': step.status === 'completed', 'index-failed': step.status === 'failed' }">
-              {{ step.status === 'completed' ? '✓' : (index + 1) }}
-            </div>
-            <div class="step-info">
-              <div class="step-name">{{ step.display_name }}</div>
-              <div class="step-badges">
-                <el-tag :type="statusTagType(step.status)" size="small">
-                  {{ statusLabel(step.status) }}
-                </el-tag>
-                <el-tag v-if="!step.needs_llm" type="info" size="small" style="margin-left: 4px">
-                  纯数据合成
+        <div v-if="phase.chunks?.length" class="chunk-grid">
+          <div
+            v-for="chunk in visibleChunksForPhase(phase)"
+            :key="chunk.chunk_index"
+            class="chunk-block"
+            :class="[chunkBlockClass(chunk), { 'block-selected': activeChunkDetail?.chunk_index === chunk.chunk_index }]"
+            @click="selectChunk(chunk.chunk_index)"
+            :title="`Chunk ${chunk.chunk_index + 1}: ${chunkStatusLabel(chunk)}`"
+          >
+            {{ chunk.chunk_index + 1 }}
+          </div>
+          <span v-if="phase.chunks.length > chunkVisibleLimit" class="more-chunks">
+            还有 {{ phase.chunks.length - chunkVisibleLimit }} 个分段...
+          </span>
+        </div>
+        <el-empty v-else description="暂无分段" />
+
+        <div style="margin-top: 16px" v-if="activeChunkDetail">
+          <el-divider content-position="left">
+            分段 {{ activeChunkDetail.chunk_index + 1 }} — {{ chunkStatusLabel(activeChunkDetail) }}
+          </el-divider>
+          <div class="steps-container">
+            <template
+              v-for="(step, index) in normalizedChunkSteps(activeChunkDetail)"
+              :key="`${activeChunkDetail.chunk_index}-${step.step_name}`"
+            >
+              <step-card
+                :step="step"
+                :index="index"
+                :total="normalizedChunkSteps(activeChunkDetail).length"
+                :can-run="canRunStepInList(step, index, normalizedChunkSteps(activeChunkDetail))"
+                @run="handleRunStep(step)"
+                @view-file="viewOutputFile"
+              />
+            </template>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- phase_name=document：全文级 flat step list -->
+      <el-card v-else-if="phase.phase_name === 'document'" class="phase-card">
+        <template #header>
+          <div class="phase-header">
+            <el-tag type="primary" size="small" style="margin-right: 8px">文档级</el-tag>
+            <span>{{ phase.label || '全文级处理' }}</span>
+          </div>
+        </template>
+
+        <div v-if="phase.steps?.length" class="steps-container">
+          <template v-for="(step, index) in phase.steps" :key="step.step_name">
+            <step-card
+              :step="step"
+              :index="index"
+              :total="phase.steps.length"
+              :can-run="canRunStepInList(step, index, phase.steps)"
+              @run="handleRunStep(step)"
+              @view-file="viewOutputFile"
+            />
+          </template>
+        </div>
+        <el-empty v-else description="暂无步骤" />
+      </el-card>
+
+      <!-- phase_name=per_l0：H-CoT 总问题分组 -->
+      <el-card
+        v-else-if="phase.phase_name === 'per_l0' && isHcotMode"
+        class="phase-card"
+      >
+        <template #header>
+          <div class="phase-header">
+            <el-tag type="danger" size="small" style="margin-right: 8px">per-L0</el-tag>
+            <span>{{ phase.label || '推理树构建' }}</span>
+          </div>
+        </template>
+
+        <el-collapse v-if="phase.l0_questions?.length" v-model="expandedL0Questions">
+          <el-collapse-item
+            v-for="l0q in phase.l0_questions"
+            :key="l0q.l0_question_index"
+            :name="l0q.l0_question_index"
+          >
+            <template #title>
+              <div class="l0-question-title">
+                <span class="l0-index-badge">总问题 #{{ l0q.l0_question_index + 1 }}</span>
+                <el-tag :type="l0GroupStatusType(l0q)" size="small" style="margin-left: 8px">
+                  {{ l0GroupStatusLabel(l0q) }}
                 </el-tag>
               </div>
-            </div>
-          </div>
+            </template>
 
-          <!-- 进度条 -->
-          <div v-if="step.status === 'running'" class="step-progress">
-            <el-progress
-              :percentage="step.progress_current"
-              :stroke-width="12"
-              striped
-              striped-flow
-            >
-              <template #default>
-                <span>{{ step.progress_label || '正在执行...' }}</span>
+            <div class="steps-container l0-steps-container">
+              <template
+                v-for="(step, index) in normalizedL0Steps(l0q)"
+                :key="`${l0q.l0_question_index}-${step.step_name}`"
+              >
+                <step-card
+                  :step="step"
+                  :index="index"
+                  :total="normalizedL0Steps(l0q).length"
+                  :can-run="canRunStepInList(step, index, normalizedL0Steps(l0q))"
+                  @run="handleRunStep(step)"
+                  @view-file="viewOutputFile"
+                />
               </template>
-            </el-progress>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+        <el-empty v-else description="暂无总问题，请先完成 L0 生成" />
+      </el-card>
+
+      <!-- phase_name=document_final：最终文档级 flat step list -->
+      <el-card v-else-if="phase.phase_name === 'document_final'" class="phase-card">
+        <template #header>
+          <div class="phase-header">
+            <el-tag type="success" size="small" style="margin-right: 8px">文档级</el-tag>
+            <span>{{ phase.label || '质检与导出' }}</span>
           </div>
+        </template>
 
-          <!-- 步骤操作 -->
-          <div class="step-actions">
-            <!-- 运行按钮：前一步完成且当前未运行 -->
-            <el-button
-              v-if="canRunStep(step, index)"
-              type="primary"
-              size="small"
-              @click="handleRunStep(step)"
-            >
-              <el-icon><VideoPlay /></el-icon>
-              运行
-            </el-button>
-
-            <!-- 重试按钮：当前步骤失败 -->
-            <el-button
-              v-if="step.status === 'failed'"
-              type="warning"
-              size="small"
-              @click="handleRunStep(step)"
-            >
-              <el-icon><RefreshRight /></el-icon>
-              重试
-            </el-button>
-
-            <!-- 运行中指示 -->
-            <span v-if="step.status === 'running'" class="running-indicator">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              {{ step.progress_label || '正在执行...' }}
-            </span>
-
-            <!-- 输出文件链接 -->
-            <el-button
-              v-if="step.output_file_id"
-              type="success"
-              size="small"
-              link
-              @click="viewOutputFile(step)"
-            >
-              <el-icon><Document /></el-icon>
-              {{ step.output_filename }}
-            </el-button>
-
-            <!-- 下载输出文件 -->
-            <el-button
-              v-if="step.output_file_id"
-              size="small"
-              link
-              @click="downloadOutputFile(step)"
-            >
-              <el-icon><Download /></el-icon>
-              下载
-            </el-button>
-          </div>
-
-          <!-- 步骤间连接线 -->
-          <div v-if="index < workflow.steps.length - 1" class="step-connector"></div>
+        <div v-if="phase.steps?.length" class="steps-container">
+          <template v-for="(step, index) in phase.steps" :key="step.step_name">
+            <step-card
+              :step="step"
+              :index="index"
+              :total="phase.steps.length"
+              :can-run="canRunStepInList(step, index, phase.steps)"
+              @run="handleRunStep(step)"
+              @view-file="viewOutputFile"
+            />
+          </template>
         </div>
-      </div>
-    </el-card>
+        <el-empty v-else description="暂无步骤" />
+      </el-card>
+    </template>
+
 
     <!-- 输出文件预览弹窗 -->
     <el-dialog
@@ -189,8 +225,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import StepCard from './StepCard.vue'
 import {
-  ArrowLeft, VideoPlay, RefreshRight, Loading, Document, Download, Promotion,
+  ArrowLeft, Promotion,
 } from '@element-plus/icons-vue'
 import {
   getCothcotWorkflowDetail,
@@ -210,26 +247,176 @@ const loading = ref(false)
 const workflow = ref(null)
 let pollTimer = null
 
+// --- Chunk 选择状态 ---
+const selectedChunkIndex = ref(null)
+const chunkVisibleLimit = 50
+
+// --- L0 折叠面板 ---
+const expandedL0Questions = ref([])
+const initializedL0Questions = ref(false)
+
+
 async function fetchWorkflowDetail() {
+  loading.value = !workflow.value
   try {
     const res = await getCothcotWorkflowDetail(taskId.value)
     workflow.value = res
-    // 自动调整轮询
+    ensureSelectedChunkExists()
+    initializeL0Collapse(res)
     scheduleNextPoll()
   } catch (err) {
     const detail = err.response?.data?.detail || '获取流水线详情失败'
     ElMessage.error(detail)
+  } finally {
+    loading.value = false
   }
+}
+
+function initializeL0Collapse(data) {
+  const perL0 = (data?.phases || []).find(p => p.phase_name === 'per_l0')
+  const l0Indexes = (perL0?.l0_questions || []).map(l0q => l0q.l0_question_index)
+  if (!l0Indexes.length) return
+
+  if (!initializedL0Questions.value) {
+    expandedL0Questions.value = l0Indexes
+    initializedL0Questions.value = true
+    return
+  }
+
+  // 轮询刷新时保留用户折叠状态，只把新出现的 L0 问题追加进去。
+  const existing = new Set(expandedL0Questions.value)
+  for (const index of l0Indexes) {
+    if (!existing.has(index)) expandedL0Questions.value.push(index)
+  }
+}
+
+// --- Phase 计算属性 ---
+const phases = computed(() => workflow.value?.phases || [])
+
+const perChunkPhase = computed(() => {
+  return phases.value.find(p => p.phase_name === 'per_chunk') || null
+})
+
+const isHcotMode = computed(() => workflow.value?.parent_task?.pipeline_mode === 'hcot')
+
+// --- Chunk 计算属性 ---
+const runningChunkIndex = computed(() => {
+  if (!perChunkPhase.value?.chunks) return null
+  const chunk = perChunkPhase.value.chunks.find(c =>
+    (c.steps || []).some(s => s.status === 'running')
+  )
+  return chunk?.chunk_index ?? null
+})
+
+const activeChunkDetail = computed(() => {
+  const chunks = perChunkPhase.value?.chunks || []
+  if (!chunks.length) return null
+
+  // 有正在运行的 chunk 时，自动展示它。
+  if (runningChunkIndex.value !== null) {
+    return chunks.find(c => c.chunk_index === runningChunkIndex.value) || null
+  }
+
+  // 用户手动点击选择的 chunk。
+  if (selectedChunkIndex.value !== null) {
+    return chunks.find(c => c.chunk_index === selectedChunkIndex.value) || null
+  }
+
+  return null
+})
+
+function visibleChunksForPhase(phase) {
+  return (phase?.chunks || []).slice(0, chunkVisibleLimit)
+}
+
+function ensureSelectedChunkExists() {
+  if (selectedChunkIndex.value === null) return
+  const chunks = perChunkPhase.value?.chunks || []
+  if (!chunks.some(c => c.chunk_index === selectedChunkIndex.value)) {
+    selectedChunkIndex.value = null
+  }
+}
+
+function normalizedChunkSteps(chunk) {
+  return (chunk?.steps || []).map(step => ({
+    ...step,
+    chunk_index: step.chunk_index ?? chunk.chunk_index,
+  }))
+}
+
+function normalizedL0Steps(l0q) {
+  return (l0q?.steps || []).map(step => ({
+    ...step,
+    l0_question_index: step.l0_question_index ?? l0q.l0_question_index,
+  }))
+}
+
+// --- 总进度 ---
+const displayTotalSteps = computed(() => {
+  // H-CoT 固定 13 步：chunk数个事实卡 + 合并 + 数值抽象 + L0 + L1 + L2 + L2_CoT + L1_CoT + L0_CoT + 质检 + 导出
+  // CoT 固定 7 步：chunk数个事实卡 + 合并 + 数值抽象 + 问题生成 + CoT生成 + 质检 + 导出
+  if (!workflow.value) return 0
+  const chunks = workflow.value.total_chunks || 1
+  return isHcotMode.value ? (chunks + 10) : (chunks + 4)
+})
+
+const overallPercentage = computed(() => {
+  if (!workflow.value) return 0
+  const total = displayTotalSteps.value
+  const completed = workflow.value.completed_steps || 0
+  if (total === 0) return 0
+  return Math.min(100, Math.round((completed / total) * 100))
+})
+
+const overallStatus = computed(() => {
+  if (!workflow.value) return ''
+  const parentStatus = workflow.value.parent_task?.status
+  if (parentStatus === 'completed') return 'success'
+  if (parentStatus === 'failed') return 'exception'
+  return ''
+})
+
+// --- canAutoRun ---
+const canAutoRun = computed(() => {
+  if (!workflow.value) return false
+  const parentStatus = workflow.value.parent_task?.status
+  return !hasAnyRunning() && parentStatus !== 'completed' && !hasAnyFailed()
+})
+
+// --- 全局扫描：基于 phases 检查 chunk/document/l0 所有步骤 ---
+function collectAllSteps() {
+  const result = []
+  for (const phase of phases.value) {
+    for (const chunk of phase.chunks || []) {
+      result.push(...normalizedChunkSteps(chunk))
+    }
+    result.push(...(phase.steps || []))
+    for (const l0q of phase.l0_questions || []) {
+      result.push(...normalizedL0Steps(l0q))
+    }
+  }
+  return result
+}
+
+function hasAnyRunning() {
+  return collectAllSteps().some(step => step.status === 'running')
+}
+
+function hasAnyFailed() {
+  return collectAllSteps().some(step => step.status === 'failed')
+}
+
+function getFirstRunningStep() {
+  return collectAllSteps().find(step => step.status === 'running') || null
 }
 
 // --- 动态轮询 ---
 function scheduleNextPoll() {
   stopPolling()
-  if (!workflow.value?.steps?.some(s => s.status === 'running')) {
-    return  // 没有运行中的步骤，停止轮询
-  }
-  // 有运行中的步骤
-  const runningStep = workflow.value.steps.find(s => s.status === 'running')
+  if (!hasAnyRunning()) return
+
+  const runningStep = getFirstRunningStep()
+
   const interval = (runningStep?.progress_current > 10) ? 5000 : 2000
   pollTimer = setTimeout(() => {
     fetchWorkflowDetail()
@@ -243,27 +430,35 @@ function stopPolling() {
   }
 }
 
-// --- 步骤操作 ---
-function canRunStep(step, index) {
-  // 第一步：没有前一步要求，只要不是 running 就可以
+// --- 步骤运行逻辑 ---
+function canRunStepInList(step, index, steps) {
+  if (step.status === 'running' || step.status === 'completed') return false
+  if (step.status === 'failed') return true
+
   if (index === 0 && step.status === 'pending') return true
   // 中间步骤：前一步完成 + 当前未运行
   if (step.status === 'pending' && index > 0) {
-    const prevStep = workflow.value.steps[index - 1]
-    return prevStep.status === 'completed'
+    const prevStep = steps[index - 1]
+    return prevStep?.status === 'completed'
+
   }
   return false
 }
 
 async function handleRunStep(step) {
   try {
-    const res = await runCothcotStep({
+    const params = {
       parent_task_id: taskId.value,
       step_name: step.step_name,
-    })
+    }
+    if (step.l0_question_index != null) {
+      params.l0_question_index = step.l0_question_index
+    }
+    const res = await runCothcotStep(params)
     ElMessage.success(`步骤 '${step.display_name}' 已启动`)
     // 刷新状态（fetchWorkflowDetail 内部会自动 scheduleNextPoll）
     await fetchWorkflowDetail()
+    return res
   } catch (err) {
     const detail = err.response?.data?.detail || '启动步骤失败'
     ElMessage.error(detail)
@@ -279,6 +474,62 @@ async function handleAutoRun() {
     const detail = err.response?.data?.detail || '启动一键运行失败'
     ElMessage.error(detail)
   }
+}
+
+// --- Chunk 辅助函数 ---
+function chunkBlockClass(chunk) {
+  const steps = chunk.steps || []
+  if (!steps.length) return 'block-pending'
+  const hasRunning = steps.some(s => s.status === 'running')
+  const hasFailed = steps.some(s => s.status === 'failed')
+  const allCompleted = steps.every(s => s.status === 'completed')
+  if (allCompleted) return 'block-completed'
+  if (hasRunning) return 'block-running'
+  if (hasFailed) return 'block-failed'
+  return 'block-pending'
+}
+
+function chunkStatusLabel(chunk) {
+  const steps = chunk.steps || []
+  if (!steps.length) return '未开始'
+  const hasRunning = steps.some(s => s.status === 'running')
+  const hasFailed = steps.some(s => s.status === 'failed')
+  const allCompleted = steps.every(s => s.status === 'completed')
+  if (allCompleted) return '已完成'
+  if (hasRunning) return '运行中'
+  if (hasFailed) return '失败'
+  return '未开始'
+}
+
+function selectChunk(index) {
+  // 如果点击的是当前正在运行的 chunk，不做切换；运行中 chunk 会自动展示。
+  if (index === runningChunkIndex.value) return
+  selectedChunkIndex.value = selectedChunkIndex.value === index ? null : index
+}
+
+// --- L0 问题组辅助 ---
+function l0GroupStatusLabel(l0q) {
+  const steps = normalizedL0Steps(l0q)
+  if (!steps.length) return '未开始'
+  const hasRunning = steps.some(s => s.status === 'running')
+  const hasFailed = steps.some(s => s.status === 'failed')
+  const allCompleted = steps.every(s => s.status === 'completed')
+  if (allCompleted) return '已完成'
+  if (hasRunning) return '运行中'
+  if (hasFailed) return '失败'
+  return '未开始'
+}
+
+function l0GroupStatusType(l0q) {
+  const steps = normalizedL0Steps(l0q)
+  if (!steps.length) return 'info'
+  const hasRunning = steps.some(s => s.status === 'running')
+  const hasFailed = steps.some(s => s.status === 'failed')
+  const allCompleted = steps.every(s => s.status === 'completed')
+  if (allCompleted) return 'success'
+  if (hasRunning) return 'primary'
+  if (hasFailed) return 'danger'
+  return 'info'
 }
 
 // --- 文件预览 ---
@@ -317,53 +568,12 @@ async function fetchFileContent(fileId) {
   }
 }
 
-function downloadOutputFile(step) {
-  downloadManagedFile(step.output_file_id)
-}
-
 function downloadPreviewFile() {
   if (previewFileId.value) {
     downloadManagedFile(previewFileId.value)
   }
 }
 
-// --- 计算属性 ---
-const completedCount = computed(() => {
-  if (!workflow.value) return 0
-  return workflow.value.steps.filter(s => s.status === 'completed').length
-})
-
-const overallPercentage = computed(() => {
-  if (!workflow.value) return 0
-  const completed = completedCount.value
-  return Math.round((completed / workflow.value.total_steps) * 100)
-})
-
-const overallStatus = computed(() => {
-  if (!workflow.value) return ''
-  const parentStatus = workflow.value.parent_task.status
-  if (parentStatus === 'completed') return 'success'
-  if (parentStatus === 'failed') return 'exception'
-  return ''
-})
-
-const canAutoRun = computed(() => {
-  if (!workflow.value) return false
-  const hasRunning = workflow.value.steps.some(s => s.status === 'running')
-  const hasFailed = workflow.value.steps.some(s => s.status === 'failed')
-  const allCompleted = workflow.value.steps.every(s => s.status === 'completed')
-  return !hasRunning && !allCompleted && !hasFailed
-})
-
-function stepDotClass(step) {
-  const map = {
-    completed: 'dot-completed',
-    running: 'dot-running',
-    failed: 'dot-failed',
-    pending: 'dot-pending',
-  }
-  return map[step.status] || 'dot-pending'
-}
 
 // --- 辅助函数 ---
 function goBack() {
@@ -377,7 +587,7 @@ function statusTagType(s) {
 
 function statusLabel(s) {
   const map = { running: '运行中', completed: '已完成', failed: '失败', pending: '未开始', paused: '已暂停' }
-  return map[s] || s
+  return map[s] || s || '未知'
 }
 
 function formatTime(iso) {
@@ -403,6 +613,15 @@ onUnmounted(() => {
 .card-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+}
+
+.phase-card {
+  margin-top: 16px;
+}
+
+.phase-header {
+  display: flex;
   align-items: center;
 }
 
@@ -554,35 +773,80 @@ onUnmounted(() => {
   color: #666;
 }
 
-.step-tracker {
+/* Chunk 进度概览方块 */
+.chunk-grid {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chunk-block {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
   justify-content: center;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 2px solid transparent;
 }
 
-.step-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  transition: all 0.3s;
+.chunk-block:hover {
+  transform: scale(1.15);
 }
 
-.dot-completed {
-  background: #67c23a;
+.chunk-block.block-selected {
+  border-color: #303133;
+  transform: scale(1.08);
 }
 
-.dot-running {
-  background: #409eff;
-  animation: pulse 1.5s infinite;
+.block-completed { background: #67c23a; color: #fff; }
+.block-running { background: #409eff; color: #fff; animation: pulse 1.5s infinite; }
+.block-failed { background: #f56c6c; color: #fff; }
+.block-pending { background: #c0c4cc; color: #fff; }
+
+.more-chunks {
+  font-size: 12px;
+  color: #999;
+  line-height: 28px;
 }
 
-.dot-failed {
-  background: #f56c6c;
+/* L0 问题组 */
+.l0-question-title {
+  display: flex;
+  align-items: center;
 }
 
-.dot-pending {
-  background: #c0c4cc;
+.l0-index-badge {
+  font-weight: 600;
+  font-size: 14px;
+  color: #303133;
+}
+
+.l0-steps-container {
+  padding: 8px 0;
+}
+
+/* 已完成 chunk 摘要 */
+.completed-chunk-summary {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.step-mini-tag {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #f5f7fa;
+}
+
+.step-mini-tag.tag-success {
+  background: #f0f9eb;
+  color: #67c23a;
+
 }
 
 @keyframes pulse {
@@ -590,3 +854,4 @@ onUnmounted(() => {
   50% { opacity: 0.4; }
 }
 </style>
+

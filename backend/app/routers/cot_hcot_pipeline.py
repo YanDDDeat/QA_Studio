@@ -29,11 +29,28 @@ from app.services.cot_hcot_service import (
     get_step_order,
     get_next_step,
     PIPELINE_STEPS,
+    _run_merge_step_in_thread,
 )
 
 logger = logging.getLogger("qa_studio.cothcot_pipeline")
 
 router = APIRouter()
+
+
+async def _run_merge_step_async_wrapper(
+    sub_task_id: int,
+    parent_task_id: int,
+    user_id: int,
+    username: str,
+):
+    """Async wrapper for _run_merge_step_in_thread to use with asyncio.create_task."""
+    await asyncio.to_thread(
+        _run_merge_step_in_thread,
+        sub_task_id=sub_task_id,
+        parent_task_id=parent_task_id,
+        user_id=user_id,
+        username=username,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +68,7 @@ class PipelineStepRequest(BaseModel):
     parent_task_id: int = Field(..., description="ID of the main pipeline task")
     step_name: str = Field(..., description="Name of the step to run (e.g., 'sanitize', 'l0_gen')")
     prompt_id: Optional[int] = Field(None, description="Optional: override prompt ID for this step")
+    l0_question_index: Optional[int] = Field(None, description="L0 总问题序号，per-L0 步骤必须传入")
 
 
 # ---------------------------------------------------------------------------
@@ -194,30 +212,54 @@ async def run_pipeline_step_endpoint(
     if step_name not in step_order:
         raise HTTPException(status_code=400, detail=f"步骤 '{step_name}' 不属于 {mode} 模式")
 
-    # Check if this step is already running
-    existing_sub = db.query(Task).filter(
-        Task.parent_task_id == request.parent_task_id,
-        Task.step_name == step_name,
-        Task.status == TaskStatusEnum.RUNNING,
-    ).first()
+    # Check if this step is already running — for per-L0 steps, filter by l0_question_index
+    if request.l0_question_index is not None:
+        existing_sub = db.query(Task).filter(
+            Task.parent_task_id == request.parent_task_id,
+            Task.step_name == step_name,
+            Task.l0_question_index == request.l0_question_index,
+            Task.status == TaskStatusEnum.RUNNING,
+        ).first()
+    else:
+        existing_sub = db.query(Task).filter(
+            Task.parent_task_id == request.parent_task_id,
+            Task.step_name == step_name,
+            Task.l0_question_index.is_(None),
+            Task.status == TaskStatusEnum.RUNNING,
+        ).first()
     if existing_sub:
         raise HTTPException(status_code=400, detail=f"步骤 '{step_name}' 正在运行中")
 
-    # Check if this step is already completed (allow retry by deleting old sub-task)
-    existing_completed = db.query(Task).filter(
-        Task.parent_task_id == request.parent_task_id,
-        Task.step_name == step_name,
-        Task.status == TaskStatusEnum.COMPLETED,
-    ).first()
+    # Check if this step is already completed (allow retry by marking old sub-task as failed)
+    if request.l0_question_index is not None:
+        existing_completed = db.query(Task).filter(
+            Task.parent_task_id == request.parent_task_id,
+            Task.step_name == step_name,
+            Task.l0_question_index == request.l0_question_index,
+            Task.status == TaskStatusEnum.COMPLETED,
+        ).first()
+    else:
+        existing_completed = db.query(Task).filter(
+            Task.parent_task_id == request.parent_task_id,
+            Task.step_name == step_name,
+            Task.l0_question_index.is_(None),
+            Task.status == TaskStatusEnum.COMPLETED,
+        ).first()
     if existing_completed:
-        # For retry: mark the old sub-task as failed (keep its output file for reference)
         existing_completed.status = TaskStatusEnum.FAILED
         db.commit()
 
     # For steps that need multiple inputs, validate that ALL required prior steps
     # are completed (not just the immediately previous one)
     step_meta = PIPELINE_STEPS.get(step_name)
-    _, prompt_pattern, input_sources, _ = step_meta
+    _, prompt_pattern, input_sources, _, granularity = step_meta
+
+    # Per-L0 steps must have l0_question_index
+    if granularity == "per_l0" and request.l0_question_index is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"步骤 '{step_name}' 是 per-L0 步骤，必须传入 l0_question_index",
+        )
 
     if input_sources:
         for placeholder, source_step in input_sources.items():
@@ -285,6 +327,60 @@ async def run_pipeline_step_endpoint(
             "status": "running",
         }
 
+    # Special handling for merge_fact_cards (no LLM needed)
+    if step_name == "merge_fact_cards":
+        # Validate that all fact_card_gen sub-tasks are completed
+        completed_fc_count = db.query(Task).filter(
+            Task.parent_task_id == request.parent_task_id,
+            Task.step_name == "fact_card_gen",
+            Task.status == TaskStatusEnum.COMPLETED,
+        ).count()
+        total_fc = db.query(Task).filter(
+            Task.parent_task_id == request.parent_task_id,
+            Task.step_name == "fact_card_gen",
+        ).count()
+        if completed_fc_count == 0:
+            raise HTTPException(status_code=400, detail="合并事实卡需要至少一个事实卡生成步骤已完成")
+
+        sub_task = Task(
+            user_id=current_user.id,
+            stage=StageEnum.COT_HCOT_PIPELINE,
+            status=TaskStatusEnum.RUNNING,
+            model=parent_task.model,
+            source_file_id=parent_task.source_file_id,
+            parent_task_id=parent_task.id,
+            step_name=step_name,
+            l0_question_index=request.l0_question_index,
+        )
+        db.add(sub_task)
+        db.commit()
+        db.refresh(sub_task)
+
+        parent_task.status = TaskStatusEnum.RUNNING
+        db.commit()
+
+        asyncio.create_task(
+            _run_merge_step_async_wrapper(
+                sub_task_id=sub_task.id,
+                parent_task_id=parent_task.id,
+                user_id=current_user.id,
+                username=current_user.username,
+            )
+        )
+
+        logger.info(
+            f"User {current_user.username} triggered merge_fact_cards "
+            f"for pipeline {request.parent_task_id}, sub_task={sub_task.id}"
+        )
+
+        return {
+            "sub_task_id": sub_task.id,
+            "step_name": step_name,
+            "step_display": "2. 合并事实卡",
+            "input_file_id": parent_task.source_file_id,
+            "status": "running",
+        }
+
     # --- LLM step handling ---
     # Resolve prompt
     if request.prompt_id:
@@ -310,11 +406,21 @@ async def run_pipeline_step_endpoint(
         if first_source_step is None:
             input_file_id = parent_task.source_file_id
         else:
-            source_sub = db.query(Task).filter(
-                Task.parent_task_id == request.parent_task_id,
-                Task.step_name == first_source_step,
-                Task.status == TaskStatusEnum.COMPLETED,
-            ).first()
+            # For per-L0 steps, find source output with matching l0_question_index
+            source_granularity = PIPELINE_STEPS.get(first_source_step, ("", "", None, False, "document"))[4]
+            if source_granularity == "per_l0" and request.l0_question_index is not None:
+                source_sub = db.query(Task).filter(
+                    Task.parent_task_id == request.parent_task_id,
+                    Task.step_name == first_source_step,
+                    Task.l0_question_index == request.l0_question_index,
+                    Task.status == TaskStatusEnum.COMPLETED,
+                ).first()
+            else:
+                source_sub = db.query(Task).filter(
+                    Task.parent_task_id == request.parent_task_id,
+                    Task.step_name == first_source_step,
+                    Task.status == TaskStatusEnum.COMPLETED,
+                ).first()
             if source_sub and source_sub.file_id:
                 input_file_id = source_sub.file_id
             else:
@@ -326,11 +432,19 @@ async def run_pipeline_step_endpoint(
             input_file_id = parent_task.source_file_id
         else:
             prev_step = step_order[step_idx - 1]
-            prev_sub = db.query(Task).filter(
-                Task.parent_task_id == request.parent_task_id,
-                Task.step_name == prev_step,
-                Task.status == TaskStatusEnum.COMPLETED,
-            ).first()
+            if granularity == "per_l0" and request.l0_question_index is not None:
+                prev_sub = db.query(Task).filter(
+                    Task.parent_task_id == request.parent_task_id,
+                    Task.step_name == prev_step,
+                    Task.l0_question_index == request.l0_question_index,
+                    Task.status == TaskStatusEnum.COMPLETED,
+                ).first()
+            else:
+                prev_sub = db.query(Task).filter(
+                    Task.parent_task_id == request.parent_task_id,
+                    Task.step_name == prev_step,
+                    Task.status == TaskStatusEnum.COMPLETED,
+                ).first()
             input_file_id = prev_sub.file_id if prev_sub and prev_sub.file_id else parent_task.source_file_id
 
     # Resolve LLM config
@@ -361,6 +475,7 @@ async def run_pipeline_step_endpoint(
         source_file_id=input_file_id,
         parent_task_id=parent_task.id,
         step_name=step_name,
+        l0_question_index=request.l0_question_index,
     )
     db.add(sub_task)
     db.commit()
@@ -435,11 +550,12 @@ async def get_pipeline_steps(
     step_order = get_step_order(mode)
     steps = []
     for s in step_order:
-        display, prompt_pattern, input_sources, is_hcot_only = PIPELINE_STEPS.get(s, (s, "", None, False))
+        display, prompt_pattern, input_sources, is_hcot_only, granularity = PIPELINE_STEPS.get(s, (s, "", None, False, "document"))
         steps.append({
             "step_name": s,
             "display_name": display,
             "is_hcot_only": is_hcot_only,
+            "granularity": granularity,
             "needs_llm": prompt_pattern is not None,
         })
     return {"mode": mode, "steps": steps}
@@ -447,13 +563,21 @@ async def get_pipeline_steps(
 
 @router.get("/source-files")
 async def list_source_files(
+    show_all: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List files that can be used as source input for a pipeline."""
-    files = db.query(File).filter(
-        File.user_id == current_user.id,
-    ).order_by(File.created_at.desc()).all()
+    """List files that can be used as source input for a pipeline.
+
+    默认只返回用户上传的源文件（source_stage is NULL），避免 CoT/H-CoT
+    中间产物和最终导出文件混入“新建流水线”的源文件列表。
+    show_all=True 时才返回全部文件，便于后续需要调试时使用。
+    """
+    query = db.query(File).filter(File.user_id == current_user.id)
+    if not show_all:
+        query = query.filter(File.source_stage.is_(None))
+
+    files = query.order_by(File.created_at.desc()).all()
 
     return [
         {
@@ -481,12 +605,14 @@ async def get_pipeline_prompts(
     result = []
     for step_name in step_order:
         prompt_obj = find_prompt_for_step(db, step_name, current_user.id)
-        display, prompt_pattern, input_sources, is_hcot_only = PIPELINE_STEPS.get(
-            step_name, (step_name, "", None, False)
+        display, prompt_pattern, input_sources, is_hcot_only, granularity = PIPELINE_STEPS.get(
+            step_name, (step_name, "", None, False, "document")
         )
         result.append({
             "step_name": step_name,
             "display_name": display,
+            "is_hcot_only": is_hcot_only,
+            "granularity": granularity,
             "prompt_id": prompt_obj.id if prompt_obj else None,
             "prompt_name": prompt_obj.name if prompt_obj else None,
             "needs_llm": prompt_pattern is not None,
@@ -533,7 +659,7 @@ async def auto_run_pipeline(
     # Validate that prompts exist for ALL steps
     step_order = get_step_order(request.pipeline_mode)
     for step_name in step_order:
-        _, prompt_pattern, _, _ = PIPELINE_STEPS.get(step_name, (step_name, "", None, False))
+        _, prompt_pattern, _, _, _ = PIPELINE_STEPS.get(step_name, (step_name, "", None, False, "document"))
         if prompt_pattern is not None and step_name != "export_jsonl":
             prompt_obj = find_prompt_for_step(db, step_name, current_user.id)
             if not prompt_obj:
@@ -634,7 +760,7 @@ async def auto_continue_pipeline(
     for step_name in step_order:
         if step_name in completed_step_names:
             continue
-        _, prompt_pattern, _, _ = PIPELINE_STEPS.get(step_name, (step_name, "", None, False))
+        _, prompt_pattern, _, _, _ = PIPELINE_STEPS.get(step_name, (step_name, "", None, False, "document"))
         if prompt_pattern is not None and step_name != "export_jsonl":
             prompt_obj = find_prompt_for_step(db, step_name, current_user.id)
             if not prompt_obj:

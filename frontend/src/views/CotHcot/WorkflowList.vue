@@ -68,7 +68,7 @@
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="workflows" stripe style="width: 100%">
+      <el-table v-loading="loading" :data="pagedWorkflows" stripe style="width: 100%">
         <el-table-column prop="pipeline_name" label="名称" min-width="180" />
         <el-table-column prop="pipeline_mode" label="模式" width="100">
           <template #default="{ row }">
@@ -115,12 +115,24 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 分页 -->
+      <div style="margin-top: 16px; display: flex; justify-content: center">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="workflows.length"
+          layout="total, sizes, prev, pager, next, jumper"
+          background
+        />
+      </div>
     </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
@@ -137,6 +149,16 @@ const router = useRouter()
 // --- 列表数据 ---
 const loading = ref(false)
 const workflows = ref([])
+
+// --- 分页 ---
+const currentPage = ref(1)
+const pageSize = ref(10)
+
+const pagedWorkflows = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return workflows.value.slice(start, end)
+})
 
 async function fetchWorkflows() {
   loading.value = true
