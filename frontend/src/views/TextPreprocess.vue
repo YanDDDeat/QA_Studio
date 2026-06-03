@@ -3,7 +3,7 @@
 
     <el-card class="tool-card">
       <template #header>
-        <span class="card-title">JSON 清洗预处理</span>
+大文献（博士论文）拆分及预处理
       </template>
       <div class="config-layout">
         <div class="config-form">

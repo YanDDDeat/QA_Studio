@@ -99,8 +99,114 @@
       </div>
     </el-card>
 
-    <!-- 步骤列表 -->
-    <el-card style="margin-top: 16px" v-loading="loading">
+    <!-- 文献级阶段进度 -->
+    <el-card
+      v-if="documentStageMatrix.length"
+      class="document-stage-card"
+      style="margin-top: 16px"
+    >
+      <template #header>
+        <div class="card-header">
+          <div class="matrix-title-wrap">
+            <el-tag type="warning" size="small">文献级</el-tag>
+            <span>文献级阶段进度</span>
+          </div>
+          <div class="matrix-legend">
+            <span v-for="legend in stageLegends" :key="legend.status" class="legend-item">
+              <i class="legend-dot" :class="`doc-status-${legend.status}`"></i>
+              {{ legend.label }}
+            </span>
+          </div>
+        </div>
+      </template>
+
+      <div class="doc-grid">
+        <div
+          v-for="doc in documentStageMatrix"
+          :key="doc.source_index"
+          class="doc-block"
+          :class="[`doc-status-${doc.status || 'pending'}`, { 'block-selected': activeDocumentDetail?.source_index === doc.source_index }]"
+          @click="selectDocument(doc.source_index)"
+          :title="`文献 ${(doc.source_index ?? 0) + 1}: ${documentStatusLabel(doc)}`"
+        >
+          {{ (doc.source_index ?? 0) + 1 }}
+        </div>
+      </div>
+
+      <div style="margin-top: 16px" v-if="activeDocumentDetail">
+        <el-divider content-position="left">
+          文献 {{ (activeDocumentDetail.source_index ?? 0) + 1 }} — {{ activeDocumentDetail.source }}
+          <el-tag :type="statusTagType(activeDocumentDetail.status)" size="small" style="margin-left: 6px">
+            {{ documentStatusLabel(activeDocumentDetail) }}
+          </el-tag>
+          <el-tag v-if="activeDocumentDetail.cot_type" type="info" size="small" style="margin-left: 4px">
+            {{ activeDocumentDetail.cot_type }}
+          </el-tag>
+        </el-divider>
+
+        <div class="doc-steps-container">
+          <div
+            v-for="(step, index) in activeDocumentDetail.steps"
+            :key="step.step_key"
+            class="doc-step-card"
+            :class="{
+              'step-completed': step.status === 'completed',
+              'step-running': step.status === 'running',
+              'step-failed': step.status === 'failed',
+              'step-skipped': step.status === 'skipped',
+            }"
+          >
+            <div class="step-header">
+              <div class="step-index" :class="{
+                'index-completed': step.status === 'completed',
+                'index-failed': step.status === 'failed',
+                'index-skipped': step.status === 'skipped',
+              }">
+                {{ step.status === 'completed' ? '✓' : step.status === 'skipped' ? '—' : (index + 1) }}
+              </div>
+              <div class="step-info">
+                <div class="step-name">{{ step.display_name }}</div>
+                <div class="step-badges">
+                  <el-tag :type="statusTagType(step.status)" size="small">
+                    {{ statusLabel(step.status) }}
+                  </el-tag>
+                </div>
+              </div>
+            </div>
+
+            <div class="step-actions">
+              <span v-if="step.status === 'running'" class="running-indicator">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                {{ step.progress_label || '正在执行...' }}
+              </span>
+              <span v-else-if="step.progress_label" class="step-label">
+                {{ step.progress_label }}
+              </span>
+
+              <el-button
+                v-if="step.status === 'completed' && step.artifact_path"
+                type="success"
+                size="small"
+                link
+                @click="previewArtifact(step.artifact_path, step.display_name)"
+              >
+                <el-icon><Document /></el-icon>
+                查看产物
+              </el-button>
+            </div>
+
+            <div v-if="step.error" class="step-error">
+              <el-text type="danger" size="small">{{ step.error }}</el-text>
+            </div>
+
+            <div v-if="index < activeDocumentDetail.steps.length - 1" class="step-connector"></div>
+          </div>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 步骤列表（仅旧 run 无文献级矩阵时展示） -->
+    <el-card v-if="!documentStageMatrix.length" style="margin-top: 16px" v-loading="loading">
       <template #header>
         <span>流水线步骤</span>
       </template>
@@ -283,7 +389,7 @@ async function fetchRunDetail() {
     run.value = res
     scheduleNextPoll()
   } catch (err) {
-    const detail = err.response?.data?.detail || '获取流水线2详情失败'
+    const detail = err.response?.data?.detail || '获取流水线详情失败'
     ElMessage.error(detail)
   }
 }
@@ -309,6 +415,59 @@ function stopPolling() {
 
 const hasFinalJson = computed(() => Boolean(run.value?.final_outputs?.json))
 const hasFinalJsonl = computed(() => Boolean(run.value?.final_outputs?.jsonl))
+const documentStageMatrix = computed(() => run.value?.document_stage_matrix || [])
+const stageLegends = [
+  { status: 'completed', label: '已完成' },
+  { status: 'running', label: '运行中' },
+  { status: 'failed', label: '失败' },
+  { status: 'skipped', label: '已跳过' },
+  { status: 'pending', label: '未开始' },
+]
+
+// --- Document block selection ---
+const selectedDocIndex = ref(null)
+
+const runningDocIndex = computed(() => {
+  const docs = documentStageMatrix.value
+  if (!docs.length) return null
+  const doc = docs.find(d => d.status === 'running')
+  return doc?.source_index ?? null
+})
+
+const activeDocumentDetail = computed(() => {
+  const docs = documentStageMatrix.value
+  if (!docs.length) return null
+
+  // User manually selected takes priority
+  if (selectedDocIndex.value !== null) {
+    return docs.find(d => d.source_index === selectedDocIndex.value) || null
+  }
+
+  // Auto-show running document when user hasn't made a choice
+  if (runningDocIndex.value !== null) {
+    return docs.find(d => d.source_index === runningDocIndex.value) || null
+  }
+
+  return null
+})
+
+function selectDocument(sourceIndex) {
+  selectedDocIndex.value = selectedDocIndex.value === sourceIndex ? null : sourceIndex
+}
+
+function documentStatusLabel(doc) {
+  const steps = doc.steps || []
+  if (!steps.length) return '未开始'
+  const hasRunning = steps.some(s => s.status === 'running')
+  const hasFailed = steps.some(s => s.status === 'failed')
+  const allCompleted = steps.every(s => s.status === 'completed')
+  if (allCompleted) return '已完成'
+  if (hasRunning) return '运行中'
+  if (hasFailed) return '失败'
+  const allSkipped = steps.every(s => s.status === 'skipped')
+  if (allSkipped) return '已跳过'
+  return '未开始'
+}
 const recommendedCotTypeLabel = computed(() => {
   return run.value?.recommended_cot_type?.display_name || run.value?.target_cot_type?.display_name || '待判定'
 })
@@ -495,6 +654,145 @@ onUnmounted(() => {
   opacity: 0.86;
 }
 
+.document-stage-card :deep(.el-card__header) {
+  background: linear-gradient(90deg, #fffaf0 0%, #f8fbff 100%);
+}
+
+.matrix-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.matrix-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #606266;
+  font-size: 12px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* Document block grid (similar to chunk-grid in WorkflowDetail) */
+.doc-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.doc-block {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 2px solid transparent;
+  color: #fff;
+}
+
+.doc-block:hover {
+  transform: scale(1.15);
+}
+
+.doc-block.block-selected {
+  border-color: #303133;
+  transform: scale(1.08);
+}
+
+.doc-status-completed {
+  background: #67c23a;
+  border-color: #67c23a;
+}
+
+.doc-status-running {
+  background: #409eff;
+  border-color: #409eff;
+  animation: pulse 1.5s infinite;
+}
+
+.doc-status-failed {
+  background: #f56c6c;
+  border-color: #f56c6c;
+}
+
+.doc-status-skipped {
+  background: #e6a23c;
+  border-color: #e6a23c;
+}
+
+.doc-status-pending {
+  background: #c0c4cc;
+  border-color: #c0c4cc;
+  color: #fff;
+}
+
+/* Document step detail cards */
+.doc-steps-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.doc-step-card {
+  padding: 16px 20px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+  transition: all 0.3s;
+  margin-bottom: 4px;
+}
+
+.doc-step-card.step-completed {
+  background: #f0f9eb;
+  border-color: #b3e19d;
+}
+
+.doc-step-card.step-running {
+  background: #ecf5ff;
+  border-color: #b3d8ff;
+}
+
+.doc-step-card.step-failed {
+  background: #fef0f0;
+  border-color: #fbc4c4;
+}
+
+.doc-step-card.step-skipped {
+  background: #fafafa;
+  border-color: #dcdfe6;
+  opacity: 0.86;
+}
+
+.step-error {
+  margin-top: 6px;
+}
+
+@media (max-width: 900px) {
+  .card-header {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+}
+
 .step-header {
   display: flex;
   align-items: center;
@@ -528,6 +826,10 @@ onUnmounted(() => {
 }
 
 .step-card.step-running .step-index {
+  background: #409eff;
+}
+
+.doc-step-card.step-running .step-index {
   background: #409eff;
 }
 

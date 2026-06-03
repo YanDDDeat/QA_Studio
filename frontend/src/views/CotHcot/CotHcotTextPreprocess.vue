@@ -10,7 +10,7 @@
         <div class="card-header">
           <div>
             <span class="card-title">多 MD 合并 JSON</span>
-            <p class="card-desc">选择多个 Markdown 文件，按文件全文生成后续标注流水线可用的 JSON 数组。</p>
+            <p class="card-desc">多文献批量构建（上传多个MD格式文献后，可合并为一个JSON兼容）</p>
           </div>
           <el-tag type="info" effect="plain">仅前端生成下载</el-tag>
         </div>

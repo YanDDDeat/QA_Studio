@@ -217,6 +217,7 @@ async def create_run(
     file: Optional[UploadFile] = UploadFileParam(None),
     source_file_id: Optional[int] = Form(None),
     text_field: str = Form("text"),
+    source_type: Optional[str] = Form("unknown"),
     llm_config_id: int = Form(...),
     model: Optional[str] = Form(None),
     run_name: Optional[str] = Form(None),
@@ -283,6 +284,7 @@ async def create_run(
             run_name=run_name,
             source_file_id=selected_source_file_id,
             prompt_template_id=prompt_template_id,
+            source_type=source_type or "unknown",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -290,7 +292,7 @@ async def create_run(
     result = {
         "run_id": init["run_id"],
         "status": "running",
-        "message": "标注流水线2已启动，请前往详情页查看实时进度",
+        "message": "单COT生成流水线已启动，请前往详情页查看实时进度",
         "manifest": init["manifest"],
         "input_count": len(source_data),
     }
@@ -377,7 +379,7 @@ async def resume_run(
     return {
         "run_id": run_id,
         "status": "running",
-        "message": "标注流水线2已恢复运行",
+        "message": "单COT生成流水线已恢复运行",
     }
 
 

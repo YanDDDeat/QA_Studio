@@ -72,7 +72,7 @@ PROJECT_ROOT = _find_project_root()
 PROMPT_ROOT = PROJECT_ROOT / "docs" / "background" / "3类COT提示词"
 STORAGE_ROOT = PROJECT_ROOT / "storage" / "professional_cot_runs"
 SCHEMA_VERSION = "1.0"
-PIPELINE_NAME = "标注流水线2"
+PIPELINE_NAME = "单COT生成流水线"
 PIPELINE_TYPE = "professional_cot"
 
 
@@ -94,7 +94,7 @@ def recover_zombie_runs() -> int:
             count += 1
             logger.info("恢复僵尸run %s: running → paused", manifest.get("run_id"))
     if count:
-        logger.info("共恢复 %d 个僵尸标注流水线2run", count)
+        logger.info("共恢复 %d 个僵尸单COT生成流水线run", count)
     return count
 
 
@@ -338,66 +338,46 @@ def _get_cot_type(target_cot_type: str) -> Dict[str, Any]:
 
 
 def _init_steps() -> List[Dict[str, Any]]:
-    """Initialize exactly 6 logical steps; Step 3 decides the target CoT type."""
+    """Initialize the 4 display nodes used by the integrated Step 1-3 flow."""
     return [
         {
-            "step_key": "step1_screening",
-            "step": 1,
-            "step_name": "筛选相关文献",
-            "display_name": "Step 1：筛选相关文献",
+            "step_key": "step1_3_integrated",
+            "step": "1-3",
+            "step_name": "文献信息抽取与 CoT 类型路由",
+            "display_name": "Step 1-3：文献信息抽取与 CoT 类型路由",
             "status": "pending",
             "progress_current": 0,
             "progress_label": "等待执行",
-            "artifact_path": "step1_screening.json",
-        },
-        {
-            "step_key": "step2_case_card",
-            "step": 2,
-            "step_name": "构建文献案例卡",
-            "display_name": "Step 2：构建文献案例卡",
-            "status": "pending",
-            "progress_current": 0,
-            "progress_label": "等待执行",
-            "artifact_path": "step2_case_card.json",
-        },
-        {
-            "step_key": "step3_type_judgement",
-            "step": 3,
-            "step_name": "自动判定本次任务的 CoT 类型",
-            "display_name": "Step 3：自动判定本次任务的 CoT 类型",
-            "status": "pending",
-            "progress_current": 0,
-            "progress_label": "模型判定 CoT 类型：待判定",
-            "artifact_path": "step3_type_judgement.json",
+            "artifact_path": "step1_3_integrated_extraction_and_routing.json",
         },
         {
             "step_key": "step4_input",
             "step": 4,
             "step_name": "生成 input",
-            "display_name": "Step 4：为 Step 3 推荐的 CoT 类型生成 input",
+            "display_name": "Step 4：为融合节点推荐的 CoT 类型生成 input",
             "status": "pending",
             "progress_current": 0,
-            "progress_label": "等待 Step 3 推荐 CoT 类型",
+            "progress_label": "等待 Step 1-3 推荐 CoT 类型",
             "artifact_path": None,
         },
         {
             "step_key": "step5_chain",
             "step": 5,
             "step_name": "生成 chainofThought",
-            "display_name": "Step 5：为 Step 3 推荐的 CoT 类型生成 chainofThought",
+            "display_name": "Step 5：为融合节点推荐的 CoT 类型生成 chainofThought",
             "status": "pending",
             "progress_current": 0,
-            "progress_label": "等待 Step 3 推荐 CoT 类型",
+            "progress_label": "等待 Step 1-3 推荐 CoT 类型",
             "artifact_path": None,
         },
         {
             "step_key": "step6_output",
             "step": 6,
             "step_name": "生成 output",
-            "display_name": "Step 6：为 Step 3 推荐的 CoT 类型生成 output",
+            "display_name": "Step 6：为融合节点推荐的 CoT 类型生成 output",
             "status": "pending",
             "progress_current": 0,
-            "progress_label": "等待 Step 3 推荐 CoT 类型",
+            "progress_label": "等待 Step 1-3 推荐 CoT 类型",
             "artifact_path": None,
         },
     ]
@@ -516,6 +496,469 @@ def normalize_cot_type(value: Any) -> Optional[Dict[str, Any]]:
     return matches[0] if matches else None
 
 
+def _coerce_cot_type_summary(value: Any) -> Optional[Dict[str, str]]:
+    """Coerce a stored CoT type value into the list-display shape."""
+    if not value:
+        return None
+
+    if isinstance(value, dict):
+        key = value.get("key") or value.get("cot_type_key")
+        display_name = value.get("display_name") or value.get("cot_type") or value.get("name")
+        if key == "multiple" and display_name:
+            return {"key": "multiple", "display_name": str(display_name)}
+
+    matched = normalize_cot_type(value)
+    if matched:
+        return {"key": matched["key"], "display_name": matched["display_name"]}
+    return None
+
+
+def _collect_cot_types_from_samples(samples: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Collect unique normalized CoT types from final_sample-like objects."""
+    result: List[Dict[str, Any]] = []
+    seen = set()
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        candidates = [
+            sample.get("cot_type"),
+            sample.get("cot_type_key"),
+            sample.get("recommended_cot_type"),
+            sample.get("target_cot_type"),
+        ]
+        final_sample = sample.get("final_sample")
+        if isinstance(final_sample, dict):
+            candidates.extend([
+                final_sample.get("cot_type"),
+                final_sample.get("cot_type_key"),
+                final_sample.get("recommended_cot_type"),
+                final_sample.get("target_cot_type"),
+            ])
+        for candidate in candidates:
+            matched = normalize_cot_type(candidate)
+            if matched and matched["key"] not in seen:
+                seen.add(matched["key"])
+                result.append(matched)
+                break
+    return result
+
+
+def _build_cot_type_summary(cot_types: List[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    if not cot_types:
+        return None
+    if len(cot_types) == 1:
+        cot_type = cot_types[0]
+        return {"key": cot_type["key"], "display_name": cot_type["display_name"]}
+    display_names = "、".join(item["display_name"] for item in cot_types)
+    return {"key": "multiple", "display_name": f"多类型（{display_names}）"}
+
+
+def _infer_cot_type_summary_from_samples(samples: Iterable[Any]) -> Optional[Dict[str, str]]:
+    return _build_cot_type_summary(_collect_cot_types_from_samples(samples))
+
+
+def _read_run_json_safely(run_dir: Path, rel_path: str) -> Optional[Any]:
+    """Read a JSON artifact under run_dir without allowing path traversal."""
+    if not rel_path or os.path.isabs(rel_path):
+        return None
+    try:
+        base = run_dir.resolve()
+        target = (base / rel_path).resolve()
+        if target != base and base not in target.parents:
+            return None
+        if not target.exists() or not target.is_file():
+            return None
+        return read_json(target)
+    except Exception:
+        return None
+
+
+DOCUMENT_STAGE_DEFINITIONS: List[Dict[str, Any]] = [
+    {
+        "stage_key": "step1_3_integrated",
+        "stage_name": "Step 1-3 文献信息抽取与 CoT 类型路由",
+        "step": "1-3",
+    },
+    {
+        "stage_key": "step4_input",
+        "stage_name": "Step 4 生成 input",
+        "step": 4,
+        "artifact_name": "step4_input.json",
+    },
+    {
+        "stage_key": "step5_chain",
+        "stage_name": "Step 5 生成 chainofThought",
+        "step": 5,
+        "artifact_name": "step5_chain.json",
+    },
+    {
+        "stage_key": "step6_output",
+        "stage_name": "Step 6 生成 output",
+        "step": 6,
+        "artifact_name": "step6_output.json",
+    },
+]
+
+
+def _existing_rel_path(run_dir: Path, rel_path: str) -> Optional[str]:
+    if not rel_path or os.path.isabs(rel_path):
+        return None
+    try:
+        base = run_dir.resolve()
+        target = (base / rel_path).resolve()
+        if target != base and base not in target.parents:
+            return None
+        if target.exists() and target.is_file():
+            return target.relative_to(base).as_posix()
+    except Exception:
+        return None
+    return None
+
+
+def _extract_document_sources(run_dir: Path, batch_summary: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Collect source_index/source for the document matrix, preferring source_input records."""
+    source_input = _read_run_json_safely(run_dir, "source_input.json")
+    records = source_input.get("records") if isinstance(source_input, dict) else None
+    if isinstance(records, list) and records:
+        result = []
+        for idx, record in enumerate(records):
+            if not isinstance(record, dict):
+                continue
+            source_index = record.get("source_index")
+            if not isinstance(source_index, int):
+                source_index = idx
+            result.append({
+                "source_index": source_index,
+                "source": record.get("source") or f"item_{source_index + 1}",
+            })
+        if result:
+            return result
+
+    source_data = _read_run_json_safely(run_dir, "source.json")
+    if isinstance(source_data, list) and source_data:
+        result = []
+        for idx, record in enumerate(source_data):
+            source = record.get("source") if isinstance(record, dict) else None
+            result.append({"source_index": idx, "source": source or f"item_{idx + 1}"})
+        return result
+
+    items = batch_summary.get("items") if isinstance(batch_summary, dict) else None
+    if isinstance(items, list) and items:
+        result = []
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            source_index = item.get("source_index")
+            if not isinstance(source_index, int):
+                source_index = idx
+            result.append({
+                "source_index": source_index,
+                "source": item.get("source") or f"item_{source_index + 1}",
+            })
+        return result
+
+    return []
+
+
+def _batch_items_by_source_index(batch_summary: Optional[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    result: Dict[int, Dict[str, Any]] = {}
+    items = batch_summary.get("items") if isinstance(batch_summary, dict) else None
+    if not isinstance(items, list):
+        return result
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        source_index = item.get("source_index")
+        if not isinstance(source_index, int):
+            source_index = idx
+        result[source_index] = item
+    return result
+
+
+def _cot_type_summary_from_value(value: Any) -> Optional[Dict[str, str]]:
+    matched = normalize_cot_type(value)
+    if matched:
+        return {"key": matched["key"], "display_name": matched["display_name"]}
+    return None
+
+
+def _infer_document_cot_type(
+    *,
+    run_dir: Path,
+    doc_dir: Path,
+    step1_3_data: Optional[Any],
+    batch_item: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, str]]:
+    sample = batch_item.get("final_sample") if isinstance(batch_item, dict) else None
+    if isinstance(sample, dict):
+        summary = _cot_type_summary_from_value(sample.get("cot_type_key") or sample.get("cot_type"))
+        if summary:
+            return summary
+
+    candidates: List[Any] = []
+    if isinstance(step1_3_data, dict):
+        candidates.extend([
+            step1_3_data.get("cot_type_key"),
+            step1_3_data.get("cot_type"),
+        ])
+        result = step1_3_data.get("result")
+        if isinstance(result, dict):
+            candidates.extend([
+                result.get("recommended_cot_type_key"),
+                result.get("recommended_cot_type"),
+            ])
+    for value in candidates:
+        summary = _cot_type_summary_from_value(value)
+        if summary:
+            return summary
+
+    try:
+        if doc_dir.exists():
+            known_keys = {item["key"] for item in COT_TYPES}
+            for child in doc_dir.iterdir():
+                if child.is_dir() and child.name in known_keys:
+                    return _cot_type_summary_from_value(child.name)
+    except Exception:
+        return None
+    return None
+
+
+def _find_step1_3_artifact(run_dir: Path, doc_rel_prefix: str) -> Optional[str]:
+    for filename in (
+        "step1_3_integrated_extraction_and_routing.json",
+        "step3_type_judgement.json",
+        "step3.json",
+        "step2_case_card.json",
+        "step2.json",
+        "step1_screening.json",
+        "step1.json",
+    ):
+        rel_path = _existing_rel_path(run_dir, f"{doc_rel_prefix}{filename}")
+        if rel_path:
+            return rel_path
+    return None
+
+
+def _find_typed_step_artifact(
+    run_dir: Path,
+    doc_rel_prefix: str,
+    doc_dir: Path,
+    cot_type_key: Optional[str],
+    artifact_name: str,
+) -> Optional[str]:
+    if cot_type_key:
+        rel_path = _existing_rel_path(run_dir, f"{doc_rel_prefix}{cot_type_key}/{artifact_name}")
+        if rel_path:
+            return rel_path
+
+    # Historical or partially completed runs may have the type directory but not
+    # enough metadata to infer cot_type_key before scanning.
+    try:
+        if doc_dir.exists():
+            known_keys = {item["key"] for item in COT_TYPES}
+            for child in doc_dir.iterdir():
+                if child.is_dir() and child.name in known_keys:
+                    rel_path = _existing_rel_path(run_dir, f"{doc_rel_prefix}{child.name}/{artifact_name}")
+                    if rel_path:
+                        return rel_path
+    except Exception:
+        return None
+    return None
+
+
+def _infer_running_document_stage(manifest: Dict[str, Any]) -> tuple[Optional[int], Optional[str], Optional[str]]:
+    if manifest.get("status") != "running":
+        return None, None, None
+    progress_label = str(manifest.get("progress_label") or "")
+    running_step = None
+    for step in manifest.get("steps", []):
+        if isinstance(step, dict) and step.get("status") == "running":
+            running_step = step
+            progress_label = str(step.get("progress_label") or progress_label)
+            break
+
+    source_index = None
+    match = re.search(r"文献\s*(\d+)\s*/", progress_label)
+    if not match:
+        match = re.search(r"第\s*(\d+)\s*/", progress_label)
+    if match:
+        source_index = max(0, int(match.group(1)) - 1)
+
+    return source_index, running_step.get("step_key") if running_step else None, progress_label or None
+
+
+def _build_document_stage_matrix(manifest: Dict[str, Any], run_dir: Path) -> List[Dict[str, Any]]:
+    """Build per-document progress data for the Professional CoT detail page.
+
+    Returns a list of document entries, each containing an overall status,
+    CoT type info, and a list of step details suitable for "click document
+    block -> expand step list" UI similar to multi-COT chunk-level display.
+    """
+    batch_summary = _read_run_json_safely(run_dir, "batch_summary.json")
+    batch_items = _batch_items_by_source_index(batch_summary if isinstance(batch_summary, dict) else None)
+    documents = _extract_document_sources(run_dir, batch_summary if isinstance(batch_summary, dict) else None)
+    if not documents:
+        return []
+
+    running_source_index, running_step_key, running_label = _infer_running_document_stage(manifest)
+    result: List[Dict[str, Any]] = []
+
+    for doc in documents:
+        source_index = doc["source_index"]
+        source = str(doc.get("source") or f"item_{source_index + 1}")
+        doc_dir = _document_output_dir(run_dir, source_index, source)
+        doc_rel_prefix = f"documents/{str(source_index + 1).zfill(4)}_{_sanitize_dirname(source)}/"
+        batch_item = batch_items.get(source_index)
+        batch_status = batch_item.get("status") if isinstance(batch_item, dict) else None
+        batch_error = batch_item.get("error") if isinstance(batch_item, dict) else None
+
+        step1_3_artifact = _find_step1_3_artifact(run_dir, doc_rel_prefix)
+        step1_3_data = _read_run_json_safely(run_dir, step1_3_artifact) if step1_3_artifact else None
+        cot_type = _infer_document_cot_type(
+            run_dir=run_dir,
+            doc_dir=doc_dir,
+            step1_3_data=step1_3_data,
+            batch_item=batch_item,
+        )
+        cot_type_key = cot_type.get("key") if cot_type else None
+        cot_type_name = cot_type.get("display_name") if cot_type else None
+
+        artifacts: Dict[str, Optional[str]] = {
+            "step1_3_integrated": step1_3_artifact,
+            "step4_input": _find_typed_step_artifact(run_dir, doc_rel_prefix, doc_dir, cot_type_key, "step4_input.json"),
+            "step5_chain": _find_typed_step_artifact(run_dir, doc_rel_prefix, doc_dir, cot_type_key, "step5_chain.json"),
+            "step6_output": _find_typed_step_artifact(run_dir, doc_rel_prefix, doc_dir, cot_type_key, "step6_output.json"),
+        }
+
+        # Build per-step status entries
+        steps: List[Dict[str, Any]] = []
+        for stage_index, stage in enumerate(DOCUMENT_STAGE_DEFINITIONS):
+            stage_key = stage["stage_key"]
+            artifact_path = artifacts.get(stage_key)
+            status = "pending"
+            progress_label = "等待处理"
+            error = batch_error
+
+            if artifact_path:
+                status = "completed"
+                progress_label = "已完成"
+            elif source_index == running_source_index and stage_key == running_step_key:
+                status = "running"
+                progress_label = running_label or "正在执行"
+            elif batch_status == "skipped":
+                status = "skipped"
+                progress_label = batch_error or "已跳过"
+            elif batch_status == "failed":
+                # For failed batch items, mark the first missing stage as failed
+                # and subsequent stages as pending (not yet attempted).
+                stage_keys = [s["stage_key"] for s in DOCUMENT_STAGE_DEFINITIONS]
+                completed_flags = [bool(artifacts.get(sk)) for sk in stage_keys]
+                first_missing_index = next((idx for idx, done in enumerate(completed_flags) if not done), None)
+                if first_missing_index is not None and stage_index == first_missing_index:
+                    status = "failed"
+                    progress_label = batch_error or "处理失败"
+                else:
+                    status = "pending"
+                    progress_label = "失败后未执行"
+            elif batch_status == "success":
+                # Successful batch item but missing later artifact
+                status = "pending"
+                progress_label = "未找到阶段产物"
+
+            steps.append({
+                "step_key": stage_key,
+                "display_name": stage["stage_name"],
+                "step": stage["step"],
+                "status": status,
+                "artifact_path": artifact_path,
+                "progress_label": progress_label,
+                "error": error if status in ("failed", "skipped") else None,
+            })
+
+        # Aggregate overall document status from its steps
+        overall_status = "pending"
+        if steps:
+            has_running = any(s["status"] == "running" for s in steps)
+            has_failed = any(s["status"] == "failed" for s in steps)
+            all_completed_or_skipped = all(
+                s["status"] in ("completed", "skipped") for s in steps
+            )
+            all_skipped = all(s["status"] == "skipped" for s in steps)
+
+            if all_completed_or_skipped and not all_skipped:
+                overall_status = "completed"
+            elif all_skipped:
+                overall_status = "skipped"
+            elif has_running:
+                overall_status = "running"
+            elif has_failed:
+                overall_status = "failed"
+
+        result.append({
+            "source_index": source_index,
+            "source": source,
+            "status": overall_status,
+            "cot_type": cot_type_name,
+            "cot_type_key": cot_type_key,
+            "error": batch_error,
+            "steps": steps,
+        })
+
+    return result
+
+
+def _infer_cot_type_summary_from_artifacts(manifest: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Infer run-level display CoT type from historical final outputs or batch summary."""
+    run_id = manifest.get("run_id")
+    if not run_id:
+        return None
+    try:
+        run_dir = get_run_dir(run_id)
+    except ValueError:
+        return None
+
+    sample_sources: List[Any] = []
+
+    final_outputs = manifest.get("final_outputs") if isinstance(manifest.get("final_outputs"), dict) else {}
+    candidate_final_paths = [final_outputs.get("json"), "final_samples.json"]
+    seen_paths = set()
+    for rel_path in candidate_final_paths:
+        if not rel_path or rel_path in seen_paths:
+            continue
+        seen_paths.add(rel_path)
+        final_data = _read_run_json_safely(run_dir, rel_path)
+        if isinstance(final_data, dict) and isinstance(final_data.get("samples"), list):
+            sample_sources.extend(final_data["samples"])
+
+    batch_summary = _read_run_json_safely(run_dir, "batch_summary.json")
+    if isinstance(batch_summary, dict) and isinstance(batch_summary.get("items"), list):
+        sample_sources.extend(batch_summary["items"])
+
+    for manifest_key in ("batch_items", "items"):
+        manifest_items = manifest.get(manifest_key)
+        if isinstance(manifest_items, list):
+            sample_sources.extend(manifest_items)
+
+    return _infer_cot_type_summary_from_samples(sample_sources)
+
+
+def _resolve_run_cot_type_summary(manifest: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    return (
+        _coerce_cot_type_summary(manifest.get("recommended_cot_type"))
+        or _coerce_cot_type_summary(manifest.get("target_cot_type"))
+        or _infer_cot_type_summary_from_artifacts(manifest)
+    )
+
+
+def _update_manifest_cot_type_summary(manifest: Dict[str, Any], samples: Iterable[Any]) -> None:
+    """Persist run-level display CoT type summary for new and resumed batch runs."""
+    summary = _infer_cot_type_summary_from_samples(samples)
+    if not summary:
+        return
+    manifest["recommended_cot_type"] = summary
+    manifest["target_cot_type"] = summary
+
+
 def _truthy_generation_flag(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -523,6 +966,46 @@ def _truthy_generation_flag(value: Any) -> bool:
     if text in ("true", "yes", "y", "是", "可以", "可生成", "partial"):
         return True
     return False
+
+
+def _normalize_usability_decision(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in ("yes", "true", "y", "是", "可以", "可用", "适合", "可生成", "build"):
+        return "yes"
+    if text in ("partial", "partially", "部分", "部分可用", "谨慎", "build_with_caution"):
+        return "partial"
+    return "no" if text in ("no", "false", "n", "否", "不可用", "不适合", "不可生成", "not_build") else "partial"
+
+
+def _normalize_cot_judgement_decision(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in ("build", "yes", "true", "可构建", "适合"):
+        return "build"
+    if text in ("build_with_caution", "caution", "partial", "谨慎构建", "部分可构建"):
+        return "build_with_caution"
+    return "not_build"
+
+
+def _normalize_priority(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in ("high", "高", "最高", "优先"):
+        return "high"
+    if text in ("medium", "mid", "中", "中等"):
+        return "medium"
+    return "low"
+
+
+def _select_recommended_from_judgements(judgements: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    decision_rank = {"build": 0, "build_with_caution": 1}
+    priority_rank = {"high": 0, "medium": 1, "low": 2}
+    candidates = []
+    for index, item in enumerate(judgements):
+        matched = normalize_cot_type(item.get("cot_type_key") or item.get("cot_type"))
+        decision = item.get("decision")
+        if matched and decision in decision_rank:
+            candidates.append((decision_rank[decision], priority_rank.get(item.get("priority"), 9), index, matched))
+    candidates.sort(key=lambda row: (row[0], row[1], row[2]))
+    return candidates[0][3] if candidates else None
 
 
 def _read_prompt_file(path: Path) -> str:
@@ -539,6 +1022,12 @@ def _extract_step_prompt(step_no: int, prompt_snapshot_dir: Optional[Path] = Non
     pattern = re.compile(rf"###\s*Step\s*{step_no}[^\n]*\n(.*?)(?=\n###\s*Step\s*\d+|\Z)", re.S | re.I)
     match = pattern.search(content)
     return match.group(0).strip() if match else content
+
+
+def _extract_step1_3_integrated_prompt(prompt_snapshot_dir: Optional[Path] = None) -> str:
+    if prompt_snapshot_dir is not None:
+        return read_prompt_from_snapshot(prompt_snapshot_dir, "common.step1_3")
+    return _read_prompt_file(PROMPT_ROOT / "step1_3_integrated_extraction_and_routing.md")
 
 
 def _type_prompt(cot_type: Dict[str, Any], step_no: int, prompt_snapshot_dir: Optional[Path] = None) -> str:
@@ -588,6 +1077,90 @@ def _call_json(prompt: str, llm: Dict[str, Any], username: str) -> Dict[str, Any
         api_key_override=llm["api_key"],
         username=username,
     )
+
+
+def _run_step1_3_integrated(
+    paper_text: str,
+    *,
+    source_label: str,
+    source_id: Optional[str],
+    source_type: Optional[str] = None,
+    llm: Dict[str, Any],
+    username: str,
+    prompt_snapshot_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    prompt = f"""
+{_extract_step1_3_integrated_prompt(prompt_snapshot_dir)}
+
+强制约束：
+- 本节点只允许完成文献可用性判断、关键信息抽取、CoT 类型路由。
+- 不要生成最终 CoT 样本，不要生成训练 input、chainofThought 或 output。
+- JSON 顶层必须是对象。
+- literature_usability.decision 只能是 yes / partial / no。
+- cot_type_judgement[*].decision 只能是 build / build_with_caution / not_build。
+- cot_type_judgement[*].priority 只能是 high / medium / low。
+- cot_type_judgement[*].cot_type、recommended_next_action.priority_cot_types、types_to_skip 只能使用以下 10 类 CoT 枚举原文：
+{COT_ENUM_TEXT}
+
+请按融合提示词中的 JSON 结构输出；如果输入 source_id/source_type 为空，请据实写 null 或 unknown。
+
+source_id: {source_id or source_label or ""}
+source_label: {source_label or ""}
+source_type: {source_type or "unknown"}
+full_literature:
+{paper_text}
+""".strip()
+    result = _call_json(prompt, llm, username)
+
+    usability = result.get("literature_usability") if isinstance(result.get("literature_usability"), dict) else {}
+    usability["decision"] = _normalize_usability_decision(
+        usability.get("decision") or result.get("decision") or result.get("can_generate")
+    )
+    usability.setdefault("reason", result.get("reason") or result.get("stop_reason"))
+    usability.setdefault("usable_parts", [])
+    result["literature_usability"] = usability
+
+    raw_judgements = result.get("cot_type_judgement") or result.get("cot_type_judgments") or result.get("type_judgement") or []
+    if isinstance(raw_judgements, dict):
+        raw_judgements = list(raw_judgements.values())
+    if not isinstance(raw_judgements, list):
+        raw_judgements = []
+
+    normalized_judgements: List[Dict[str, Any]] = []
+    for raw in raw_judgements:
+        if not isinstance(raw, dict):
+            continue
+        matched = normalize_cot_type(raw.get("cot_type") or raw.get("cot_type_key") or raw.get("type") or raw.get("name"))
+        item = dict(raw)
+        if matched:
+            item["cot_type"] = matched["display_name"]
+            item["cot_type_key"] = matched["key"]
+        item["decision"] = _normalize_cot_judgement_decision(raw.get("decision") or raw.get("can_build") or raw.get("status"))
+        item["priority"] = _normalize_priority(raw.get("priority"))
+        item.setdefault("key_evidence", raw.get("evidence") or [])
+        item.setdefault("missing_or_risky_evidence", raw.get("missing_information") or [])
+        normalized_judgements.append(item)
+    result["cot_type_judgement"] = normalized_judgements
+
+    next_action = result.get("recommended_next_action") if isinstance(result.get("recommended_next_action"), dict) else {}
+    priority_types = normalize_cot_types(
+        next_action.get("priority_cot_types")
+        or result.get("priority_cot_types")
+        or result.get("recommended_cot_type")
+        or result.get("target_cot_type")
+    )
+    next_action["priority_cot_types"] = [item["display_name"] for item in priority_types]
+    next_action["types_to_skip"] = [item["display_name"] for item in normalize_cot_types(next_action.get("types_to_skip") or [])]
+    next_action.setdefault("notes_for_next_step", result.get("notes_for_next_step") or result.get("recommendation_reason") or "")
+    result["recommended_next_action"] = next_action
+
+    recommended = priority_types[0] if priority_types else _select_recommended_from_judgements(normalized_judgements)
+    result["recommended_cot_type"] = recommended["display_name"] if recommended else None
+    result["recommended_cot_type_key"] = recommended["key"] if recommended else None
+    result["source_id"] = result.get("source_id") or source_id or source_label
+    result.setdefault("source_type", "unknown")
+    result.setdefault("key_information", {})
+    return result
 
 
 def _run_step1(paper_text: str, llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
@@ -743,7 +1316,7 @@ case_card：
     return result
 
 
-def _run_step4(cot_type: Dict[str, Any], case_card: Dict[str, Any], step1: Dict[str, Any], step3: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
+def _run_step4(cot_type: Dict[str, Any], step1_3_result: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
     prompt = f"""
 {_type_prompt(cot_type, 4, prompt_snapshot_dir)}
 
@@ -761,14 +1334,8 @@ def _run_step4(cot_type: Dict[str, Any], case_card: Dict[str, Any], step1: Dict[
   "evidence_trace": {{}}
 }}
 
-Step 1 结果：
-{_json_block(step1)}
-
-Step 3 结果：
-{_json_block(step3)}
-
-case_card：
-{_json_block(case_card)}
+step1_3_result：
+{_json_block(step1_3_result)}
 """.strip()
     result = _call_json(prompt, llm, username)
     selected_input = result.get("selected_input") or result.get("input")
@@ -776,7 +1343,7 @@ case_card：
     return result
 
 
-def _run_step5(cot_type: Dict[str, Any], case_card: Dict[str, Any], step1: Dict[str, Any], step3: Dict[str, Any], step4: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
+def _run_step5(cot_type: Dict[str, Any], step1_3_result: Dict[str, Any], step4: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
     selected_input = step4.get("selected_input") or step4.get("input") or ""
     prompt = f"""
 {_type_prompt(cot_type, 5, prompt_snapshot_dir)}
@@ -798,17 +1365,11 @@ def _run_step5(cot_type: Dict[str, Any], case_card: Dict[str, Any], step1: Dict[
 input：
 {selected_input}
 
-Step 1 结果：
-{_json_block(step1)}
-
-Step 3 结果：
-{_json_block(step3)}
+step1_3_result：
+{_json_block(step1_3_result)}
 
 Step 4 结果：
 {_json_block(step4)}
-
-case_card：
-{_json_block(case_card)}
 """.strip()
     result = _call_json(prompt, llm, username)
     chain = result.get("chainofThought") or result.get("chain_of_thought") or result.get("chain") or []
@@ -861,7 +1422,7 @@ Step 5 结果：
     return result
 
 
-def _build_final_sample(cot_type: Dict[str, Any], step4: Dict[str, Any], step5: Dict[str, Any], step6: Dict[str, Any]) -> Dict[str, Any]:
+def _build_final_sample(cot_type: Dict[str, Any], step4: Dict[str, Any], step5: Dict[str, Any], step6: Dict[str, Any], source_type: Optional[str] = None) -> Dict[str, Any]:
     final_sample = step6.get("final_sample") if isinstance(step6.get("final_sample"), dict) else {}
     evidence_trace = (
         final_sample.get("evidence_trace")
@@ -880,26 +1441,47 @@ def _build_final_sample(cot_type: Dict[str, Any], step4: Dict[str, Any], step5: 
         final_sample.get("output") or step6.get("output"),
         "final_sample.output",
     )
-    return {
+    sample = {
         "cot_type": cot_type["display_name"],
         "input": sample_input,
         "chainofThought": chain,
         "output": output,
         "evidence_trace": evidence_trace,
+        "source_type": source_type or "unknown",
     }
+    return sample
 
 
 def _write_final_outputs(run_id: str, samples: List[Dict[str, Any]]) -> Dict[str, str]:
     run_dir = get_run_dir(run_id)
+    # Add sequential id numbering (1-based) and reorder fields
+    ordered_samples = []
+    for idx, sample in enumerate(samples, start=1):
+        ordered = {
+            "id": idx,
+            "source_type": sample.get("source_type", "unknown"),
+            "source_index": sample.get("source_index"),
+            "source": sample.get("source"),
+            "cot_type": sample.get("cot_type"),
+            "input": sample.get("input"),
+            "chainofThought": sample.get("chainofThought"),
+            "output": sample.get("output"),
+            "evidence_trace": sample.get("evidence_trace"),
+        }
+        # Preserve any extra keys not in the standard order
+        for key in sample:
+            if key not in ordered:
+                ordered[key] = sample[key]
+        ordered_samples.append(ordered)
     final_json = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
         "pipeline_name": PIPELINE_NAME,
-        "sample_count": len(samples),
-        "samples": samples,
+        "sample_count": len(ordered_samples),
+        "samples": ordered_samples,
     }
     atomic_write_json(run_dir / "final_samples.json", final_json)
-    jsonl_content = "".join(json.dumps(sample, ensure_ascii=False) + "\n" for sample in samples)
+    jsonl_content = "".join(json.dumps(s, ensure_ascii=False) + "\n" for s in ordered_samples)
     atomic_write_text(run_dir / "final_samples.jsonl", jsonl_content)
     return {"json": "final_samples.json", "jsonl": "final_samples.jsonl"}
 
@@ -953,6 +1535,7 @@ def create_initial_run(
     run_name: Optional[str] = None,
     source_file_id: Optional[int] = None,
     prompt_template_id: Optional[str] = None,
+    source_type: Optional[str] = "unknown",
 ) -> Dict[str, Any]:
     STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
     run_id = make_run_id()
@@ -991,6 +1574,7 @@ def create_initial_run(
             "text_length": len(paper_text),
             "input_count": input_count,
         },
+        "source_type": source_type or "unknown",
         "input_count": input_count,
         "success_count": 0,
         "failed_count": 0,
@@ -1056,10 +1640,12 @@ def process_one_document(
     prompt_snapshot_dir: Path,
     llm: Dict[str, Any],
     username: str,
+    source_id: Optional[str] = None,
+    source_type: Optional[str] = None,
     manifest: Optional[Dict[str, Any]] = None,
     input_count: int = 1,
 ) -> Dict[str, Any]:
-    """Execute the full 6-step pipeline for one document.
+    """Execute the integrated 4-node professional CoT pipeline for one document.
 
     Returns a result dict with keys:
       - source_index, source, status
@@ -1088,71 +1674,46 @@ def process_one_document(
         save_manifest(manifest)
 
     try:
-        # Step 1: screening
-        _update_manifest_step("step1_screening", status="running", progress_current=10,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：筛选相关文献")
-        step1 = _run_step1(paper_text, llm, username, prompt_snapshot_dir)
-        atomic_write_json(doc_dir / "step1_screening.json", {
-            "step": 1, "step_name": "筛选相关文献",
-            "status": "completed", "result": step1,
-        })
-        _update_manifest_step("step1_screening", status="completed", progress_current=100,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：筛选完成",
-                              artifact_path=f"{doc_rel_prefix}step1_screening.json")
-
-        if not step1.get("can_generate"):
-            stop_reason = step1.get("stop_reason") or "Step 1 判断该论文不适合构建当前支持的专业 CoT"
-            _update_manifest_step("step2_case_card", status="skipped", progress_current=100,
-                                  progress_label=stop_reason)
-            _update_manifest_step("step3_type_judgement", status="skipped", progress_current=100,
-                                  progress_label=stop_reason)
-            _update_manifest_step("step4_input", status="skipped", progress_current=100,
-                                  progress_label=stop_reason)
-            _update_manifest_step("step5_chain", status="skipped", progress_current=100,
-                                  progress_label=stop_reason)
-            _update_manifest_step("step6_output", status="skipped", progress_current=100,
-                                  progress_label=stop_reason)
-            return {
-                "source_index": source_index,
-                "source": source_label,
-                "status": "skipped",
-                "error": stop_reason,
-            }
-
-        # Step 2: case card
-        _update_manifest_step("step2_case_card", status="running", progress_current=10,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：构建案例卡")
-        step2 = _run_step2(paper_text, llm, username, prompt_snapshot_dir)
-        case_card = step2["case_card"]
-        atomic_write_json(doc_dir / "step2_case_card.json", {
-            "step": 2, "step_name": "构建文献案例卡",
-            "status": "completed", "result": step2,
-        })
-        _update_manifest_step("step2_case_card", status="completed", progress_current=100,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：案例卡完成",
-                              artifact_path=f"{doc_rel_prefix}step2_case_card.json")
-
-        # Step 3: type judgement
-        _update_manifest_step("step3_type_judgement", status="running", progress_current=10,
-                              progress_label=f"文献 {source_index + 1}/{input_count}：判定 CoT 类型")
-        step3 = _run_step3(case_card, llm, username, prompt_snapshot_dir)
-        target = _extract_recommended_cot_type(step3)
-        if target and not step3.get("constructible_cot_types"):
-            target = None
-        step3_payload = {
-            "step": 3, "step_name": "自动判定本次任务的 CoT 类型",
-            "status": "completed", "result": step3,
+        # Integrated Step 1-3: extraction and CoT routing
+        _update_manifest_step(
+            "step1_3_integrated",
+            status="running",
+            progress_current=10,
+            progress_label=f"文献 {source_index + 1}/{input_count}：抽取信息并判定 CoT 类型",
+        )
+        step1_3 = _run_step1_3_integrated(
+            paper_text,
+            source_label=source_label,
+            source_id=source_id or source_label,
+            source_type=source_type,
+            llm=llm,
+            username=username,
+            prompt_snapshot_dir=prompt_snapshot_dir,
+        )
+        target = normalize_cot_type(step1_3.get("recommended_cot_type_key") or step1_3.get("recommended_cot_type"))
+        step1_3_payload = {
+            "step": "1-3",
+            "step_name": "文献信息抽取与 CoT 类型路由",
+            "status": "completed",
+            "result": step1_3,
         }
         if target:
-            step3_payload["cot_type"] = target["display_name"]
-            step3_payload["cot_type_key"] = target["key"]
-        atomic_write_json(doc_dir / "step3_type_judgement.json", step3_payload)
+            step1_3_payload["cot_type"] = target["display_name"]
+            step1_3_payload["cot_type_key"] = target["key"]
+        atomic_write_json(doc_dir / "step1_3_integrated_extraction_and_routing.json", step1_3_payload)
 
-        if target:
-            _update_manifest_step("step3_type_judgement", status="completed", progress_current=100,
-                                  progress_label=f"文献 {source_index + 1}/{input_count}：判定为 {target['display_name']}",
-                                  cot_type=target["display_name"], cot_type_key=target["key"],
-                                  artifact_path=f"{doc_rel_prefix}step3_type_judgement.json")
+        usability = step1_3.get("literature_usability") if isinstance(step1_3.get("literature_usability"), dict) else {}
+        usability_decision = usability.get("decision")
+        if target and usability_decision != "no":
+            _update_manifest_step(
+                "step1_3_integrated",
+                status="completed",
+                progress_current=100,
+                progress_label=f"文献 {source_index + 1}/{input_count}：推荐 {target['display_name']}",
+                cot_type=target["display_name"],
+                cot_type_key=target["key"],
+                artifact_path=f"{doc_rel_prefix}step1_3_integrated_extraction_and_routing.json",
+            )
             for step_key, artifact_name in (
                 ("step4_input", "step4_input.json"),
                 ("step5_chain", "step5_chain.json"),
@@ -1166,18 +1727,29 @@ def process_one_document(
                     artifact_path=f"{doc_rel_prefix}{target['key']}/{artifact_name}",
                 )
         else:
-            _update_manifest_step("step3_type_judgement", status="completed", progress_current=100,
-                                  progress_label=f"文献 {source_index + 1}/{input_count}：无可构建类型",
-                                  artifact_path=f"{doc_rel_prefix}step3_type_judgement.json")
-            reason = step3.get("recommendation_reason") or "Step 3 未推荐可构建的 CoT 类型"
-            missing = step3.get("missing_information") or []
-            if isinstance(missing, list) and missing:
-                reason = f"{reason}；证据缺口：{'；'.join(str(item) for item in missing[:5])}"
+            if usability_decision == "no":
+                reason = usability.get("reason") or "融合节点判断该文献不适合构建当前支持的专业 CoT"
+            else:
+                next_action = step1_3.get("recommended_next_action") if isinstance(step1_3.get("recommended_next_action"), dict) else {}
+                reason = next_action.get("notes_for_next_step") or "融合节点未推荐可构建的 CoT 类型"
+                missing_items: List[str] = []
+                for item in step1_3.get("cot_type_judgement") or []:
+                    if isinstance(item, dict) and item.get("missing_or_risky_evidence"):
+                        missing = item.get("missing_or_risky_evidence")
+                        if isinstance(missing, list):
+                            missing_items.extend(str(value) for value in missing[:2])
+                if missing_items:
+                    reason = f"{reason}；证据缺口：{'；'.join(missing_items[:5])}"
+            _update_manifest_step(
+                "step1_3_integrated",
+                status="completed",
+                progress_current=100,
+                progress_label=reason,
+                artifact_path=f"{doc_rel_prefix}step1_3_integrated_extraction_and_routing.json",
+            )
             _update_manifest_step("step4_input", status="skipped", progress_current=100, progress_label=reason)
             _update_manifest_step("step5_chain", status="skipped", progress_current=100, progress_label=reason)
             _update_manifest_step("step6_output", status="skipped", progress_current=100, progress_label=reason)
-
-        if not target:
             return {
                 "source_index": source_index,
                 "source": source_label,
@@ -1192,7 +1764,7 @@ def process_one_document(
         # Step 4
         _update_manifest_step("step4_input", status="running", progress_current=15,
                               progress_label=f"文献 {source_index + 1}/{input_count}：生成 {target['display_name']} input")
-        step4 = _run_step4(target, case_card, step1, step3, llm, username, prompt_snapshot_dir)
+        step4 = _run_step4(target, step1_3, llm, username, prompt_snapshot_dir)
         atomic_write_json(type_dir / "step4_input.json", {
             "step": 4, "step_name": "生成 input", "status": "completed",
             "cot_type": target["display_name"], "cot_type_key": target["key"],
@@ -1205,7 +1777,7 @@ def process_one_document(
         # Step 5
         _update_manifest_step("step5_chain", status="running", progress_current=15,
                               progress_label=f"文献 {source_index + 1}/{input_count}：生成 {target['display_name']} chainofThought")
-        step5 = _run_step5(target, case_card, step1, step3, step4, llm, username, prompt_snapshot_dir)
+        step5 = _run_step5(target, step1_3, step4, llm, username, prompt_snapshot_dir)
         atomic_write_json(type_dir / "step5_chain.json", {
             "step": 5, "step_name": "生成 chainofThought", "status": "completed",
             "cot_type": target["display_name"], "cot_type_key": target["key"],
@@ -1219,7 +1791,7 @@ def process_one_document(
         _update_manifest_step("step6_output", status="running", progress_current=15,
                               progress_label=f"文献 {source_index + 1}/{input_count}：生成 {target['display_name']} output")
         step6 = _run_step6(target, step4, step5, llm, username, prompt_snapshot_dir)
-        sample = _build_final_sample(target, step4, step5, step6)
+        sample = _build_final_sample(target, step4, step5, step6, source_type=source_type)
         step6_payload = {
             "step": 6, "step_name": "生成 output", "status": "completed",
             "cot_type": target["display_name"], "cot_type_key": target["key"],
@@ -1234,13 +1806,27 @@ def process_one_document(
         sample["source_index"] = source_index
         sample["source"] = source_label
 
-        # Write per-document final_samples.json
+        # Write per-document final_samples.json with ordered fields
+        ordered_sample = {
+            "id": 1,
+            "source_type": sample.get("source_type", "unknown"),
+            "source_index": source_index,
+            "source": source_label,
+            "cot_type": sample.get("cot_type"),
+            "input": sample.get("input"),
+            "chainofThought": sample.get("chainofThought"),
+            "output": sample.get("output"),
+            "evidence_trace": sample.get("evidence_trace"),
+        }
+        for key in sample:
+            if key not in ordered_sample:
+                ordered_sample[key] = sample[key]
         atomic_write_json(doc_dir / "final_samples.json", {
             "schema_version": SCHEMA_VERSION,
             "source_index": source_index,
             "source": source_label,
             "sample_count": 1,
-            "samples": [sample],
+            "samples": [ordered_sample],
         })
 
         return {
@@ -1315,6 +1901,8 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
                 prompt_snapshot_dir=prompt_snapshot_dir,
                 llm=llm,
                 username=username,
+                source_id=record.get("source_id") or record.get("id") or record.get("doi") or source_label,
+                source_type=manifest.get("source_type"),
                 manifest=manifest,
                 input_count=input_count,
             )
@@ -1353,7 +1941,11 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
                     for step in manifest.get("steps", []):
                         step["status"] = "pending"
                         step["progress_current"] = 0
-                        step["progress_label"] = "等待执行"
+                        step["progress_label"] = (
+                            "等待 Step 1-3 推荐 CoT 类型"
+                            if step.get("step_key") in ("step4_input", "step5_chain", "step6_output")
+                            else "等待执行"
+                        )
                         step["error_message"] = None
                     manifest["target_cot_type"] = None
                     manifest["recommended_cot_type"] = None
@@ -1366,8 +1958,9 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
         skipped_count = len([item for item in batch_items if item["status"] == "skipped"])
 
         # Final batch_summary and final_outputs are already written incrementally;
-        # only update the final counts and status here.
+        # only update the final counts, display CoT type summary and status here.
         manifest["failed_count"] = failed_count + skipped_count
+        _update_manifest_cot_type_summary(manifest, all_samples)
         _write_batch_summary(run_dir, run_id, input_count, batch_items, manifest)
 
         # For single-doc backward compatibility: copy per-document artifacts to run root
@@ -1432,18 +2025,17 @@ def _update_single_doc_manifest_steps(manifest: Dict[str, Any], doc_result: Dict
 def _write_single_doc_legacy_artifacts(run_dir: Path, doc_result: Dict[str, Any]) -> None:
     """Copy per-document artifacts to the run root for backward compatibility.
 
-    The original single-document pipeline wrote step artifacts directly under
-    run_dir (e.g. step1_screening.json, <cot_key>/step4_input.json). The new
-    batch pipeline writes them under documents/<seq>_<source>/ instead. For
-    single-doc runs, we also write legacy flat copies so existing code that
-    looks for the old paths still works.
+    The single-document detail page can read flat artifact paths under run_dir.
+    The batch pipeline writes them under documents/<seq>_<source>/ instead. For
+    single-doc runs, also write flat copies for the integrated Step 1-3 artifact
+    and type-specific Step 4/5/6 outputs.
     """
     source_index = doc_result["source_index"]
     source_label = doc_result["source"]
     doc_dir = _document_output_dir(run_dir, source_index, source_label)
 
-    # Copy step1, step2, step3 to run root
-    for step_file in ("step1_screening.json", "step2_case_card.json", "step3_type_judgement.json"):
+    # Copy integrated Step 1-3 artifact to run root
+    for step_file in ("step1_3_integrated_extraction_and_routing.json",):
         src = doc_dir / step_file
         if src.exists():
             atomic_write_json(run_dir / step_file, read_json(src))
@@ -1511,6 +2103,8 @@ def list_runs_for_user(user_id: int, page: int = 1, page_size: int = 10) -> Dict
 
 
 def _manifest_to_list_item(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    cot_type_summary = _resolve_run_cot_type_summary(manifest)
+    target_cot_type = _coerce_cot_type_summary(manifest.get("target_cot_type")) or cot_type_summary
     return {
         "run_id": manifest.get("run_id"),
         "run_name": manifest.get("run_name"),
@@ -1528,8 +2122,8 @@ def _manifest_to_list_item(manifest: Dict[str, Any]) -> Dict[str, Any]:
         "failed_count": manifest.get("failed_count", 0),
         "source_filename": manifest.get("source_file", {}).get("filename"),
         "text_field": manifest.get("source_input", {}).get("text_field"),
-        "target_cot_type": manifest.get("target_cot_type"),
-        "recommended_cot_type": manifest.get("recommended_cot_type"),
+        "target_cot_type": target_cot_type,
+        "recommended_cot_type": cot_type_summary,
         "prompt_template": manifest.get("prompt_template"),
         "model": manifest.get("llm", {}).get("model"),
         "created_at": manifest.get("created_at"),
@@ -1547,8 +2141,9 @@ def get_run_detail_for_user(run_id: str, user_id: int) -> Optional[Dict[str, Any
     if manifest.get("user_id") != user_id:
         return None
 
+    run_dir = get_run_dir(run_id)
     detail = dict(manifest)
-    final_path = get_run_dir(run_id) / "final_samples.json"
+    final_path = run_dir / "final_samples.json"
     if final_path.exists():
         try:
             final_data = read_json(final_path)
@@ -1557,12 +2152,14 @@ def get_run_detail_for_user(run_id: str, user_id: int) -> Optional[Dict[str, Any
             detail["final_samples_preview"] = []
 
     # Include batch_summary if available
-    batch_summary_path = get_run_dir(run_id) / "batch_summary.json"
+    batch_summary_path = run_dir / "batch_summary.json"
     if batch_summary_path.exists():
         try:
             detail["batch_summary"] = read_json(batch_summary_path)
         except Exception:
             detail["batch_summary"] = None
+
+    detail["document_stage_matrix"] = _build_document_stage_matrix(manifest, run_dir)
 
     return detail
 
