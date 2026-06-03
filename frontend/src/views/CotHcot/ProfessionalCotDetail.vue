@@ -4,11 +4,20 @@
     <el-card class="info-card">
       <template #header>
         <div class="card-header">
-          <span>{{ run?.run_name || '标注流水线2详情' }}</span>
+          <span>{{ run?.run_name || '单COT生成详情' }}</span>
           <div>
             <el-tag :type="statusTagType(run?.status)" size="large">
               {{ statusLabel(run?.status) }}
             </el-tag>
+            <el-button
+              v-if="run?.status === 'paused' || run?.status === 'failed'"
+              type="success"
+              :loading="resumeLoading"
+              style="margin-left: 12px"
+              @click="handleResume"
+            >
+              恢复运行
+            </el-button>
             <el-button @click="goBack" style="margin-left: 12px">
               <el-icon><ArrowLeft /></el-icon>
               返回列表
@@ -256,6 +265,7 @@ import {
   downloadProfessionalCotExport,
   getProfessionalCotArtifact,
   getProfessionalCotRunDetail,
+  resumeProfessionalCotRun,
 } from '../../api'
 
 const router = useRouter()
@@ -263,6 +273,7 @@ const route = useRoute()
 const runId = computed(() => route.params.id)
 
 const loading = ref(false)
+const resumeLoading = ref(false)
 const run = ref(null)
 let pollTimer = null
 
@@ -381,6 +392,20 @@ async function downloadExport(type) {
 
 function goBack() {
   router.push('/professional-cot-runs')
+}
+
+async function handleResume() {
+  resumeLoading.value = true
+  try {
+    await resumeProfessionalCotRun(runId.value)
+    ElMessage.success('流水线已恢复运行')
+    startPolling()
+    await fetchRunDetail()
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '恢复失败')
+  } finally {
+    resumeLoading.value = false
+  }
 }
 
 function statusTagType(s) {

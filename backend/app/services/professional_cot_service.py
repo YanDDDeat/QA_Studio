@@ -97,6 +97,44 @@ def recover_zombie_runs() -> int:
         logger.info("共恢复 %d 个僵尸标注流水线2run", count)
     return count
 
+
+def resume_paused_run(run_id: str, user_id: int) -> Dict[str, Any]:
+    """Resume a paused or failed run. Restore status to running and return llm info for background task."""
+    manifest = load_manifest(run_id)
+    if manifest.get("user_id") != user_id:
+        raise ValueError("无权操作此任务")
+
+    manifest["status"] = "running"
+    manifest["error_message"] = None
+    manifest["stop_reason"] = None
+    manifest["progress_label"] = "正在恢复运行..."
+    save_manifest(manifest)
+
+    llm_info = {
+        "llm_config_id": manifest.get("llm", {}).get("llm_config_id"),
+        "llm_config_name": manifest.get("llm", {}).get("llm_config_name"),
+        "model": manifest.get("llm", {}).get("model"),
+        "base_url": manifest.get("llm", {}).get("base_url"),
+        "api_key": manifest.get("llm", {}).get("api_key"),
+    }
+    # Try to fill api_key from DB if missing in manifest (LLM keys are not persisted in manifest)
+    if not llm_info.get("api_key") and llm_info.get("llm_config_id"):
+        try:
+            from app.database import SessionLocal
+            from app.models.models import LLMConfig
+            db = SessionLocal()
+            cfg = db.query(LLMConfig).filter(LLMConfig.id == llm_info["llm_config_id"]).first()
+            if cfg:
+                llm_info["base_url"] = cfg.base_url
+                llm_info["api_key"] = cfg.api_key
+                llm_info["model"] = manifest.get("llm", {}).get("model") or cfg.default_model
+            db.close()
+        except Exception:
+            pass
+
+    logger.info("恢复运行 run %s", run_id)
+    return llm_info
+
 CASE_CARD_FIELDS = [
     "source_id",
     "source_type",

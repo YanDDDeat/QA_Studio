@@ -426,6 +426,10 @@ export function downloadProfessionalCotExport(runId, type) {
   return api.get(`/professional-cot/runs/${runId}/export/${type}`, { responseType: 'blob' })
 }
 
+export function resumeProfessionalCotRun(runId) {
+  return api.post(`/professional-cot/runs/${runId}/resume`)
+}
+
 export function listProfessionalCotPromptTemplates() {
   return api.get('/professional-cot/prompts/templates')
 }

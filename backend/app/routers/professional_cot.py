@@ -20,8 +20,11 @@ from app.services.professional_cot_service import (
     get_export_path,
     get_run_detail_for_user,
     list_runs_for_user,
+    load_manifest,
     read_artifact,
+    resume_paused_run,
     run_pipeline_sync,
+    save_manifest,
 )
 from app.services.professional_cot_prompt_service import (
     PromptTemplateError,
@@ -343,6 +346,39 @@ async def get_run_artifact(
     if payload is None:
         raise HTTPException(status_code=404, detail="产物文件不存在")
     return payload
+
+
+@router.post("/runs/{run_id}/resume")
+async def resume_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Resume a paused run. Re-reads manifest, restores status to running, and restarts the background pipeline."""
+    try:
+        manifest = load_manifest(run_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    if manifest.get("user_id") != current_user.id:
+        raise HTTPException(status_code=403, detail="无权操作此任务")
+    if manifest.get("status") not in ("paused", "failed"):
+        raise HTTPException(status_code=400, detail=f"当前状态为 {manifest.get('status')}，无法恢复；只有 paused 或 failed 的 run 可以恢复")
+
+    llm_info = resume_paused_run(run_id, current_user.id)
+
+    asyncio.create_task(
+        asyncio.to_thread(
+            run_pipeline_sync,
+            run_id,
+            llm_info,
+            current_user.username,
+        )
+    )
+
+    return {
+        "run_id": run_id,
+        "status": "running",
+        "message": "标注流水线2已恢复运行",
+    }
 
 
 @router.get("/runs/{run_id}/export/json")
