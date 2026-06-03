@@ -597,13 +597,13 @@ async def get_question_generate_status(
     # Count generated Dataset records for this user with question_generate stage
     # created after this task started
     generated_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(
             Dataset.user_id == current_user.id,
             Dataset.current_stage == StageEnum.QUESTION_GENERATE,
             Dataset.created_at >= task.created_at,
         )
-        .count()
+        .scalar()
     )
 
     return TaskStatusResponse(
