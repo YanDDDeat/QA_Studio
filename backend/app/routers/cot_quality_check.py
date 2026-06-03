@@ -20,7 +20,7 @@ import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Tuple
 
 from app.database import get_db, SessionLocal
 from sqlalchemy import or_
@@ -32,6 +32,7 @@ from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json_sync, LLMCallError
 from app.services.cot_quality_check_service import (
     COT_QUALITY_CHECK_SYSTEM_PROMPT,
+    flatten_nested_cot_items,
     _build_user_prompt,
     _PASS_RATINGS,
     _FAIL_RATINGS,
@@ -79,6 +80,71 @@ class TaskStatusResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
+
+# Field aliases for cot_quality_check: chain_of_thought can be chainofThought or cot
+_COT_QC_FIELD_ALIASES = {"chain_of_thought": ["chainofThought", "cot"]}
+
+
+def _validate_flattened_fields(
+    flat_data: list,
+    stage: str,
+) -> Tuple[bool, str, dict]:
+    """Validate that flattened data has the required fields for a given stage.
+
+    Works on already-flattened data in memory (not reading from disk).
+    Supports field aliases (e.g. chainofThought for chain_of_thought).
+    """
+    required = ["input", "chain_of_thought", "output"]
+    aliases = _COT_QC_FIELD_ALIASES
+
+    total = len(flat_data)
+    if total == 0:
+        return False, "JSON文件没有记录", {"total": 0, "qualified": 0}
+
+    missing_counts: dict = {}
+    qualified = 0
+
+    for record in flat_data:
+        if not isinstance(record, dict):
+            for field in required:
+                missing_counts[field] = missing_counts.get(field, 0) + 1
+            continue
+
+        has_all = True
+        for field in required:
+            value = record.get(field, "")
+            if value is None or value == "" or value == [] or value == {}:
+                alias_list = aliases.get(field, [])
+                found = False
+                for alias in alias_list:
+                    alt_value = record.get(alias, "")
+                    if alt_value and alt_value is not None and alt_value != "" and alt_value != [] and alt_value != {}:
+                        found = True
+                        break
+                if found:
+                    continue
+                missing_counts[field] = missing_counts.get(field, 0) + 1
+                has_all = False
+
+        if has_all:
+            qualified += 1
+
+    stats = {"total": total, "qualified": qualified, "missing_fields": missing_counts}
+
+    if qualified == 0:
+        parts = []
+        for field, count in missing_counts.items():
+            parts.append(f"'{field}' 缺失 {count}/{total} 条")
+        msg = f"文件不满足 {stage} 阶段字段要求: {', '.join(parts)}. 至少需要部分记录包含所有必需字段({', '.join(required)})"
+        return False, msg, stats
+
+    if qualified < total:
+        logger.info(
+            "Flattened data stage %s: %d/%d records qualify. Missing: %s",
+            stage, qualified, total, json.dumps(missing_counts, ensure_ascii=False),
+        )
+
+    return True, "", stats
 
 
 def _add_task_log(db: Session, task_id: int, content: str):
@@ -156,6 +222,9 @@ async def _run_cot_quality_check_task(
                 task.status = TaskStatusEnum.FAILED
                 db.commit()
             return
+
+        # Flatten nested structures (e.g. l0_cot_node → top-level fields)
+        raw_items = flatten_nested_cot_items(raw_items)
 
         total = len(raw_items)
 
@@ -515,9 +584,23 @@ async def start_cot_quality_check(
         )
 
     # Validate file has required fields for this stage
-    is_valid, validation_msg, validation_stats = validate_file_fields(
-        file_obj.file_path, "cot_quality_check"
-    )
+    # First flatten nested structures (e.g. l0_cot_node → top-level), then validate
+    import json as _json
+    try:
+        with open(file_obj.file_path, "r", encoding="utf-8") as f:
+            raw_data = _json.load(f)
+        if not isinstance(raw_data, list):
+            raw_data = [raw_data]
+        flat_data = flatten_nested_cot_items(raw_data)
+        # Write flattened data to a temp location for validation
+        is_valid, validation_msg, validation_stats = _validate_flattened_fields(
+            flat_data, "cot_quality_check"
+        )
+    except (_json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"JSON文件解析失败: {str(e)}",
+        )
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

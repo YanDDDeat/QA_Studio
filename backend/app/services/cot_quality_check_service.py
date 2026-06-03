@@ -5,16 +5,83 @@
 
 本模块提供：
 - COT_QUALITY_CHECK_SYSTEM_PROMPT: 内嵌的 CoT 质检提示词常量
+- flatten_nested_cot_items(): 将嵌套的 CoT 数据（如 l0_cot_node/l1_cot_node/l2_cot_node）展开到顶层
 - _build_user_prompt(): 构造单条记录的 user prompt
-- _resolve_cot_field(): 字段别名兼容（chain_of_thought / cot）
+- _resolve_cot_field(): 字段别名兼容（chain_of_thought / chainofThought / cot）
 - _PASS_RATINGS / _FAIL_RATINGS: 评级分桶常量
 
 实际的逐条 LLM 调用和进度管理由路由器中的后台任务负责。
 """
 
+import json
 import logging
 
 logger = logging.getLogger("qa_studio.cot_quality_check")
+
+
+# ---------------------------------------------------------------------------
+# Flatten nested CoT items (e.g. l0_cot_node → top-level fields)
+# ---------------------------------------------------------------------------
+
+# 已知的嵌套包装键名（标注流水线产物的常见结构）
+_NESTED_WRAPPER_KEYS = [
+    "l0_cot_node", "l1_cot_node", "l2_cot_node",
+    "cot_node", "hcot_node",
+]
+
+
+def flatten_nested_cot_items(raw_items: list) -> list:
+    """将嵌套结构的 CoT 数据展开为扁平结构，使 input/output/chainofThought 等字段位于顶层。
+
+    标注流水线产物常见格式：
+        [{"l0_cot_node": {"id": "L0-1", "input": "...", "output": "...", "chainofThought": "..."}}]
+
+    展开后变为：
+        [{"id": "L0-1", "input": "...", "output": "...", "chainofThought": "...", "_wrapper_key": "l0_cot_node"}]
+
+    如果数据已经是扁平结构则不做任何改动。
+
+    Args:
+        raw_items: 从 JSON 文件读取的原始数据列表。
+
+    Returns:
+        展开后的扁平数据列表。
+    """
+    flattened = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            flattened.append(item)
+            continue
+
+        # 检查是否有已知的嵌套包装键
+        wrapper_key = None
+        for key in _NESTED_WRAPPER_KEYS:
+            if key in item and isinstance(item[key], dict):
+                wrapper_key = key
+                break
+
+        if wrapper_key is None:
+            # 已经是扁平结构，或未知格式 → 不做改动
+            flattened.append(item)
+            continue
+
+        # 将嵌套内容展开到顶层，保留包装键名作为追溯标记
+        inner = item[wrapper_key]
+        flat = dict(inner)  # 复制内部字段到顶层
+        flat["_wrapper_key"] = wrapper_key  # 记录原始包装键名
+        # 保留外层的其他字段（如没有嵌套到内层的元数据）
+        for k, v in item.items():
+            if k != wrapper_key and k not in flat:
+                flat[k] = v
+        flattened.append(flat)
+
+    logger.info(
+        "Flattened %d items: %d had nested wrappers, %d were already flat",
+        len(raw_items),
+        sum(1 for f in flattened if isinstance(f, dict) and "_wrapper_key" in f),
+        sum(1 for f in flattened if isinstance(f, dict) and "_wrapper_key" not in f),
+    )
+    return flattened
 
 
 # ---------------------------------------------------------------------------
