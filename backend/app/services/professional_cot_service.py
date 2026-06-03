@@ -844,6 +844,29 @@ def _write_final_outputs(run_id: str, samples: List[Dict[str, Any]]) -> Dict[str
     return {"json": "final_samples.json", "jsonl": "final_samples.jsonl"}
 
 
+def _write_batch_summary(
+    run_dir: Path,
+    run_id: str,
+    input_count: int,
+    batch_items: List[Dict[str, Any]],
+    manifest: Dict[str, Any],
+) -> None:
+    """Incrementally write batch_summary.json after each document."""
+    success_count = len([item for item in batch_items if item["status"] == "success"])
+    failed_count = len([item for item in batch_items if item["status"] == "failed"])
+    skipped_count = len([item for item in batch_items if item["status"] == "skipped"])
+    batch_summary = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": run_id,
+        "input_count": input_count,
+        "success_count": success_count,
+        "failed_count": failed_count + skipped_count,
+        "items": batch_items,
+        "prompt_template": manifest.get("prompt_template"),
+    }
+    atomic_write_json(run_dir / "batch_summary.json", batch_summary)
+
+
 def _sanitize_dirname(name: str) -> str:
     """Sanitize a string for use as a directory name component."""
     text = str(name or "").strip()
@@ -1241,6 +1264,11 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
                     idx + 1, input_count, source_label, doc_result.get("error", ""),
                 )
 
+            # Incrementally write batch_summary.json and final_samples after each document
+            _write_batch_summary(run_dir, run_id, input_count, batch_items, manifest)
+            manifest["final_outputs"] = _write_final_outputs(run_id, all_samples)
+            manifest["sample_count"] = len(all_samples)
+
             # Update progress based on document completion
             done_docs = idx + 1
             manifest["progress_percentage"] = int(round((done_docs / input_count) * 100)) if input_count else 0
@@ -1263,28 +1291,14 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
             save_manifest(manifest)
 
         # Determine final run status
-        success_count = len([item for item in batch_items if item["status"] == "success"])
+        success_count = manifest["success_count"]
         failed_count = len([item for item in batch_items if item["status"] == "failed"])
         skipped_count = len([item for item in batch_items if item["status"] == "skipped"])
 
-        manifest["success_count"] = success_count
+        # Final batch_summary and final_outputs are already written incrementally;
+        # only update the final counts and status here.
         manifest["failed_count"] = failed_count + skipped_count
-
-        # Write batch_summary.json
-        batch_summary = {
-            "schema_version": SCHEMA_VERSION,
-            "run_id": run_id,
-            "input_count": input_count,
-            "success_count": success_count,
-            "failed_count": failed_count + skipped_count,
-            "items": batch_items,
-            "prompt_template": manifest.get("prompt_template"),
-        }
-        atomic_write_json(run_dir / "batch_summary.json", batch_summary)
-
-        # Write aggregate final_samples.json / .jsonl
-        manifest["final_outputs"] = _write_final_outputs(run_id, all_samples)
-        manifest["sample_count"] = len(all_samples)
+        _write_batch_summary(run_dir, run_id, input_count, batch_items, manifest)
 
         # For single-doc backward compatibility: copy per-document artifacts to run root
         # so that existing frontend code looking for flat paths still works.
