@@ -84,6 +84,17 @@
           </el-menu-item>
         </el-sub-menu>
 
+        <el-sub-menu index="group-cot-hcot">
+          <template #title>
+            <el-icon><CircleCheck /></el-icon>
+            <span>CoT/H-CoT标注</span>
+          </template>
+          <el-menu-item index="/cot-quality-check">
+            <el-icon><CircleCheck /></el-icon>
+            <span>CoT质检</span>
+          </el-menu-item>
+        </el-sub-menu>
+
         <el-sub-menu index="group-tools">
           <template #title>
             <el-icon><Tools /></el-icon>

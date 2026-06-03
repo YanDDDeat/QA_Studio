@@ -7,6 +7,7 @@ export const STAGE_LABELS = {
   data_evaluate: '数据评估',
   quality_check: '质检',
   cot_filter: 'COT过滤',
+  cot_quality_check: 'CoT质检',
   dataset_split: '数据集切分',
   dataset_assessment: '评分标准生成',
   generic: '通用生成',

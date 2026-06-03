@@ -355,3 +355,16 @@ export function getDatasetAssessmentSourceFiles(params) {
 export function getAssessmentPrompts(params) {
   return api.get('/prompts', { params })
 }
+
+// ---- CoT质检 ----
+export function startCotQualityCheck(data) {
+  return api.post('/cot-quality-check/start', data)
+}
+
+export function getCotQualityCheckStatus(taskId) {
+  return api.get(`/cot-quality-check/status/${taskId}`)
+}
+
+export function getCotQualityCheckSourceFiles(params) {
+  return api.get('/cot-quality-check/source-files', { params })
+}

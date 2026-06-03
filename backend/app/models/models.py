@@ -22,6 +22,7 @@ class StageEnum(str, PyEnum):
     DATA_EVALUATE = "data_evaluate"
     QUALITY_CHECK = "quality_check"
     COT_FILTER = "cot_filter"
+    COT_QUALITY_CHECK = "cot_quality_check"  # CoT质检
     DATASET_SPLIT = "dataset_split"
     DATASET_ASSESSMENT = "dataset_assessment"
     GENERIC = "generic"

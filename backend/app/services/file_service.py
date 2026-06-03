@@ -40,6 +40,7 @@ STAGE_LABELS = {
     StageEnum.DATA_EVALUATE: "数据评估",
     StageEnum.QUALITY_CHECK: "质检",
     StageEnum.COT_FILTER: "COT过滤",
+    StageEnum.COT_QUALITY_CHECK: "CoT质检",
     StageEnum.DATASET_SPLIT: "数据集切分",
     StageEnum.DATASET_ASSESSMENT: "评分标准生成",
     StageEnum.GENERIC: "通用生成",
