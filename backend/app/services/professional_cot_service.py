@@ -1097,7 +1097,7 @@ def process_one_document(
                     progress_label=f"文献 {source_index + 1}/{input_count}：等待执行 {target['display_name']}",
                     cot_type=target["display_name"],
                     cot_type_key=target["key"],
-                    artifact_path=f"documents/{_sanitize_dirname(source_label, source_index)}/{target['key']}/{artifact_name}",
+                    artifact_path=f"documents/{str(source_index + 1).zfill(4)}_{_sanitize_dirname(source_label)}/{target['key']}/{artifact_name}",
                 )
         else:
             _update_manifest_step("step3_type_judgement", status="completed", progress_current=100,
