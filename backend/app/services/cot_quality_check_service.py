@@ -101,13 +101,12 @@ _FAIL_RATINGS = {"存在缺陷", "严重错误"}
 
 
 def _resolve_cot_field(record: dict) -> str:
-    """优先取 chain_of_thought，若为空则取 cot。"""
-    val = record.get("chain_of_thought", "")
-    if val and str(val).strip():
-        return str(val).strip()
-    val = record.get("cot", "")
-    if val and str(val).strip():
-        return str(val).strip()
+    """优先取 chain_of_thought，若为空依次取 chainofThought、cot。"""
+    # 按优先级尝试多个可能的字段名
+    for key in ("chain_of_thought", "chainofThought", "cot"):
+        val = record.get(key, "")
+        if val and str(val).strip():
+            return str(val).strip()
     return ""
 
 

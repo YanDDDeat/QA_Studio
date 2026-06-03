@@ -69,9 +69,9 @@ def validate_file_fields(
     else:
         required = STAGE_REQUIRED_FIELDS.get(stage, [])
 
-    # Field aliases: for cot_quality_check, chain_of_thought can also be cot
+    # Field aliases: for cot_quality_check, chain_of_thought can also be chainofThought or cot
     _FIELD_ALIASES = {
-        "cot_quality_check": {"chain_of_thought": "cot"},
+        "cot_quality_check": {"chain_of_thought": ["chainofThought", "cot"]},
     }
     stage_aliases = _FIELD_ALIASES.get(stage, {})
 
@@ -93,14 +93,19 @@ def validate_file_fields(
         has_all = True
         for field in required:
             value = record.get(field, "")
-            # If primary field is missing/empty, try alias for this stage
+            # If primary field is missing/empty, try aliases for this stage
             if value is None or value == "" or value == [] or value == {}:
-                alias = stage_aliases.get(field)
-                if alias:
+                aliases = stage_aliases.get(field, [])
+                if isinstance(aliases, str):
+                    aliases = [aliases]
+                found = False
+                for alias in aliases:
                     alt_value = record.get(alias, "")
                     if alt_value and alt_value is not None and alt_value != "" and alt_value != [] and alt_value != {}:
-                        # Alias satisfies the requirement
-                        continue
+                        found = True
+                        break
+                if found:
+                    continue
                 missing_counts[field] = missing_counts.get(field, 0) + 1
                 has_all = False
 
