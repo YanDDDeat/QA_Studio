@@ -75,6 +75,28 @@ SCHEMA_VERSION = "1.0"
 PIPELINE_NAME = "标注流水线2"
 PIPELINE_TYPE = "professional_cot"
 
+
+def recover_zombie_runs() -> int:
+    """Scan all professional_cot_runs manifests; change status=running to paused.
+    Called on startup so that runs left 'running' after a crash can be resumed."""
+    if not STORAGE_ROOT.exists():
+        return 0
+    count = 0
+    for manifest_file in STORAGE_ROOT.glob("*/manifest.json"):
+        try:
+            manifest = read_json(manifest_file)
+        except Exception:
+            continue
+        if manifest.get("status") == "running":
+            manifest["status"] = "paused"
+            manifest["progress_label"] = "服务重启后自动暂停，可手动恢复"
+            save_manifest(manifest)
+            count += 1
+            logger.info("恢复僵尸run %s: running → paused", manifest.get("run_id"))
+    if count:
+        logger.info("共恢复 %d 个僵尸标注流水线2run", count)
+    return count
+
 CASE_CARD_FIELDS = [
     "source_id",
     "source_type",

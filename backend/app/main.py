@@ -206,6 +206,12 @@ async def startup_event():
             db.commit()
             print(f"[Startup] {zombie_count} 个运行中的僵尸任务已自动改为暂停")
 
+        # Clean up zombie professional-cot runs: running → paused
+        from app.services.professional_cot_service import recover_zombie_runs
+        cot_zombie_count = recover_zombie_runs()
+        if cot_zombie_count:
+            print(f"[Startup] {cot_zombie_count} 个运行中的僵尸标注流水线2run已自动改为暂停")
+
     except Exception as e:
         print(f"[Startup] Error initializing: {e}")
         db.rollback()
