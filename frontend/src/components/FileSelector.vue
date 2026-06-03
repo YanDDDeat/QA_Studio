@@ -73,8 +73,9 @@
           <el-form-item label="转换策略">
             <el-radio-group v-model="mdForm.split_mode">
               <el-radio value="full">整篇不切分</el-radio>
-              <el-radio value="section">按标题切分</el-radio>
+              <el-radio value="section">按Markdown层级</el-radio>
               <el-radio value="paragraph">按段落切分</el-radio>
+              <el-radio v-if="mdForm.split_mode === 'numbering' || numberingModeAvailable" value="numbering">按编号层级</el-radio>
             </el-radio-group>
           </el-form-item>
 
@@ -115,6 +116,36 @@
             </el-form-item>
           </template>
 
+          <template v-if="mdForm.split_mode === 'numbering'">
+            <el-form-item label="编号深度">
+              <div class="heading-preview">
+                <div v-if="headingPreviewLoading" class="heading-status">
+                  <el-icon class="is-loading"><Loading /></el-icon>
+                  <span>正在解析编号层级...</span>
+                </div>
+                <el-alert
+                  v-else-if="numberingDepthOptions.length === 0"
+                  title="未检测到编号模式，不能按编号层级切分。可选择整篇不切分或按段落切分。"
+                  type="warning"
+                  show-icon
+                  :closable="false"
+                />
+                <div v-else class="heading-level-panel">
+                  <div class="heading-hint">选择编号深度作为切分边界：边界层级以上的内容合为一块，其下所有更细层级的内容也包含在内。</div>
+                  <el-radio-group v-model="mdForm.numbering_depth" class="heading-level-group">
+                    <el-radio-button
+                      v-for="item in numberingDepthOptions"
+                      :key="item.depth"
+                      :value="item.depth"
+                    >
+                      {{ item.label }}（{{ item.count }}个）
+                    </el-radio-button>
+                  </el-radio-group>
+                </div>
+              </div>
+            </el-form-item>
+          </template>
+
           <template v-if="mdForm.split_mode === 'paragraph'">
             <el-form-item label="最小字符数">
               <el-input-number v-model="mdForm.min_chars" :min="10" :max="10000" size="small" style="width: 160px" />
@@ -139,7 +170,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading, UploadFilled } from '@element-plus/icons-vue'
 import { previewMdHeadings, uploadManagedFile, uploadMdFile } from '../api'
 
@@ -167,6 +198,9 @@ const headingPreview = ref({
   headings: [],
   available_levels: [],
   level_counts: {},
+  numbering_depth_counts: {},
+  numbering_available_depths: [],
+  all_headings_same_md_level: false,
 })
 let headingPreviewRequestId = 0
 
@@ -174,6 +208,7 @@ const mdForm = ref({
   source_type: '图书',
   split_mode: 'full',
   heading_level: null,
+  numbering_depth: 1,
   min_title_level: 1,
   max_title_level: 6,
   min_chars: 100,
@@ -193,14 +228,37 @@ const headingLevelOptions = computed(() => {
   }))
 })
 
-const sectionUploadBlocked = computed(() => (
-  currentFileIsMd.value &&
-  mdForm.value.split_mode === 'section' &&
-  (headingPreviewLoading.value || !mdForm.value.heading_level)
-))
+const numberingDepthOptions = computed(() => {
+  const counts = headingPreview.value.numbering_depth_counts || {}
+  return (headingPreview.value.numbering_available_depths || [])
+    .filter(d => d > 0)  // 排除 depth=0
+    .map(d => ({
+      depth: d,
+      count: counts[String(d)] || 0,
+      label: numberingDepthLabel(d),
+    }))
+})
+
+function numberingDepthLabel(depth) {
+  const labels = { 1: '章级', 2: '节级', 3: '小节级', 4: '更细' }
+  return labels[depth] || `${depth}级`
+}
+
+const numberingModeAvailable = computed(() => {
+  return headingPreview.value.all_headings_same_md_level === true
+    && numberingDepthOptions.value.length > 0
+})
+
+const splitBlocked = computed(() => {
+  if (!currentFileIsMd.value) return false
+  if (headingPreviewLoading.value) return true
+  if (mdForm.value.split_mode === 'section' && !mdForm.value.heading_level) return true
+  if (mdForm.value.split_mode === 'numbering' && !mdForm.value.numbering_depth) return true
+  return false
+})
 
 const uploadDisabled = computed(() => (
-  uploadFileList.value.length === 0 || props.disabled || sectionUploadBlocked.value
+  uploadFileList.value.length === 0 || props.disabled || splitBlocked.value
 ))
 
 function formatHeadingLevel(level) {
@@ -248,8 +306,12 @@ function resetHeadingPreview() {
     headings: [],
     available_levels: [],
     level_counts: {},
+    numbering_depth_counts: {},
+    numbering_available_depths: [],
+    all_headings_same_md_level: false,
   }
   mdForm.value.heading_level = null
+  mdForm.value.numbering_depth = 1
 }
 
 async function loadHeadingPreview(file) {
@@ -269,9 +331,45 @@ async function loadHeadingPreview(file) {
       headings: res.headings || [],
       available_levels: res.available_levels || [],
       level_counts: res.level_counts || {},
+      numbering_depth_counts: res.numbering_depth_counts || {},
+      numbering_available_depths: res.numbering_available_depths || [],
+      all_headings_same_md_level: res.all_headings_same_md_level || false,
     }
     if (headingPreview.value.available_levels.length === 1) {
       mdForm.value.heading_level = headingPreview.value.available_levels[0]
+    }
+    // 检测到编号模式 → 询问用户是否按编号切分
+    if (headingPreview.value.all_headings_same_md_level && numberingDepthOptions.value.length > 0) {
+      const depthSummary = numberingDepthOptions.value
+        .map(o => `${o.label}${o.count}个`)
+        .join('、')
+      const mdSymbol = '#'.repeat(headingLevelOptions.value[0]?.level || 1)
+      const totalCount = headingLevelOptions.value[0]?.count || 0
+      const message = [
+        `该文件有 ${totalCount} 个标题，全部都是 <b>${mdSymbol}</b>，无法按 Markdown 层级区分章节。`,
+        `但标题文本包含编号：<b>${depthSummary}</b>`,
+        '',
+        '👉 <b>按编号切分</b> → 用编号（1/1.1/1.2.3）判断层级，每章/节完整一块',
+        '👉 <b>按Markdown层级</b> → 用 #/##/### 判断层级，但本文件全都是 #，会切成碎片',
+      ].join('<br>')
+      ElMessageBox.confirm(
+        message,
+        '检测到编号层级',
+        {
+          confirmButtonText: '按编号切分',
+          cancelButtonText: '仍按Markdown层级',
+          type: 'info',
+          dangerouslyUseHTMLString: true,
+        }
+      ).then(() => {
+        mdForm.value.split_mode = 'numbering'
+        // 默认选最浅的编号深度（通常是章级）
+        if (numberingDepthOptions.value.length > 0) {
+          mdForm.value.numbering_depth = numberingDepthOptions.value[0].depth
+        }
+      }).catch(() => {
+        // 用户选择仍按标题层级，不做任何改动
+      })
     }
   } catch (err) {
     if (requestId !== headingPreviewRequestId) return
@@ -311,8 +409,8 @@ async function submitUpload() {
     return
   }
 
-  if (sectionUploadBlocked.value) {
-    ElMessage.warning(headingPreviewLoading.value ? '标题层级仍在解析，请稍候' : '请选择标题层级')
+  if (splitBlocked.value) {
+    ElMessage.warning(headingPreviewLoading.value ? '标题层级仍在解析，请稍候' : '请选择标题层级或编号深度')
     return
   }
 
@@ -327,6 +425,9 @@ async function submitUpload() {
       formData.append('split_mode', mdForm.value.split_mode)
       if (mdForm.value.split_mode === 'section' && mdForm.value.heading_level) {
         formData.append('heading_level', mdForm.value.heading_level)
+      }
+      if (mdForm.value.split_mode === 'numbering') {
+        formData.append('depth', mdForm.value.numbering_depth)
       }
       formData.append('min_title_level', mdForm.value.min_title_level)
       formData.append('max_title_level', mdForm.value.max_title_level)
@@ -350,7 +451,7 @@ async function submitUpload() {
       mode.value = 'existing'
       uploadFileList.value = []
       uploadForm.value = { text_field: 'text' }
-      mdForm.value = { source_type: '图书', split_mode: 'full', heading_level: null, min_title_level: 1, max_title_level: 6, min_chars: 100 }
+      mdForm.value = { source_type: '图书', split_mode: 'full', heading_level: null, numbering_depth: 1, min_title_level: 1, max_title_level: 6, min_chars: 100 }
       resetHeadingPreview()
       if (props.fetchFn) {
         showAllFiles.value = true

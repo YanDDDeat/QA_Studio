@@ -15,7 +15,7 @@ from app.database import get_db
 from app.models.models import Dataset, File, Task, TaskStatusEnum, StageEnum, User
 from app.routers.auth import get_current_user
 from app.services.file_manage_service import filter_record_fields, filter_records_fields
-from app.services.md_parser import scan_md_headings, _split_by_heading_level, _split_by_section, _split_by_paragraph
+from app.services.md_parser import scan_md_headings, _split_by_heading_level, _split_by_section, _split_by_paragraph, _split_by_numbering_depth
 
 router = APIRouter()
 
@@ -463,6 +463,7 @@ async def upload_md_files(
     source_type: str = Form(...),
     split_mode: str = Form('full'),
     heading_level: Optional[int] = Form(None),
+    depth: int = Form(1),
     min_title_level: int = Form(1),
     max_title_level: int = Form(6),
     min_chars: int = Form(100),
@@ -480,10 +481,10 @@ async def upload_md_files(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"source_type must be one of {SOURCE_TYPE_CHOICES}",
         )
-    if split_mode not in ('full', 'section', 'paragraph'):
+    if split_mode not in ('full', 'section', 'paragraph', 'numbering'):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="split_mode must be one of: full, section, paragraph",
+            detail="split_mode must be one of: full, section, paragraph, numbering",
         )
     if heading_level is not None and not 1 <= heading_level <= 6:
         raise HTTPException(
@@ -529,10 +530,15 @@ async def upload_md_files(
                             min_title_level=min_title_level,
                             max_title_level=max_title_level,
                         )
-                else:  # paragraph
+                elif split_mode == 'paragraph':
                     raw_chunks = _split_by_paragraph(
                         content, file.filename,
                         min_chars=min_chars,
+                    )
+                else:  # numbering
+                    raw_chunks = _split_by_numbering_depth(
+                        content, file.filename,
+                        depth=depth,
                     )
             except Exception as e:
                 errors.append({"filename": file.filename, "error": f"Parse error: {str(e)}"})

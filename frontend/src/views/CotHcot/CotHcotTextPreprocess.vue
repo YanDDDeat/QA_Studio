@@ -42,6 +42,15 @@
           </el-upload>
 
           <div v-if="mdFiles.length" class="file-actions">
+            <el-input
+              v-model="customFilename"
+              placeholder="输出文件名（留空则自动生成）"
+              clearable
+              size="small"
+              class="filename-input"
+            >
+              <template #append>.json</template>
+            </el-input>
             <el-button type="primary" :icon="Download" :disabled="!canDownload" @click="handleDownload">
               下载 JSON
             </el-button>
@@ -155,6 +164,7 @@ import TextPreprocess from '../TextPreprocess.vue'
 
 const uploadRef = ref(null)
 const mdFiles = ref([])
+const customFilename = ref('')
 const savingToDataCenter = ref(false)
 let fileIdCounter = 0
 
@@ -174,7 +184,11 @@ const jsonPreview = computed(() => {
   if (hasError.value) return '存在读取失败的文件，请移除失败文件后预览。'
   return JSON.stringify(mergedRecords.value, null, 2)
 })
-const outputFilename = computed(() => `md_merge_${buildTimestamp()}.json`)
+const outputFilename = computed(() => {
+  const custom = customFilename.value.trim()
+  if (custom) return custom.endsWith('.json') ? custom : `${custom}.json`
+  return `md_merge_${buildTimestamp()}.json`
+})
 
 async function handleMdFileChange(uploadFile) {
   const raw = uploadFile.raw
@@ -232,6 +246,7 @@ async function handleClearAll() {
     return
   }
   mdFiles.value = []
+  customFilename.value = ''
   uploadRef.value?.clearFiles?.()
 }
 
