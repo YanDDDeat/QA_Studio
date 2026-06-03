@@ -226,10 +226,11 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Promotion, Upload } from '@element-plus/icons-vue'
 import {
   getFileFields,
+  getManagedFileContent,
   getLLMConfigs,
   getProfessionalCotSourceFiles,
   listProfessionalCotRuns,
@@ -419,6 +420,36 @@ async function handleCreate() {
   if (inputMode.value === 'upload' && !selectedFile.value) {
     ElMessage.error('请选择要上传的 JSON 文件')
     return
+  }
+
+  // Check if JSON elements have 'source' field; warn user if missing
+  try {
+    let jsonItems = null
+    if (inputMode.value === 'upload' && selectedFile.value) {
+      const text = await selectedFile.value.text()
+      const parsed = JSON.parse(text)
+      if (Array.isArray(parsed)) jsonItems = parsed
+    } else if (inputMode.value === 'existing' && createForm.value.source_file_id) {
+      const res = await getManagedFileContent(createForm.value.source_file_id, { page: 1, page_size: 10 })
+      if (res?.data?.length) jsonItems = res.data
+    }
+
+    if (jsonItems && jsonItems.length > 0) {
+      const hasSource = jsonItems.some(item => item.source != null && item.source !== '')
+      if (!hasSource) {
+        try {
+          await ElMessageBox.confirm(
+            '当前 JSON 文件中元素没有 source 字段，最终产出样本将无法追溯文献来源。是否继续？',
+            '缺少来源字段',
+            { confirmButtonText: '继续', cancelButtonText: '取消', type: 'warning' }
+          )
+        } catch {
+          return
+        }
+      }
+    }
+  } catch {
+    // JSON parse or preview fetch failed — skip check, proceed as-is
   }
 
   createLoading.value = true
