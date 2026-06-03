@@ -2,7 +2,7 @@
   <div class="cot-hcot-text-preprocess">
     <el-alert type="info" :closable="false" style="margin-bottom: 16px">
       <template #title>
-        <span>为标注流水线准备输入数据。「多 MD 合并」将多篇 Markdown 论件合并为流水线可用的 JSON 数组；「JSON 清洗预处理」对已有 JSON 文件做清洗过滤（去页眉页脚、短文本合并、无效条目剔除），生成更适合 LLM 处理的干净数据。</span>
+        <span>为标注流水线准备输入数据。「多 MD 合并」将多篇论文的Markdown格式合并为流水线可用的 JSON 数组；「大文献（博士论文）拆分及预处理」对上传的博士论文进行章节拆分和清洗，生成更适合 LLM 处理的数据。</span>
       </template>
     </el-alert>
     <el-card class="md-merge-card">
@@ -10,7 +10,7 @@
         <div class="card-header">
           <div>
             <span class="card-title">多 MD 合并 JSON</span>
-            <p class="card-desc">多文献批量构建（上传多个MD格式文献后，可合并为一个JSON兼容）</p>
+            <p class="card-desc">将多篇的文献的MD格式合并为一个json文件，进行批量COT合成</p>
           </div>
           <el-tag type="info" effect="plain">仅前端生成下载</el-tag>
         </div>
@@ -324,7 +324,7 @@ function formatSize(bytes) {
 .card-desc {
   margin: 6px 0 0;
   color: #909399;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
 }
 .merge-layout {

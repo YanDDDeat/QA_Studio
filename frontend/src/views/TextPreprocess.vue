@@ -3,7 +3,8 @@
 
     <el-card class="tool-card">
       <template #header>
-大文献（博士论文）拆分及预处理
+      <span class="card-title">大文献（博士论文）拆分及预处理</span>
+      <p class="card-desc">对上传的博士论文进行章节拆分和清洗，生成更适合 LLM 处理的数据。</p>
       </template>
       <div class="config-layout">
         <div class="config-form">
@@ -409,6 +410,12 @@ const PreviewCard = defineComponent({
 .card-title {
   font-size: 16px;
   font-weight: 600;
+}
+.card-desc {
+  margin: 6px 0 0;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .config-layout {
   display: flex;
