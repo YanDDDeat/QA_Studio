@@ -613,7 +613,7 @@ async def list_source_files(
     ]
 
 
-@router.get("/prompts/{mode}")
+@router.get("/prompts/list/{mode}")
 async def get_pipeline_prompts(
     mode: str,
     current_user: User = Depends(get_current_user),

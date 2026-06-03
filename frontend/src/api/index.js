@@ -386,7 +386,7 @@ export function getCothcotSourceFiles() {
 }
 
 export function getCothcotPipelinePrompts(mode) {
-  return api.get(`/cothcot/prompts/${mode}`)
+  return api.get(`/cothcot/prompts/list/${mode}`)
 }
 
 export function autoRunCothcotPipeline(data) {
