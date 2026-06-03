@@ -149,6 +149,11 @@
           </el-button>
         </div>
       </template>
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+        <template #title>
+          <span>单COT生成：从研究论文自动生成独立问答+思维链训练数据。系统先筛选文献案例、构建案例卡、判定 CoT 类型，再根据类型（性能提升、构效关系、实验优化等）逐步生成问题与推理链，最终输出可直接用于训练的标注样本。</span>
+        </template>
+      </el-alert>
 
       <el-table v-loading="loading" :data="runs" stripe style="width: 100%">
         <el-table-column prop="run_name" label="名称" min-width="200">
