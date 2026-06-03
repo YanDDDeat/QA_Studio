@@ -414,6 +414,9 @@ async def run_pipeline_step_endpoint(
             raise HTTPException(status_code=404, detail="指定的提示词不存在")
     else:
         prompt_obj = find_prompt_for_step(db, step_name, current_user.id, parent_task.prompt_template_id)
+        if not prompt_obj:
+            raise HTTPException(
+                status_code=404,
                 detail=f"找不到步骤 '{step_name}' 的默认提示词",
             )
 
