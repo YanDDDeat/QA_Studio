@@ -19,6 +19,12 @@ const routes = [
         meta: { title: '文本预处理' },
       },
       {
+        path: 'cot-hcot-text-preprocess',
+        name: 'CotHcotTextPreprocess',
+        component: () => import('../views/TextPreprocess.vue'),
+        meta: { title: '文本预处理' },
+      },
+      {
         path: 'cot-hcot-workflows',
         name: 'CotHcotWorkflows',
         component: () => import('../views/CotHcot/WorkflowList.vue'),

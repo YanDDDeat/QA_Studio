@@ -89,6 +89,10 @@
             <el-icon><Tickets /></el-icon>
             <span>CoT/H-CoT 标注</span>
           </template>
+          <el-menu-item index="/cot-hcot-text-preprocess">
+            <el-icon><Operation /></el-icon>
+            <span>文本预处理</span>
+          </el-menu-item>
           <el-menu-item index="/cot-hcot-workflows">
             <el-icon><Tickets /></el-icon>
             <span>标注流水线</span>

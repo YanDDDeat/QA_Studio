@@ -33,6 +33,10 @@
   - [ ] 流水线任务列表支持分页展示
   - [ ] 最终产物区放在流水线步骤下方，生成并支持下载 `final_samples.json` / `final_samples.jsonl`
 
+- [ ] 分支 `BIT/wj`：CoT/H-CoT 标注分组新增文本预处理入口，详见 `docs/requirements/27_需求_CoTHCoT标注文本预处理入口.md`
+  - [ ] 在 CoT/H-CoT 标注分组下新增「文本预处理」菜单项
+  - [ ] 复用现有文本预处理页面能力，原入口不受影响
+
 - [x] 分支 `feature/llm-field-auto-mapping`：详见 `docs/requirements/12_需求_LLM返回字段自动映射到数据库列.md`
   - [x] 新建 `field_mapper.py`：动态映射 LLM 字段到数据库列
   - [x] 改造 6 个管线阶段：替换硬编码白名单为自动映射
