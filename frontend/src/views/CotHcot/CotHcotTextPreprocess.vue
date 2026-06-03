@@ -2,7 +2,7 @@
   <div class="cot-hcot-text-preprocess">
     <el-alert type="info" :closable="false" style="margin-bottom: 16px">
       <template #title>
-        <span>文本预处理：为标注流水线准备输入数据。「多 MD 合并 JSON」将多篇 Markdown 论文合并为流水线可用的 JSON 数组；「通用预处理」对已有 JSON 文件做清洗过滤（去页眉页脚、短文本合并、无效条目剔除），生成更适合 LLM 处理的干净数据。</span>
+        <span>为标注流水线准备输入数据。「多 MD 合并」将多篇 Markdown 论件合并为流水线可用的 JSON 数组；「JSON 清洗预处理」对已有 JSON 文件做清洗过滤（去页眉页脚、短文本合并、无效条目剔除），生成更适合 LLM 处理的干净数据。</span>
       </template>
     </el-alert>
     <el-card class="md-merge-card">

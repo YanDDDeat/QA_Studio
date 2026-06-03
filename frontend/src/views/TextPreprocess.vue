@@ -1,10 +1,9 @@
 <template>
   <div class="page-container">
-    <h2>文本预处理</h2>
 
     <el-card class="tool-card">
       <template #header>
-        <span class="card-title">预处理配置</span>
+        <span class="card-title">JSON 清洗预处理</span>
       </template>
       <div class="config-layout">
         <div class="config-form">
