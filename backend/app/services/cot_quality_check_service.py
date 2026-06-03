@@ -4,11 +4,11 @@
 逐条调用 LLM，解析返回的 overall_quality 评级，按评级分桶输出三个文件。
 
 本模块提供：
-- COT_QUALITY_CHECK_SYSTEM_PROMPT: 内嵌的 CoT 质检提示词常量
-- flatten_nested_cot_items(): 将嵌套的 CoT 数据（如 l0_cot_node/l1_cot_node/l2_cot_node）展开到顶层
+- COT_QUALITY_CHECK_SYSTEM_PROMPT: 内嵌的 CoT 质检提示词常量（更新版：三档评级）
+- flatten_nested_cot_items(): 将嵌套的 CoT 数据（如 l0_cot_node）展开到顶层
 - _build_user_prompt(): 构造单条记录的 user prompt
 - _resolve_cot_field(): 字段别名兼容（chain_of_thought / chainofThought / cot）
-- _PASS_RATINGS / _FAIL_RATINGS: 评级分桶常量
+- _PASS_RATINGS / _FAIL_RATINGS: 评级分桶常量（三档：合格 / 存在缺陷 / 严重错误）
 
 实际的逐条 LLM 调用和进度管理由路由器中的后台任务负责。
 """
@@ -20,72 +20,7 @@ logger = logging.getLogger("qa_studio.cot_quality_check")
 
 
 # ---------------------------------------------------------------------------
-# Flatten nested CoT items (e.g. l0_cot_node → top-level fields)
-# ---------------------------------------------------------------------------
-
-# 已知的嵌套包装键名（标注流水线产物的常见结构）
-_NESTED_WRAPPER_KEYS = [
-    "l0_cot_node", "l1_cot_node", "l2_cot_node",
-    "cot_node", "hcot_node",
-]
-
-
-def flatten_nested_cot_items(raw_items: list) -> list:
-    """将嵌套结构的 CoT 数据展开为扁平结构，使 input/output/chainofThought 等字段位于顶层。
-
-    标注流水线产物常见格式：
-        [{"l0_cot_node": {"id": "L0-1", "input": "...", "output": "...", "chainofThought": "..."}}]
-
-    展开后变为：
-        [{"id": "L0-1", "input": "...", "output": "...", "chainofThought": "...", "_wrapper_key": "l0_cot_node"}]
-
-    如果数据已经是扁平结构则不做任何改动。
-
-    Args:
-        raw_items: 从 JSON 文件读取的原始数据列表。
-
-    Returns:
-        展开后的扁平数据列表。
-    """
-    flattened = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            flattened.append(item)
-            continue
-
-        # 检查是否有已知的嵌套包装键
-        wrapper_key = None
-        for key in _NESTED_WRAPPER_KEYS:
-            if key in item and isinstance(item[key], dict):
-                wrapper_key = key
-                break
-
-        if wrapper_key is None:
-            # 已经是扁平结构，或未知格式 → 不做改动
-            flattened.append(item)
-            continue
-
-        # 将嵌套内容展开到顶层，保留包装键名作为追溯标记
-        inner = item[wrapper_key]
-        flat = dict(inner)  # 复制内部字段到顶层
-        flat["_wrapper_key"] = wrapper_key  # 记录原始包装键名
-        # 保留外层的其他字段（如没有嵌套到内层的元数据）
-        for k, v in item.items():
-            if k != wrapper_key and k not in flat:
-                flat[k] = v
-        flattened.append(flat)
-
-    logger.info(
-        "Flattened %d items: %d had nested wrappers, %d were already flat",
-        len(raw_items),
-        sum(1 for f in flattened if isinstance(f, dict) and "_wrapper_key" in f),
-        sum(1 for f in flattened if isinstance(f, dict) and "_wrapper_key" not in f),
-    )
-    return flattened
-
-
-# ---------------------------------------------------------------------------
-# System prompt (embedded from CoT质检提示词.md)
+# System prompt (embedded from COT质检提示词-更新版.md)
 # ---------------------------------------------------------------------------
 
 COT_QUALITY_CHECK_SYSTEM_PROMPT = """**角色设定：**
@@ -98,7 +33,7 @@ COT_QUALITY_CHECK_SYSTEM_PROMPT = """**角色设定：**
 - **`output`**：基于思维链生成的最终回答。
 
 **评估框架与标准：**
-请严格遵循以下四个核心维度进行评估，并在每个维度下给出具体评级（例如：优秀/良好/存在缺陷/严重错误）及详细理由。
+请严格遵循以下四个核心维度进行评估，每个维度下给出具体评级（合格/存在缺陷/严重错误），并提供详细理由。最终综合所有维度给出整条数据的总体判定。
 
 #### 维度一：问题的科学性与逻辑自洽性
 *此维度旨在识别问题本身的预设是否存在偏差，这是所有后续推理的基石。*
@@ -126,32 +61,41 @@ COT_QUALITY_CHECK_SYSTEM_PROMPT = """**角色设定：**
 2.  **信息传递保真度：** 思维链中的正确分析是否完整、无损地传递到了最终答案中？思维链中若存在错误或偏见，是否被带入并污染了最终答案？
 3.  **复杂性的匹配：** 思维链和答案的复杂度是否与问题本身的复杂度和要求相匹配？对于存在预设陷阱的问题，思维链和答案是顺应了陷阱，还是识别并绕开了陷阱？
 
+---
+
+**综合判定标准（三档）：**
+- **合格**：四个维度均无严重错误，可能在某些维度上有轻微瑕疵，但不影响整体科学性和逻辑正确性。
+- **存在缺陷**：至少一个维度存在明显缺陷（如推理跳跃、概念使用不当、答案不完整、整体一致性不佳等），但并非根本性错误，修改后可提升至合格。
+- **严重错误**：至少一个维度存在根本性错误（如问题前提不成立、核心概念错误、因果倒置、思维链完全偏离问题、答案存在严重知识性谬误等），导致整条数据不可用。
+
+---
+
 **输出格式要求：**
-请以结构化的JSON格式输出评估结果，以便于批量处理和分析。
+请以结构化的JSON格式输出评估结果，便于批量处理和分析。
 
 ```json
 {
-  "overall_quality": "优秀/良好/存在缺陷/严重错误",
-  "evaluation_summary": "一句话概括本条COT数据的核心优点与致命缺陷。",
+  "overall_quality": "合格/存在缺陷/严重错误",
+  "evaluation_summary": "一句话概括本条COT数据的核心优点与致命缺陷（如有）。",
   "detailed_assessment": {
     "dimension_1_problem_soundness": {
-      "rating": "评级",
-      "comments": "详细评语，必须指出具体问题所在。"
+      "rating": "合格/存在缺陷/严重错误",
+      "comments": "详细评语，必须指出具体表现及判定理由。"
     },
     "dimension_2_cot_rigor": {
-      "rating": "评级",
+      "rating": "合格/存在缺陷/严重错误",
       "comments": "详细评语，点评其逻辑链条的优劣。"
     },
     "dimension_3_answer_quality": {
-      "rating": "评级",
+      "rating": "合格/存在缺陷/严重错误",
       "comments": "详细评语，评估其知识准确与完整性。"
     },
     "dimension_4_overall_consistency": {
-      "rating": "评级",
+      "rating": "合格/存在缺陷/严重错误",
       "comments": "详细评语，评估三者间的匹配与协调度。"
     }
   },
-  "critical_flaw_analysis": "如果存在严重缺陷，在此处深入剖析其根源（如：问题预设了错误前提，导致后续所有推理虽然自洽但整体无效）。若无严重缺陷，此字段可为空。"
+  "critical_flaw_analysis": "若存在严重错误或缺陷，在此处深入剖析其根源（如：问题预设了错误前提，导致后续所有推理虽然自洽但整体无效）。若无，此字段留空。"
 }
 ```
 
@@ -160,16 +104,76 @@ COT_QUALITY_CHECK_SYSTEM_PROMPT = """**角色设定：**
 
 
 # ---------------------------------------------------------------------------
-# Helper: resolve chain_of_thought field with alias support
+# Rating buckets (three-tier: 合格 / 存在缺陷 / 严重错误)
 # ---------------------------------------------------------------------------
 
-_PASS_RATINGS = {"优秀", "良好"}
+_PASS_RATINGS = {"合格"}
 _FAIL_RATINGS = {"存在缺陷", "严重错误"}
+
+
+# ---------------------------------------------------------------------------
+# Flatten nested CoT items (e.g. l0_cot_node → top-level fields)
+# ---------------------------------------------------------------------------
+
+# 已知的嵌套包装键名（标注流水线产物的常见结构）
+_NESTED_WRAPPER_KEYS = [
+    "l0_cot_node", "l1_cot_node", "l2_cot_node",
+    "cot_node", "hcot_node",
+]
+
+
+def flatten_nested_cot_items(raw_items: list) -> list:
+    """将嵌套结构的 CoT 数据展开为扁平结构，使 input/output/chainofThought 等字段位于顶层。
+
+    标注流水线产物常见格式：
+        [{"l0_cot_node": {"id": "L0-1", "input": "...", "output": "...", "chainofThought": "..."}}]
+
+    展开后变为：
+        [{"id": "L0-1", "input": "...", "output": "...", "chainofThought": "...", "_wrapper_key": "l0_cot_node"}]
+
+    如果数据已经是扁平结构则不做任何改动。
+    """
+    flattened = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            flattened.append(item)
+            continue
+
+        # 检查是否有已知的嵌套包装键
+        wrapper_key = None
+        for key in _NESTED_WRAPPER_KEYS:
+            if key in item and isinstance(item[key], dict):
+                wrapper_key = key
+                break
+
+        if wrapper_key is None:
+            flattened.append(item)
+            continue
+
+        inner = item[wrapper_key]
+        flat = dict(inner)
+        flat["_wrapper_key"] = wrapper_key
+        for k, v in item.items():
+            if k != wrapper_key and k not in flat:
+                flat[k] = v
+        flattened.append(flat)
+
+    logger.info(
+        "Flattened %d items: %d nested, %d flat",
+        len(raw_items),
+        sum(1 for f in flattened if isinstance(f, dict) and "_wrapper_key" in f),
+        sum(1 for f in flattened if isinstance(f, dict) and "_wrapper_key" not in f),
+    )
+    return flattened
+
+
+# ---------------------------------------------------------------------------
+# Helper: resolve chain_of_thought field with alias support
+# ---------------------------------------------------------------------------
 
 
 def _resolve_cot_field(record: dict) -> str:
     """优先取 chain_of_thought，若为空依次取 chainofThought、cot。"""
-    # 按优先级尝试多个可能的字段名
     for key in ("chain_of_thought", "chainofThought", "cot"):
         val = record.get(key, "")
         if val and str(val).strip():
