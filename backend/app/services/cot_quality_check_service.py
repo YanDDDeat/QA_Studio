@@ -5,6 +5,7 @@
 
 本模块提供：
 - COT_QUALITY_CHECK_SYSTEM_PROMPT: 内嵌的 CoT 质检提示词常量（更新版：三档评级）
+- normalize_cot_quality_check_records(): 将源 JSON 标准化为待质检记录数组
 - flatten_nested_cot_items(): 将嵌套的 CoT 数据（如 l0_cot_node）展开到顶层
 - _build_user_prompt(): 构造单条记录的 user prompt
 - _resolve_cot_field(): 字段别名兼容（chain_of_thought / chainofThought / cot）
@@ -112,8 +113,29 @@ _FAIL_RATINGS = {"存在缺陷", "严重错误"}
 
 
 # ---------------------------------------------------------------------------
-# Flatten nested CoT items (e.g. l0_cot_node → top-level fields)
+# Normalize / flatten CoT items
 # ---------------------------------------------------------------------------
+
+
+def normalize_cot_quality_check_records(raw_data) -> list:
+    """将 CoT 质检源 JSON 标准化为待质检记录数组。
+
+    兼容三类输入：
+    1. 顶层数组：直接作为记录数组；
+    2. 顶层对象且 samples 为数组：使用 samples 作为记录数组；
+    3. 其它顶层对象：作为单条记录。
+
+    标准化后继续执行已知嵌套包装键展开，确保启动校验与后台执行使用同一规则。
+    """
+    if isinstance(raw_data, list):
+        raw_items = raw_data
+    elif isinstance(raw_data, dict) and isinstance(raw_data.get("samples"), list):
+        raw_items = raw_data["samples"]
+    else:
+        raw_items = [raw_data]
+
+    return flatten_nested_cot_items(raw_items)
+
 
 # 已知的嵌套包装键名（标注流水线产物的常见结构）
 _NESTED_WRAPPER_KEYS = [
@@ -172,12 +194,35 @@ def flatten_nested_cot_items(raw_items: list) -> list:
 # ---------------------------------------------------------------------------
 
 
+def _format_cot_text(value) -> str:
+    """将 CoT 字段格式化为适合 LLM 阅读的文本。"""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if item is None:
+                continue
+            if isinstance(item, str):
+                text = item.strip()
+            else:
+                text = json.dumps(item, ensure_ascii=False)
+            if text:
+                lines.append(text)
+        return "\n".join(lines).strip()
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, indent=2).strip()
+    return str(value).strip()
+
+
 def _resolve_cot_field(record: dict) -> str:
     """优先取 chain_of_thought，若为空依次取 chainofThought、cot。"""
     for key in ("chain_of_thought", "chainofThought", "cot"):
-        val = record.get(key, "")
-        if val and str(val).strip():
-            return str(val).strip()
+        text = _format_cot_text(record.get(key, ""))
+        if text:
+            return text
     return ""
 
 

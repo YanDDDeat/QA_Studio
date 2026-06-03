@@ -59,6 +59,11 @@
   - [ ] Step 4/5 改为接收 `step1_3_result`，并兼容提示词快照与旧模板补默认文件
 
 ## CoT质检功能
+- [x] 分支 `feature/cot-quality-samples`：CoT质检兼容顶层 samples 数组，详见 `docs/requirements/35_需求_CoT质检兼容samples数组.md`
+  - [x] 顶层包装对象存在 `samples` 数组时，将其展开为多条待质检记录
+  - [x] `chainofThought` / `chain_of_thought` / `cot` 为数组时，转为换行文本后送入 LLM
+  - [x] 示例 4 条 samples 应生成 4 条独立质检结果
+
 - [ ] 分支 `feature/multi-cot-content-field`：多COT生成支持指定内容字段，详见 `docs/requirements/34_需求_多COT生成指定内容字段.md`
   - [ ] 新建多COT生成弹窗新增「内容字段名」
   - [ ] 后端按用户指定字段读取 JSON 正文内容

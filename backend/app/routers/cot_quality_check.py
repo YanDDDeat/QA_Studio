@@ -32,7 +32,7 @@ from app.routers.auth import get_current_user
 from app.services.llm_service import call_llm_json, LLMCallError
 from app.services.cot_quality_check_service import (
     COT_QUALITY_CHECK_SYSTEM_PROMPT,
-    flatten_nested_cot_items,
+    normalize_cot_quality_check_records,
     _build_user_prompt,
     _PASS_RATINGS,
     _FAIL_RATINGS,
@@ -196,10 +196,9 @@ async def _run_cot_quality_check_task(
             return
 
         with open(source_file.file_path, "r", encoding="utf-8") as f:
-            raw_items = json.load(f)
+            raw_data = json.load(f)
 
-        if not isinstance(raw_items, list):
-            raw_items = [raw_items]
+        raw_items = normalize_cot_quality_check_records(raw_data)
 
         if not raw_items:
             _add_task_log(db, task_id, "源文件没有记录")
@@ -209,8 +208,6 @@ async def _run_cot_quality_check_task(
                 db.commit()
             return
 
-        # ── 展开嵌套结构 ──
-        raw_items = flatten_nested_cot_items(raw_items)
         total = len(raw_items)
 
         task = db.query(Task).filter(Task.id == task_id).first()
@@ -390,9 +387,7 @@ async def start_cot_quality_check(
     try:
         with open(file_obj.file_path, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
-        if not isinstance(raw_data, list):
-            raw_data = [raw_data]
-        flat_data = flatten_nested_cot_items(raw_data)
+        flat_data = normalize_cot_quality_check_records(raw_data)
         is_valid, validation_msg, validation_stats = _validate_flattened_fields(flat_data, "cot_quality_check")
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"JSON文件解析失败: {str(e)}")
