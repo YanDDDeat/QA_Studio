@@ -85,7 +85,7 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>CoT/H-CoT 标注任务</span>
+          <span>多COT标注任务</span>
           <el-button type="primary" @click="openCreateDialog">
             <el-icon><Plus /></el-icon>
             新建流水线

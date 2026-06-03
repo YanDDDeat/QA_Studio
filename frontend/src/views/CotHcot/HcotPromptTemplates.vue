@@ -65,7 +65,7 @@
       <!-- 左侧树 -->
       <el-card class="left-panel">
         <template #header>
-          <span>Prompt 结构（{{ promptCount }} 项）</span>
+          <span>提示词结构</span>
         </template>
         <el-tree
           ref="treeRef"
