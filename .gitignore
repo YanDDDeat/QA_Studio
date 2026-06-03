@@ -44,6 +44,8 @@ backend/server.log
 # Local data / uploads (generated JSON files)
 uploads/
 backend/uploads/
+backend/outputs/
+storage/
 
 # Local DB
 *.db
