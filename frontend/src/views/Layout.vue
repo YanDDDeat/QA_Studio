@@ -97,6 +97,10 @@
             <el-icon><Tickets /></el-icon>
             <span>多COT生成</span>
           </el-menu-item>
+          <el-menu-item index="/hcot-prompts">
+            <el-icon><Document /></el-icon>
+            <span>多COT提示词</span>
+          </el-menu-item>
           <el-menu-item index="/professional-cot-runs">
             <el-icon><Tickets /></el-icon>
             <span>单COT生成</span>
@@ -104,10 +108,6 @@
           <el-menu-item index="/professional-cot-prompts">
             <el-icon><Document /></el-icon>
             <span>单COT提示词</span>
-          </el-menu-item>
-          <el-menu-item index="/hcot-prompts">
-            <el-icon><Document /></el-icon>
-            <span>多COT提示词</span>
           </el-menu-item>
         </el-sub-menu>
 

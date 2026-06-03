@@ -763,10 +763,17 @@ def build_prompt_tree() -> List[Dict[str, Any]]:
 def get_template_detail(template_id: str, user_id: int) -> Dict[str, Any]:
     template_dir = require_template_dir(template_id, user_id)
     manifest = _decorate_manifest(_load_manifest(template_dir), user_id)
+    tree = build_prompt_tree()
+    # 动态计算叶子节点数（实际提示词数量）
+    actual_count = sum(
+        1 for group in tree
+        for child in group.get("children", [])
+        if child.get("is_prompt")
+    )
     return {
         "manifest": manifest,
-        "tree": build_prompt_tree(),
-        "prompt_count": len(ALL_PROMPTS),
+        "tree": tree,
+        "prompt_count": actual_count,
     }
 
 
@@ -947,7 +954,7 @@ def create_run_prompt_snapshot(template_id: str, user_id: int, run_dir: Path) ->
         "base_template_id": template_manifest.get("base_template_id"),
         "snapshot_created_at": utc_now_iso(),
         "snapshot_path": "prompts/",
-        "prompt_count": len(ALL_PROMPTS),
+        "prompt_count": len(ALL_PROMPTS),  # snapshot 包含全部模板文件
     }
     atomic_write_json(snapshot_dir / "manifest.json", snapshot_manifest)
     return snapshot_manifest

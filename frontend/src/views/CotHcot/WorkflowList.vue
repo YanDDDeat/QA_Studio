@@ -77,6 +77,11 @@
     </el-dialog>
 
     <!-- 任务列表 -->
+    <el-alert type="info" :closable="false" style="margin-bottom: 16px">
+      <template #title>
+        <span>CoT/H-CoT 标注：从论文自动生成思维链（Chain-of-Thought）训练数据。H-CoT 适用于博士论文，生成层级式推理树；CoT 适用于研究论文，生成独立问答。上传论文 → 自动分段 → 逐步生成事实卡、问题、推理链 → 质检导出。</span>
+      </template>
+    </el-alert>
     <el-card>
       <template #header>
         <div class="card-header">
