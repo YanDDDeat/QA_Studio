@@ -1,6 +1,6 @@
 <template>
   <div class="page-container">
-    <h2 class="page-title">标注流水线2：提示词模板管理</h2>
+    <h2 class="page-title">单COT提示词模板管理</h2>
 
     <!-- 顶部：模板选择 + 操作按钮 -->
     <el-card class="top-card">

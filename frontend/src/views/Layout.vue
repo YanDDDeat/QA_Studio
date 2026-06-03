@@ -95,15 +95,15 @@
           </el-menu-item>
           <el-menu-item index="/cot-hcot-workflows">
             <el-icon><Tickets /></el-icon>
-            <span>标注流水线</span>
+            <span>多COT生成</span>
           </el-menu-item>
           <el-menu-item index="/professional-cot-runs">
             <el-icon><Tickets /></el-icon>
-            <span>标注流水线2</span>
+            <span>单COT生成</span>
           </el-menu-item>
           <el-menu-item index="/professional-cot-prompts">
             <el-icon><Document /></el-icon>
-            <span>标注流水线2提示词</span>
+            <span>单COT提示词</span>
           </el-menu-item>
         </el-sub-menu>
 

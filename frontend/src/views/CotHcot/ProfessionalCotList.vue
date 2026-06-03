@@ -3,7 +3,7 @@
     <!-- 新建任务弹窗 -->
     <el-dialog
       v-model="createDialogVisible"
-      title="新建标注流水线2"
+      title="新建单COT生成"
       width="720px"
       :close-on-click-modal="false"
       destroy-on-close
@@ -142,7 +142,7 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>标注流水线2：专业 CoT 构建</span>
+          <span>单COT生成</span>
           <el-button type="primary" @click="openCreateDialog">
             <el-icon><Plus /></el-icon>
             新建流水线2
@@ -470,7 +470,7 @@ async function handleCreate() {
 
     const res = await startProfessionalCotRun(formData)
     const inputCountInfo = res.input_count ? `，包含 ${res.input_count} 篇文献` : ''
-    ElMessage.success(`标注流水线2已启动 (Run: ${res.run_id})${inputCountInfo}`)
+    ElMessage.success(`单COT生成已启动 (Run: ${res.run_id})${inputCountInfo}`)
     createDialogVisible.value = false
     pagination.value.page = 1
     await fetchRuns()

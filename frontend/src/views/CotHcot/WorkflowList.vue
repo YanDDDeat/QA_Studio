@@ -3,7 +3,7 @@
     <!-- 新建任务弹窗 -->
     <el-dialog
       v-model="createDialogVisible"
-      title="新建标注流水线"
+      title="新建多COT生成"
       width="600px"
       :close-on-click-modal="false"
       destroy-on-close
