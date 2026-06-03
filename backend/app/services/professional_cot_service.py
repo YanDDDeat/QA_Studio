@@ -973,6 +973,8 @@ def process_one_document(
     prompt_snapshot_dir: Path,
     llm: Dict[str, Any],
     username: str,
+    manifest: Optional[Dict[str, Any]] = None,
+    input_count: int = 1,
 ) -> Dict[str, Any]:
     """Execute the full 6-step pipeline for one document.
 
@@ -992,16 +994,37 @@ def process_one_document(
         "text_length": len(paper_text),
     })
 
+    def _update_manifest_step(step_key: str, **kwargs) -> None:
+        """Update a step in the manifest and save, if manifest is provided."""
+        if manifest is None:
+            return
+        _update_step(manifest, step_key, **kwargs)
+        save_manifest(manifest)
+
     try:
         # Step 1: screening
+        _update_manifest_step("step1_screening", status="running", progress_current=10,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：筛选相关文献")
         step1 = _run_step1(paper_text, llm, username, prompt_snapshot_dir)
         atomic_write_json(doc_dir / "step1_screening.json", {
             "step": 1, "step_name": "筛选相关文献",
             "status": "completed", "result": step1,
         })
+        _update_manifest_step("step1_screening", status="completed", progress_current=100,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：筛选完成")
 
         if not step1.get("can_generate"):
             stop_reason = step1.get("stop_reason") or "Step 1 判断该论文不适合构建当前支持的专业 CoT"
+            _update_manifest_step("step2_case_card", status="skipped", progress_current=100,
+                                  progress_label=stop_reason)
+            _update_manifest_step("step3_type_judgement", status="skipped", progress_current=100,
+                                  progress_label=stop_reason)
+            _update_manifest_step("step4_input", status="skipped", progress_current=100,
+                                  progress_label=stop_reason)
+            _update_manifest_step("step5_chain", status="skipped", progress_current=100,
+                                  progress_label=stop_reason)
+            _update_manifest_step("step6_output", status="skipped", progress_current=100,
+                                  progress_label=stop_reason)
             return {
                 "source_index": source_index,
                 "source": source_label,
@@ -1010,14 +1033,20 @@ def process_one_document(
             }
 
         # Step 2: case card
+        _update_manifest_step("step2_case_card", status="running", progress_current=10,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：构建案例卡")
         step2 = _run_step2(paper_text, llm, username, prompt_snapshot_dir)
         case_card = step2["case_card"]
         atomic_write_json(doc_dir / "step2_case_card.json", {
             "step": 2, "step_name": "构建文献案例卡",
             "status": "completed", "result": step2,
         })
+        _update_manifest_step("step2_case_card", status="completed", progress_current=100,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：案例卡完成")
 
         # Step 3: type judgement
+        _update_manifest_step("step3_type_judgement", status="running", progress_current=10,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：判定 CoT 类型")
         step3 = _run_step3(case_card, llm, username, prompt_snapshot_dir)
         target = _extract_recommended_cot_type(step3)
         if target and not step3.get("constructible_cot_types"):
@@ -1031,11 +1060,34 @@ def process_one_document(
             step3_payload["cot_type_key"] = target["key"]
         atomic_write_json(doc_dir / "step3_type_judgement.json", step3_payload)
 
-        if not target:
-            missing = step3.get("missing_information") or []
+        if target:
+            _update_manifest_step("step3_type_judgement", status="completed", progress_current=100,
+                                  progress_label=f"文献 {source_index + 1}/{input_count}：判定为 {target['display_name']}",
+                                  cot_type=target["display_name"], cot_type_key=target["key"])
+            for step_key, artifact_name in (
+                ("step4_input", "step4_input.json"),
+                ("step5_chain", "step5_chain.json"),
+                ("step6_output", "step6_output.json"),
+            ):
+                _update_manifest_step(
+                    step_key,
+                    progress_label=f"文献 {source_index + 1}/{input_count}：等待执行 {target['display_name']}",
+                    cot_type=target["display_name"],
+                    cot_type_key=target["key"],
+                    artifact_path=f"documents/{_sanitize_dirname(source_label, source_index)}/{target['key']}/{artifact_name}",
+                )
+        else:
+            _update_manifest_step("step3_type_judgement", status="completed", progress_current=100,
+                                  progress_label=f"文献 {source_index + 1}/{input_count}：无可构建类型")
             reason = step3.get("recommendation_reason") or "Step 3 未推荐可构建的 CoT 类型"
+            missing = step3.get("missing_information") or []
             if isinstance(missing, list) and missing:
                 reason = f"{reason}；证据缺口：{'；'.join(str(item) for item in missing[:5])}"
+            _update_manifest_step("step4_input", status="skipped", progress_current=100, progress_label=reason)
+            _update_manifest_step("step5_chain", status="skipped", progress_current=100, progress_label=reason)
+            _update_manifest_step("step6_output", status="skipped", progress_current=100, progress_label=reason)
+
+        if not target:
             return {
                 "source_index": source_index,
                 "source": source_label,
@@ -1048,22 +1100,32 @@ def process_one_document(
         type_dir.mkdir(parents=True, exist_ok=True)
 
         # Step 4
+        _update_manifest_step("step4_input", status="running", progress_current=15,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：生成 {target['display_name']} input")
         step4 = _run_step4(target, case_card, step1, step3, llm, username, prompt_snapshot_dir)
         atomic_write_json(type_dir / "step4_input.json", {
             "step": 4, "step_name": "生成 input", "status": "completed",
             "cot_type": target["display_name"], "cot_type_key": target["key"],
             "result": step4,
         })
+        _update_manifest_step("step4_input", status="completed", progress_current=100,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：input 完成")
 
         # Step 5
+        _update_manifest_step("step5_chain", status="running", progress_current=15,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：生成 {target['display_name']} chainofThought")
         step5 = _run_step5(target, case_card, step1, step3, step4, llm, username, prompt_snapshot_dir)
         atomic_write_json(type_dir / "step5_chain.json", {
             "step": 5, "step_name": "生成 chainofThought", "status": "completed",
             "cot_type": target["display_name"], "cot_type_key": target["key"],
             "result": step5,
         })
+        _update_manifest_step("step5_chain", status="completed", progress_current=100,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：chainofThought 完成")
 
         # Step 6
+        _update_manifest_step("step6_output", status="running", progress_current=15,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：生成 {target['display_name']} output")
         step6 = _run_step6(target, step4, step5, llm, username, prompt_snapshot_dir)
         sample = _build_final_sample(target, step4, step5, step6)
         step6_payload = {
@@ -1072,6 +1134,8 @@ def process_one_document(
             "result": step6, "final_sample": sample,
         }
         atomic_write_json(type_dir / "step6_output.json", step6_payload)
+        _update_manifest_step("step6_output", status="completed", progress_current=100,
+                              progress_label=f"文献 {source_index + 1}/{input_count}：output 完成")
 
         # Enrich sample with source info
         sample["source_index"] = source_index
@@ -1158,6 +1222,8 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
                 prompt_snapshot_dir=prompt_snapshot_dir,
                 llm=llm,
                 username=username,
+                manifest=manifest,
+                input_count=input_count,
             )
 
             batch_items.append(doc_result)
@@ -1182,6 +1248,17 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
             # For single-doc backward compatibility: update step statuses
             if input_count == 1:
                 _update_single_doc_manifest_steps(manifest, doc_result)
+            else:
+                # Multi-doc: reset steps back to pending for the next document
+                # so the progress tracker shows the current document's step progress
+                if idx + 1 < input_count:
+                    for step in manifest.get("steps", []):
+                        step["status"] = "pending"
+                        step["progress_current"] = 0
+                        step["progress_label"] = "等待执行"
+                        step["error_message"] = None
+                    manifest["target_cot_type"] = None
+                    manifest["recommended_cot_type"] = None
 
             save_manifest(manifest)
 
