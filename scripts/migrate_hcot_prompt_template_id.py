@@ -1,13 +1,14 @@
 """Add prompt_template_id column to tasks table.
 
-Run with: python -m scripts.migrate_hcot_prompt_template_id
+Run with: cd backend && PYTHONPATH=. python ../scripts/migrate_hcot_prompt_template_id.py
 """
 
 import sys
 import os
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")))
 
+from sqlalchemy import text
 from app.database import engine
 
 
@@ -17,8 +18,10 @@ def main():
     with engine.connect() as conn:
         # Check if column already exists
         result = conn.execute(
-            "SELECT COUNT(*) FROM information_schema.columns "
-            "WHERE table_schema = DATABASE() AND table_name = 'tasks' AND column_name = 'prompt_template_id'"
+            text(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'tasks' AND column_name = 'prompt_template_id'"
+            )
         )
         count = result.fetchone()[0]
 
@@ -26,8 +29,10 @@ def main():
             print("[migrate] Column 'prompt_template_id' already exists, skipping")
         else:
             conn.execute(
-                "ALTER TABLE tasks ADD COLUMN prompt_template_id VARCHAR(128) NULL "
-                "COMMENT 'H-CoT prompt template ID'"
+                text(
+                    "ALTER TABLE tasks ADD COLUMN prompt_template_id VARCHAR(128) NULL "
+                    "COMMENT 'H-CoT prompt template ID'"
+                )
             )
             conn.commit()
             print("[migrate] Column 'prompt_template_id' added successfully")
