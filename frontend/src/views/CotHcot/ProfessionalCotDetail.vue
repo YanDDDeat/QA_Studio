@@ -33,6 +33,9 @@
           <span style="color: #67c23a">{{ run.success_count ?? 0 }}</span>
           <span> / </span>
           <span :style="{ color: (run.failed_count ?? 0) > 0 ? '#f56c6c' : '#606266' }">{{ run.failed_count ?? 0 }}</span>
+          <span v-if="processingCount > 0" style="color: #e6a23c; margin-left: 4px">
+            / {{ processingCount }} 处理中
+          </span>
           <span style="color: #909399; font-size: 12px; margin-left: 4px">
             （共 {{ run.input_count ?? 1 }} 篇）
           </span>
@@ -302,6 +305,14 @@ const recommendedCotTypeLabel = computed(() => {
 const failedBatchItems = computed(() => {
   const items = run.value?.batch_summary?.items || []
   return items.filter(item => item.status === 'failed' || item.status === 'skipped')
+})
+
+const processingCount = computed(() => {
+  if (!run.value) return 0
+  const total = run.value.input_count ?? 1
+  const success = run.value.success_count ?? 0
+  const failed = run.value.failed_count ?? 0
+  return Math.max(0, total - success - failed)
 })
 
 const overallStatus = computed(() => {
