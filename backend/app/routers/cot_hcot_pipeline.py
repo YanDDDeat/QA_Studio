@@ -413,10 +413,7 @@ async def run_pipeline_step_endpoint(
         if not prompt_obj:
             raise HTTPException(status_code=404, detail="指定的提示词不存在")
     else:
-        prompt_obj = find_prompt_for_step(db, step_name, current_user.id)
-        if not prompt_obj:
-            raise HTTPException(
-                status_code=404,
+        prompt_obj = find_prompt_for_step(db, step_name, current_user.id, parent_task.prompt_template_id)
                 detail=f"找不到步骤 '{step_name}' 的默认提示词",
             )
 
@@ -683,7 +680,7 @@ async def auto_run_pipeline(
     for step_name in step_order:
         _, prompt_pattern, _, _, _ = PIPELINE_STEPS.get(step_name, (step_name, "", None, False, "document"))
         if prompt_pattern is not None and step_name != "export_jsonl":
-            prompt_obj = find_prompt_for_step(db, step_name, current_user.id)
+            prompt_obj = find_prompt_for_step(db, step_name, current_user.id, request.prompt_template_id)
             if not prompt_obj:
                 raise HTTPException(
                     status_code=404,
@@ -785,7 +782,7 @@ async def auto_continue_pipeline(
             continue
         _, prompt_pattern, _, _, _ = PIPELINE_STEPS.get(step_name, (step_name, "", None, False, "document"))
         if prompt_pattern is not None and step_name != "export_jsonl":
-            prompt_obj = find_prompt_for_step(db, step_name, current_user.id)
+            prompt_obj = find_prompt_for_step(db, step_name, current_user.id, parent_task.prompt_template_id)
             if not prompt_obj:
                 raise HTTPException(
                     status_code=404,

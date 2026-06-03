@@ -259,14 +259,17 @@ def find_prompt_for_step(db: Session, step_name: str, user_id: int, template_id:
     if template_id:
         prompt_content = resolve_step_prompt_from_template(user_id, template_id, step_name)
         if prompt_content:
-            # Return a synthetic Prompt object with the template content
+            # Return a synthetic Prompt object — prompt_id=None so it won't violate FK constraint
+            # The actual prompt content comes from the template, not from the DB
             return Prompt(
-                id=0,
+                id=None,
+                prompt_id=None,
                 name=prompt_pattern,
                 content=prompt_content,
                 stage=StageEnum.COT_HCOT_PIPELINE,
                 is_default=True,
                 version=1,
+                user_id=None,
             )
 
     # Fallback to database query
