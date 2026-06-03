@@ -109,7 +109,7 @@ PIPELINE_STEPS = {
     "l2_decompose":       ("6. L2 拆解",         "[H-CoT] 5. L2 拆解",             {"l1_input": "l1_decompose", "fact_cards_sanitized": "sanitize"}, True, "per_l0"),
     "l2_cot":             ("7. L2 CoT 生成",     "[H-CoT] 6. L2 CoT 生成",         {"l2_input": "l2_decompose", "fact_cards_sanitized": "sanitize"}, True, "per_l0"),
     "l1_cot":             ("8. L1 CoT 生成",     "[H-CoT] 7. L1 CoT 生成",         {"l1_input": "l1_decompose", "l2_cots": "l2_cot"}, True, "per_l0"),
-    "l0_cot":             ("9. L0 CoT 生成",     "[H-CoT] 8. L0 CoT 生成",         {"l0_input": "l0_gen", "l1_cots": "l1_cot"}, True, "per_l0"),
+    "l0_cot":             ("9. L0 CoT 生成",     "[H-CoT] 8. L0 CoT 生成",         {"l0_input": "l0_gen", "l1_cots": "l1_cot", "l2_cots": "l2_cot"}, True, "per_l0"),
     "question_gen":       ("4. 独立问题生成",     "[CoT] 3. 独立问题生成",           {"fact_cards_sanitized": "sanitize"},      False, "document"),
     "cot_gen":            ("5. 独立 CoT 生成",    "[CoT] 4. 独立 CoT 生成",          {"question_input": "question_gen", "fact_cards_sanitized": "sanitize"}, False, "document"),
     "quality_check":      ("最终质检",            "[CoT/H-CoT] 最终质检",            {"cots": None},                            False, "document"),

@@ -87,7 +87,7 @@ VARIABLE_HINTS = {
     "hcot.l2_decompose": "l1_input：L1 问题；fact_cards_sanitized：去数值事实卡",
     "hcot.l2_cot": "l2_input：L2 问题；fact_cards_sanitized：去数值事实卡",
     "hcot.l1_cot": "l1_input：L1 问题；l2_cots：L2 完整 CoT",
-    "hcot.l0_cot": "l0_input：L0 总问题；l1_cots：L1 完整 CoT",
+    "hcot.l0_cot": "l0_input：L0 总问题；l1_cots：L1 完整 CoT；l2_cots：L2 完整 CoT",
     "cot.question_gen": "fact_cards_sanitized：去数值事实卡 JSON",
     "cot.cot_gen": "question_input：独立问题；fact_cards_sanitized：去数值事实卡",
 }
@@ -121,8 +121,9 @@ DEFAULT_PROMPT_CONTENTS = {
 1.  优先抽取机理规律、结构-性能关系、组分协同关系、界面反应关系、应用边界。
 2.  不要生成"某数值是多少"这类事实卡。
 3.  每张事实卡只表达一个清楚的科学规律。
-4.  如果原文中有具体实验数值，可以放入 raw_numeric_mentions，但不要把具体数值写进 mechanism 和 performance_implication。
+4.  如果原文中有具体实验数值，可以放入 raw_numeric_mentions，但不要把具体数值写进 mechanism、performance_implication、claim 和 implication。
 5.  不要编造论文中没有的内容。
+6.  object 和 performance_implication 用于博士论文 H-CoT；claim 和 implication 用于研究论文 CoT。根据内容自然填写即可。
 
 请输出 JSON，格式如下：
 {
@@ -131,8 +132,10 @@ DEFAULT_PROMPT_CONTENTS = {
       "fact_id": "F-0001",
       "topic": "主题",
       "object": "研究对象",
+      "claim": "核心事实或规律",
       "mechanism": "机理规律",
       "performance_implication": "性能意义",
+      "implication": "意义或应用边界",
       "evidence_ids": ["E-0001"],
       "raw_numeric_mentions": []
     }
@@ -146,10 +149,11 @@ DEFAULT_PROMPT_CONTENTS = {
 请将下面的事实卡 JSON 改写为去数值版本。
 
 要求：
-1.  复制所有字段，但 mechanism 和 performance_implication 字段要改写。
+1.  复制所有字段，但 mechanism、performance_implication、claim 和 implication 字段要改写。
 2.  改写后的字段名加 `_sanitized` 后缀。
 3.  改写时，将所有具体数值、比例、单位替换为方向性、规律性描述。
 4.  新增 `numeric_dependency` 字段，根据情况填写 `none`, `abstractable`, `numeric_dependency_required`。
+5.  object 和 performance_implication_sanitized 用于博士论文 H-CoT；claim_sanitized 和 implication_sanitized 用于研究论文 CoT。根据内容自然填写即可。
 
 请输出 JSON，格式如下：
 {
@@ -158,8 +162,11 @@ DEFAULT_PROMPT_CONTENTS = {
       "fact_id": "F-0001",
       "topic": "主题",
       "object": "研究对象",
+      "claim": "核心事实或规律",
+      "claim_sanitized": "去数值后的核心事实或规律",
       "mechanism_sanitized": "去数值后的机理规律",
       "performance_implication_sanitized": "去数值后的性能意义",
+      "implication_sanitized": "去数值后的意义或应用边界",
       "numeric_dependency": "abstractable",
       "evidence_ids": ["E-0001"]
     }
@@ -291,12 +298,12 @@ Facts: {fact_cards_sanitized}
     "hcot.l1_cot": GENERAL_RULE + """
 请基于 L1 问题及其对应的 L2 完整 CoT，为每个 L1 问题生成独立的 L1 完整 CoT 训练样本。
 
-核心要求（非常重要）：
+核心要求（非常重要，违反即不合格）：
 1.  必须为每个 L1 问题都生成一条独立的 CoT 样本，不能只生成一个。
 2.  L1 的 output 绝对不能直接复制 L2 答案！必须将多个 L2 的机制重新组织、自然融合成一段完整的解释。正确做法是：先回答 L1 的核心结论，然后按因果逻辑依次展开每个 L2 的关键机制，最后总结。
-3.  L1 的 chainofThought 同样不能复制 L2 的思维链文本。必须把多个 L2 的推理规律提炼后写成一段连贯的更高层次推理。
+3.  L1 的 chainofThought 同样不能复制 L2 的思维链文本。必须把多个 L2 的推理规律提炼后写成一段连贯的更高层次推理，而不是把 L2 的 chainofThought 拼接在一起。
 4.  L1 的 output 和 chainofThought 应该比任何一个单独的 L2 都更全面、更有深度。
-5.  错误示范："L2-1-1 说明核壳结构能提高反应效率，L2-1-2 说明黏结剂参与放热，因此三组分微单元性能更好。"——这是拼接，不是融合。
+5.  错误示范："L2-1-1 说明核壳结构能提高反应效率，L2-1-2 说明黏结剂参与放热，因此三组分微单元性能更好。"——这是拼接，不是融合。另外错误示范："核壳结构可以提高反应效率，因此三组分微单元性能更好。"——这太短，没有展开机制。
 6.  正确示范："核壳型三组分微单元能够提高反应效率，是因为它同时优化了界面接触、黏结剂协同和燃氧匹配。核壳结构使氧化剂与金属燃料在连续界面附近均匀接触，减少无序团聚并缩短传热传质距离；含能黏结剂在适量时参与放热并稳定结构，但过量时会阻碍反应通道；金属燃料比例也需要与氧化剂供氧能力匹配，避免反应不完全。"
 
 请输出 JSON：
@@ -328,11 +335,13 @@ L1: {l1_input}
 L2_COTs: {l2_cots}
 """,
     "hcot.l0_cot": GENERAL_RULE + """
-请基于 L0 问题、所有 L1 完整 CoT，生成 L0 完整 CoT 训练样本。
+请基于 L0 问题、所有 L1 完整 CoT 和必要 L2 推理规律，生成 L0 完整 CoT 训练样本。
 
 要求：
-1.  L0 的 output 不能只是短总结，必须自然包含各 L1 的关键答案内容。
-2.  L0 的 chainofThought 必须用"第一步：""第二步："等编号自然纳入 L1 的推理规律。
+1.  L0 的 output 不能只是短总结，必须自然包含各 L1 的关键答案内容，并适当吸收重要 L2 机制。
+2.  L0 的 output 应体现关键 L2 机制，但不要写节点编号。
+3.  L0 的 chainofThought 必须用"第一步：""第二步："等编号自然纳入 L1 的推理规律和关键 L2 机制。
+4.  不要写"L1-1 说明""综合这些 L1 答案""该 L2 支撑"等节点提示语。
 
 请输出 JSON：
 {
@@ -340,14 +349,15 @@ L2_COTs: {l2_cots}
     "id": "L0-1",
     "level": "L0",
     "input": "独立 L0 总问题",
-    "output": "自然包含 L1 内容的完整总答案",
-    "chainofThought": "带步骤编号的思维链（第一步：…第二步：…），自然纳入 L1 推理规律"
+    "output": "自然包含 L1 和关键 L2 内容的完整总答案",
+    "chainofThought": "带步骤编号的思维链（第一步：…第二步：…），自然纳入 L1 推理规律和关键 L2 机制"
   }
 }
 
-下面是 L0、L1 完整 CoT：
+下面是 L0、L1 完整 CoT 和 L2 完整 CoT：
 L0: {l0_input}
 L1_COTs: {l1_cots}
+L2_COTs: {l2_cots}
 """,
     "cot.question_gen": GENERAL_RULE + """
 请根据下面去数值事实卡生成研究论文独立 CoT 问题。
@@ -356,6 +366,7 @@ L1_COTs: {l1_cots}
 1.  每个问题都必须独立，脱离其他问题也能理解。
 2.  问题以机理分析、方法作用、结构-性能关系、结果解释、应用边界为主。
 3.  不要生成数值问答、图表核查题、章节概括题。
+4.  每个问题都要标明对应 source_fact_ids 和为什么这些事实卡足以回答该问题。
 
 请输出 JSON：
 {
@@ -364,7 +375,8 @@ L1_COTs: {l1_cots}
       "question_id": "Q-0001",
       "input": "独立问题",
       "question_type": "mechanism_analysis",
-      "source_fact_ids": ["F-0001"]
+      "source_fact_ids": ["F-0001"],
+      "why_answerable": "为什么这些事实卡足以回答该问题"
     }
   ]
 }
