@@ -68,6 +68,15 @@
   - [x] 用 `AdjustableLimiter`（in_flight 计数 + 等待队列）替换 `SlidingWindowExecutor` 内部的 `asyncio.Semaphore`，消除窗口缩放时的突击提交与 permit 泄漏
   - [x] 新增并发模拟测试 `tests/test_thread_pool_fairness.py`，断言两用户场景下完成数比例在 [0.8, 1.25] 之间
 
+## CoT/H-CoT 流水线架构修正
+- [ ] 分支 `BIT/wj`：详见 `docs/requirements/23_需求_CoTHCoT流水线架构修正.md`
+  - [x] 流水线执行逻辑从 per-chunk 全流程改为 document 级聚合
+  - [x] 新增 merge_fact_cards 步骤（纯数据合成，合并所有 chunk 事实卡）
+  - [x] 新增 Task.l0_question_index 字段（per-L0 步骤标识）
+  - [x] 一键执行改为：per-chunk 事实卡 → 合并 → 数值抽象 → L0 总问题数组 → per-L0 推理树
+  - [x] 导出支持多棵 H-CoT 树
+  - [x] 前端 WorkflowDetail 展示步骤粒度（per-chunk/document/per-L0）
+
 ## 各阶段页面恢复/重试支持重选配置
 - [x] 分支 `feature/stage-resume-config`：详见 `docs/requirements/16_需求_各阶段页面恢复重试支持重选配置.md`
   - [x] 抽出公共组件 `TaskConfigDialog.vue`（厂商/模型/提示词三联选）

@@ -458,8 +458,9 @@ def create_output_file(
 
     suffix_name = username or str(user_id)
 
-    upload_dir = os.path.join("uploads", str(user_id))
-    os.makedirs(upload_dir, exist_ok=True)
+    # 生成文件与用户上传源文件分目录存放，避免物理文件混在一起。
+    output_dir = os.path.join("outputs", str(user_id))
+    os.makedirs(output_dir, exist_ok=True)
 
     desired_filename = _build_output_filename(
         source_filename=source_file.filename if source_file else "output",
@@ -468,7 +469,7 @@ def create_output_file(
         username_or_id=suffix_name,
         name_suffix=name_suffix,
     )
-    filename, file_path = _resolve_unique_path(upload_dir, desired_filename)
+    filename, file_path = _resolve_unique_path(output_dir, desired_filename)
 
     payload = initial_content if initial_content is not None else []
     with open(file_path, "w", encoding="utf-8") as f:
@@ -614,10 +615,10 @@ def create_fail_file(
     source_base = os.path.splitext(source_file.filename)[0]
     desired_filename = f"{source_base}_{suffix}.json"
 
-    upload_dir = os.path.join("uploads", str(user_id))
-    os.makedirs(upload_dir, exist_ok=True)
+    output_dir = os.path.join("outputs", str(user_id))
+    os.makedirs(output_dir, exist_ok=True)
 
-    filename, file_path = _resolve_unique_path(upload_dir, desired_filename)
+    filename, file_path = _resolve_unique_path(output_dir, desired_filename)
 
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(fail_records, f, ensure_ascii=False, indent=2)
