@@ -26,6 +26,49 @@
   - [x] 后端下载接口支持 fields 参数过滤
 
 ## 新需求
+- [x] 分支 `BIT/wj`：标注流水线2专业 CoT 构建，详见 `docs/requirements/26_需求_标注流水线2专业CoT构建.md`
+  - [x] 在 COT/H-COT 标注分组下新增「标注流水线2」页面入口
+  - [x] 实现系统已有单 chunk JSON 文件选择、字段下拉/默认 text 和一键 Pipeline，CoT 类型由 Step 3 模型自动判定
+  - [x] 按固定 6 个逻辑步骤生成 Step 3 推荐的单个 CoT 类型样本，运行中步骤列表不得为空，阶段产物直接写 JSON 文件
+  - [x] 流水线任务列表支持分页展示
+  - [x] 最终产物区放在流水线步骤下方，生成并支持下载 `final_samples.json` / `final_samples.jsonl`
+
+- [x] 分支 `BIT/wj`：标注流水线2支持批量文献 JSON 输入，详见 `docs/requirements/28_需求_标注流水线2支持批量文献JSON输入.md`
+  - [x] 取消 JSON 数组长度必须为 1 的限制，允许数组长度 `>= 1`
+  - [x] 一个任务内按数组顺序串行处理多篇文献，不创建多个独立任务
+  - [x] 单篇失败时记录失败明细并继续处理后续文献
+  - [x] 最终输出汇总 `input_count` / `success_count` / `failed_count` 和每篇文献状态
+  - [x] `final_samples.json` / `final_samples.jsonl` 保留下载能力，并能追溯 `source_index` / `source`
+
+- [x] 分支 `BIT/wj`：CoT/H-CoT 标注分组新增文本预处理入口，详见 `docs/requirements/27_需求_CoTHCoT标注文本预处理入口.md`
+  - [x] 在 CoT/H-CoT 标注分组下新增「文本预处理」菜单项
+  - [x] 复用现有文本预处理页面能力，原入口不受影响
+  - [x] 支持一次上传多个 MD 文件并合并为 `[{source: 文件名, text: MD全文}]` JSON 数组
+  - [x] 支持下载合并后的 JSON，或保存为系统文件供标注流水线2选择
+
+- [x] 分支 `BIT/wj`：标注流水线2提示词模板管理，详见 `docs/requirements/29_需求_标注流水线2提示词模板管理.md`
+  - [x] 在 COT/H-COT 下新增「标注流水线2提示词」管理入口
+  - [x] 系统默认模板共享只读，用户复制后形成个人独立模板版本
+  - [x] 模板包按通用步骤和 10 类 CoT 专属步骤树形展示并支持单项编辑
+  - [x] 新建标注流水线2任务时选择一个完整提示词模板包版本
+  - [x] 任务启动时保存完整提示词快照，历史 run 可追溯
+
+- [ ] 分支 `feature/step1-3-integrated-cot`：单COT生成 Step1-3 融合节点修复，详见 `docs/requirements/31_需求_单COT生成Step1-3融合节点修复.md`
+  - [ ] 使用融合提示词一次完成文献可用性、关键信息抽取和 CoT 类型路由
+  - [ ] 单COT生成 manifest 展示节点从 6 个逻辑步骤调整为 4 个节点
+  - [ ] Step 4/5 改为接收 `step1_3_result`，并兼容提示词快照与旧模板补默认文件
+
+## CoT质检功能
+- [ ] 分支 `feature/cot-quality-check`：详见 `docs/requirements/33_需求_CoT质检功能.md`
+  - [ ] StageEnum 新增 COT_QUALITY_CHECK 值
+  - [ ] 后端：新建 cot_quality_check 路由 + 服务
+  - [ ] 前端：新建 CotQualityCheck.vue 页面 + 路由 + 菜单
+  - [ ] CoT质检：上传带思维链 JSON → LLM 四维度评估 → 输出通过/不通过/评估结果三个文件
+
+- [ ] 分支 `feature/document-stage-matrix`：单COT生成文献级阶段进度视图，详见 `docs/requirements/32_需求_单COT生成文献级阶段进度视图.md`
+  - [ ] 详情接口返回 `document_stage_matrix`，按文献展示 Step1-3 / Step4 / Step5 / Step6 状态与中间产物路径
+  - [ ] 单COT生成详情页新增文献级阶段进度矩阵，支持有产物的阶段点击预览
+
 - [x] 分支 `feature/llm-field-auto-mapping`：详见 `docs/requirements/12_需求_LLM返回字段自动映射到数据库列.md`
   - [x] 新建 `field_mapper.py`：动态映射 LLM 字段到数据库列
   - [x] 改造 6 个管线阶段：替换硬编码白名单为自动映射
@@ -56,6 +99,15 @@
 - [x] 分支 `feature/fair-thread-pool`：详见 `docs/requirements/15_需求_线程池公平调度修复.md`
   - [x] 用 `AdjustableLimiter`（in_flight 计数 + 等待队列）替换 `SlidingWindowExecutor` 内部的 `asyncio.Semaphore`，消除窗口缩放时的突击提交与 permit 泄漏
   - [x] 新增并发模拟测试 `tests/test_thread_pool_fairness.py`，断言两用户场景下完成数比例在 [0.8, 1.25] 之间
+
+## CoT/H-CoT 流水线架构修正
+- [ ] 分支 `BIT/wj`：详见 `docs/requirements/23_需求_CoTHCoT流水线架构修正.md`
+  - [x] 流水线执行逻辑从 per-chunk 全流程改为 document 级聚合
+  - [x] 新增 merge_fact_cards 步骤（纯数据合成，合并所有 chunk 事实卡）
+  - [x] 新增 Task.l0_question_index 字段（per-L0 步骤标识）
+  - [x] 一键执行改为：per-chunk 事实卡 → 合并 → 数值抽象 → L0 总问题数组 → per-L0 推理树
+  - [x] 导出支持多棵 H-CoT 树
+  - [x] 前端 WorkflowDetail 展示步骤粒度（per-chunk/document/per-L0）
 
 ## 各阶段页面恢复/重试支持重选配置
 - [x] 分支 `feature/stage-resume-config`：详见 `docs/requirements/16_需求_各阶段页面恢复重试支持重选配置.md`
@@ -88,6 +140,12 @@
   - [x] 改造 `backend/app/routers/question_generate.py`：主循环前插入预处理调用 + 写过滤文件 + 更新 progress_total
   - [x] 新建 `tests/test_preprocess_service.py`：单元测试覆盖每个规则
   - [x] 人工集成测试：典型脏数据 JSON → 验证过滤文件、task_logs、暂停恢复
+
+## MD 标题级别选择切分
+- [x] 分支 `feature/md-heading-level-select`：详见 `docs/requirements/24_需求_MD标题级别选择切分.md`
+  - [x] 上传 MD 后先解析并展示实际存在的标题层级
+  - [x] 用户选择指定标题级别后，按该级标题作为 chunk 边界切分
+  - [x] 保持 JSON 输出格式和文件管理流程不变
 
 ## 已完成功能（简要）
 - [x] 基础设施：Vue3 + FastAPI + MySQL + 前端路由框架
