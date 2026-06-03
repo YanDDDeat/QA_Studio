@@ -425,3 +425,39 @@ export function getProfessionalCotArtifact(runId, path) {
 export function downloadProfessionalCotExport(runId, type) {
   return api.get(`/professional-cot/runs/${runId}/export/${type}`, { responseType: 'blob' })
 }
+
+export function listProfessionalCotPromptTemplates() {
+  return api.get('/professional-cot/prompts/templates')
+}
+
+export function getProfessionalCotPromptTemplate(templateId) {
+  return api.get(`/professional-cot/prompts/templates/${templateId}`)
+}
+
+export function duplicateProfessionalCotPromptTemplate(templateId, data) {
+  return api.post(`/professional-cot/prompts/templates/${templateId}/duplicate`, data)
+}
+
+export function renameProfessionalCotPromptTemplate(templateId, data) {
+  return api.put(`/professional-cot/prompts/templates/${templateId}`, data)
+}
+
+export function setDefaultProfessionalCotPromptTemplate(templateId) {
+  return api.post(`/professional-cot/prompts/templates/${templateId}/set-default`)
+}
+
+export function deleteProfessionalCotPromptTemplate(templateId) {
+  return api.delete(`/professional-cot/prompts/templates/${templateId}`)
+}
+
+export function getProfessionalCotPromptItem(templateId, promptKey) {
+  return api.get(`/professional-cot/prompts/templates/${templateId}/items/${promptKey}`)
+}
+
+export function updateProfessionalCotPromptItem(templateId, promptKey, data) {
+  return api.put(`/professional-cot/prompts/templates/${templateId}/items/${promptKey}`, data)
+}
+
+export function restoreDefaultProfessionalCotPromptItem(templateId, promptKey) {
+  return api.post(`/professional-cot/prompts/templates/${templateId}/items/${promptKey}/restore-default`)
+}

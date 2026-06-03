@@ -71,6 +71,31 @@
           </el-select>
           <el-input v-else v-model="createForm.text_field" placeholder="默认 text，可手动改为 content / paper_text 等" />
         </el-form-item>
+        <el-form-item label="提示词模板版本" prop="prompt_template_id">
+          <el-select
+            v-model="createForm.prompt_template_id"
+            placeholder="选择提示词模板版本"
+            style="width: 100%"
+          >
+            <el-option-group label="系统模板">
+              <el-option
+                v-for="t in systemPromptTemplates"
+                :key="t.template_id"
+                :label="t.name + (t.is_default ? '（我的默认）' : '')"
+                :value="t.template_id"
+              />
+            </el-option-group>
+            <el-option-group label="我的模板" v-if="userPromptTemplates.length">
+              <el-option
+                v-for="t in userPromptTemplates"
+                :key="t.template_id"
+                :label="t.name + (t.is_default ? '（我的默认）' : '')"
+                :value="t.template_id"
+              />
+            </el-option-group>
+          </el-select>
+          <div class="upload-tip">新建任务将使用该模板包的全部提示词。若不选，默认使用您的默认模板或系统默认模板。</div>
+        </el-form-item>
         <el-form-item label="LLM 配置" prop="llm_config_id">
           <el-select v-model="createForm.llm_config_id" placeholder="选择 LLM 配置" filterable style="width: 100%" @change="handleConfigChange">
             <el-option
@@ -200,6 +225,7 @@ import {
   getProfessionalCotSourceFiles,
   listProfessionalCotRuns,
   startProfessionalCotRun,
+  listProfessionalCotPromptTemplates,
 } from '../../api'
 
 const router = useRouter()
@@ -215,6 +241,15 @@ const llmConfigs = ref([])
 const sourceFiles = ref([])
 const fieldOptions = ref([])
 const inputMode = ref('existing')
+
+// 提示词模板数据
+const promptTemplatesData = ref(null)
+const systemPromptTemplates = computed(() =>
+  (promptTemplatesData.value?.templates || []).filter(t => t.is_system)
+)
+const userPromptTemplates = computed(() =>
+  (promptTemplatesData.value?.templates || []).filter(t => !t.is_system)
+)
 
 async function fetchRuns() {
   loading.value = true
@@ -264,6 +299,7 @@ const createForm = ref({
   llm_config_id: null,
   model: '',
   file: null,
+  prompt_template_id: '',
 })
 
 const createRules = {
@@ -329,6 +365,7 @@ async function openCreateDialog() {
     llm_config_id: null,
     model: '',
     file: null,
+    prompt_template_id: '',
   }
   inputMode.value = 'existing'
   fieldOptions.value = []
@@ -340,12 +377,19 @@ async function openCreateDialog() {
 
 async function fetchDialogData() {
   try {
-    const [configs, files] = await Promise.all([
+    const [configs, files, templates] = await Promise.all([
       getLLMConfigs(),
       getProfessionalCotSourceFiles({ sort: 'time_desc' }),
+      listProfessionalCotPromptTemplates(),
     ])
     llmConfigs.value = configs
     sourceFiles.value = (files.items || files || []).filter(f => (f.file_type || '').toLowerCase() === 'json')
+    promptTemplatesData.value = templates
+    // 默认选择用户默认模板或系统默认模板
+    const effectiveDefault = templates.effective_default_template_id || templates.system_template_id
+    if (effectiveDefault) {
+      createForm.value.prompt_template_id = effectiveDefault
+    }
   } catch (err) {
     ElMessage.error('获取配置数据失败')
   }
@@ -380,6 +424,9 @@ async function handleCreate() {
     formData.append('llm_config_id', createForm.value.llm_config_id)
     formData.append('model', createForm.value.model)
     formData.append('run_name', createForm.value.run_name)
+    if (createForm.value.prompt_template_id) {
+      formData.append('prompt_template_id', createForm.value.prompt_template_id)
+    }
 
     const res = await startProfessionalCotRun(formData)
     ElMessage.success(`标注流水线2已启动 (Run: ${res.run_id})`)

@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,10 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from app.models.models import LLMConfig
 from app.services.llm_service import LLMCallError, call_llm_json_sync
+from app.services.professional_cot_prompt_service import (
+    create_run_prompt_snapshot,
+    read_prompt_from_snapshot,
+)
 from app.services.thread_pool import register_task, unregister_task
 
 logger = logging.getLogger("qa_studio.professional_cot")
@@ -256,7 +261,13 @@ def _refresh_manifest_progress(manifest: Dict[str, Any]) -> None:
     manifest["completed_steps"] = completed
     manifest["skipped_steps"] = skipped
     manifest["failed_steps"] = failed
-    manifest["progress_percentage"] = int(round((done / total) * 100)) if total else 0
+    # For multi-document tasks, prefer document-level progress over step-level progress.
+    # Step-level progress is only meaningful for single-document backward compatibility.
+    input_count = manifest.get("input_count", 1)
+    if input_count <= 1:
+        manifest["progress_percentage"] = int(round((done / total) * 100)) if total else 0
+    # For batch mode, progress_percentage is set directly in run_pipeline_sync
+    # and should not be overwritten here.
 
 
 def _get_cot_type(target_cot_type: str) -> Dict[str, Any]:
@@ -461,14 +472,18 @@ def _read_prompt_file(path: Path) -> str:
         return f.read()
 
 
-def _extract_step_prompt(step_no: int) -> str:
+def _extract_step_prompt(step_no: int, prompt_snapshot_dir: Optional[Path] = None) -> str:
+    if prompt_snapshot_dir is not None:
+        return read_prompt_from_snapshot(prompt_snapshot_dir, f"common.step{step_no}")
     content = _read_prompt_file(PROMPT_ROOT / "专业Cot构建.md")
     pattern = re.compile(rf"###\s*Step\s*{step_no}[^\n]*\n(.*?)(?=\n###\s*Step\s*\d+|\Z)", re.S | re.I)
     match = pattern.search(content)
     return match.group(0).strip() if match else content
 
 
-def _type_prompt(cot_type: Dict[str, Any], step_no: int) -> str:
+def _type_prompt(cot_type: Dict[str, Any], step_no: int, prompt_snapshot_dir: Optional[Path] = None) -> str:
+    if prompt_snapshot_dir is not None:
+        return read_prompt_from_snapshot(prompt_snapshot_dir, f"{cot_type['key']}.step{step_no}")
     filename = cot_type[f"step{step_no}"]
     return _read_prompt_file(PROMPT_ROOT / cot_type["prompt_dir"] / filename)
 
@@ -515,9 +530,9 @@ def _call_json(prompt: str, llm: Dict[str, Any], username: str) -> Dict[str, Any
     )
 
 
-def _run_step1(paper_text: str, llm: Dict[str, Any], username: str) -> Dict[str, Any]:
+def _run_step1(paper_text: str, llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
     prompt = f"""
-{_extract_step_prompt(1)}
+{_extract_step_prompt(1, prompt_snapshot_dir)}
 
 强制约束：
 - 只能在以下 10 类 CoT 枚举中选择类型，输出名称必须使用枚举原文：
@@ -546,9 +561,9 @@ def _run_step1(paper_text: str, llm: Dict[str, Any], username: str) -> Dict[str,
     return result
 
 
-def _run_step2(paper_text: str, llm: Dict[str, Any], username: str) -> Dict[str, Any]:
+def _run_step2(paper_text: str, llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
     prompt = f"""
-{_extract_step_prompt(2)}
+{_extract_step_prompt(2, prompt_snapshot_dir)}
 
 强制约束：
 - JSON 顶层必须是对象，必须包含 case_card。
@@ -605,9 +620,9 @@ def _extract_recommended_cot_type(step3: Dict[str, Any]) -> Optional[Dict[str, A
     return None
 
 
-def _run_step3(case_card: Dict[str, Any], llm: Dict[str, Any], username: str) -> Dict[str, Any]:
+def _run_step3(case_card: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
     prompt = f"""
-{_extract_step_prompt(3)}
+{_extract_step_prompt(3, prompt_snapshot_dir)}
 
 强制约束：
 - Step 3 的输入仅为 Step 2 产出的 case_card；不要读取完整论文正文，不要补写 case_card 中不存在的证据。
@@ -668,9 +683,9 @@ case_card：
     return result
 
 
-def _run_step4(cot_type: Dict[str, Any], case_card: Dict[str, Any], step1: Dict[str, Any], step3: Dict[str, Any], llm: Dict[str, Any], username: str) -> Dict[str, Any]:
+def _run_step4(cot_type: Dict[str, Any], case_card: Dict[str, Any], step1: Dict[str, Any], step3: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
     prompt = f"""
-{_type_prompt(cot_type, 4)}
+{_type_prompt(cot_type, 4, prompt_snapshot_dir)}
 
 强制约束：
 - 当前 cot_type 固定为：{cot_type['display_name']}。
@@ -701,10 +716,10 @@ case_card：
     return result
 
 
-def _run_step5(cot_type: Dict[str, Any], case_card: Dict[str, Any], step1: Dict[str, Any], step3: Dict[str, Any], step4: Dict[str, Any], llm: Dict[str, Any], username: str) -> Dict[str, Any]:
+def _run_step5(cot_type: Dict[str, Any], case_card: Dict[str, Any], step1: Dict[str, Any], step3: Dict[str, Any], step4: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
     selected_input = step4.get("selected_input") or step4.get("input") or ""
     prompt = f"""
-{_type_prompt(cot_type, 5)}
+{_type_prompt(cot_type, 5, prompt_snapshot_dir)}
 
 强制约束：
 - 当前 cot_type 固定为：{cot_type['display_name']}。
@@ -741,11 +756,11 @@ case_card：
     return result
 
 
-def _run_step6(cot_type: Dict[str, Any], step4: Dict[str, Any], step5: Dict[str, Any], llm: Dict[str, Any], username: str) -> Dict[str, Any]:
+def _run_step6(cot_type: Dict[str, Any], step4: Dict[str, Any], step5: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
     selected_input = step4.get("selected_input") or step4.get("input") or ""
     chain = step5.get("chainofThought") or []
     prompt = f"""
-{_type_prompt(cot_type, 6)}
+{_type_prompt(cot_type, 6, prompt_snapshot_dir)}
 
 强制约束：
 - 当前 cot_type 固定为：{cot_type['display_name']}。
@@ -829,6 +844,19 @@ def _write_final_outputs(run_id: str, samples: List[Dict[str, Any]]) -> Dict[str
     return {"json": "final_samples.json", "jsonl": "final_samples.jsonl"}
 
 
+def _sanitize_dirname(name: str) -> str:
+    """Sanitize a string for use as a directory name component."""
+    text = str(name or "").strip()
+    # Remove path separators and other unsafe characters
+    text = re.sub(r"[/\\:<>|?*\x00-\x1f\"]+", "_", text)
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    if not text:
+        text = "unnamed"
+    # Truncate to avoid excessively long directory names
+    return text[:64]
+
+
 def create_initial_run(
     *,
     source_data: List[Dict[str, Any]],
@@ -841,6 +869,7 @@ def create_initial_run(
     model: str,
     run_name: Optional[str] = None,
     source_file_id: Optional[int] = None,
+    prompt_template_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
     run_id = make_run_id()
@@ -854,6 +883,8 @@ def create_initial_run(
         "base_url": llm_config.base_url,
         "api_key": llm_config.api_key,
     }
+
+    input_count = len(source_data)
 
     manifest: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -875,7 +906,11 @@ def create_initial_run(
             "text_field": text_field,
             "artifact_path": "source_input.json",
             "text_length": len(paper_text),
+            "input_count": input_count,
         },
+        "input_count": input_count,
+        "success_count": 0,
+        "failed_count": 0,
         "target_cot_type": None,
         "recommended_cot_type": None,
         "llm": {
@@ -891,165 +926,391 @@ def create_initial_run(
         "final_outputs": {},
         "error_message": None,
     }
+    try:
+        prompt_snapshot = create_run_prompt_snapshot(prompt_template_id, user_id, run_dir)
+    except ValueError as exc:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise ValueError(str(exc))
+    manifest["prompt_template"] = prompt_snapshot
     _refresh_manifest_progress(manifest)
 
     atomic_write_json(run_dir / "source.json", source_data)
-    atomic_write_json(run_dir / "source_input.json", {"text_field": text_field, "paper_text": paper_text})
+    # source_input.json now includes full input_count and per-record metadata
+    source_input_payload = {
+        "text_field": text_field,
+        "input_count": input_count,
+        "paper_text": paper_text,
+        "records": [
+            {
+                "source_index": idx,
+                "source": record.get("source", f"item_{idx + 1}"),
+                "text_length": len(record.get(text_field, "")),
+            }
+            for idx, record in enumerate(source_data)
+        ],
+    }
+    atomic_write_json(run_dir / "source_input.json", source_input_payload)
     atomic_write_json(run_dir / "manifest.json", manifest)
 
     # LLM 密钥只传给后台，不写入 manifest。
     return {"run_id": run_id, "manifest": manifest, "llm": llm_info}
 
 
+def _document_output_dir(run_dir: Path, source_index: int, source_label: str) -> Path:
+    """Build the per-document output directory path: documents/<序号>_<source>/."""
+    seq = str(source_index + 1).zfill(4)
+    sanitized = _sanitize_dirname(source_label)
+    return run_dir / "documents" / f"{seq}_{sanitized}"
+
+
+def process_one_document(
+    *,
+    source_index: int,
+    source_label: str,
+    paper_text: str,
+    text_field: str,
+    run_dir: Path,
+    prompt_snapshot_dir: Path,
+    llm: Dict[str, Any],
+    username: str,
+) -> Dict[str, Any]:
+    """Execute the full 6-step pipeline for one document.
+
+    Returns a result dict with keys:
+      - source_index, source, status
+      - If success: final_sample (dict), sample_count (int)
+      - If failed: error (str)
+    """
+    doc_dir = _document_output_dir(run_dir, source_index, source_label)
+    doc_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write per-document input.json
+    atomic_write_json(doc_dir / "input.json", {
+        "source_index": source_index,
+        "source": source_label,
+        "text_field": text_field,
+        "text_length": len(paper_text),
+    })
+
+    try:
+        # Step 1: screening
+        step1 = _run_step1(paper_text, llm, username, prompt_snapshot_dir)
+        atomic_write_json(doc_dir / "step1_screening.json", {
+            "step": 1, "step_name": "筛选相关文献",
+            "status": "completed", "result": step1,
+        })
+
+        if not step1.get("can_generate"):
+            stop_reason = step1.get("stop_reason") or "Step 1 判断该论文不适合构建当前支持的专业 CoT"
+            return {
+                "source_index": source_index,
+                "source": source_label,
+                "status": "skipped",
+                "error": stop_reason,
+            }
+
+        # Step 2: case card
+        step2 = _run_step2(paper_text, llm, username, prompt_snapshot_dir)
+        case_card = step2["case_card"]
+        atomic_write_json(doc_dir / "step2_case_card.json", {
+            "step": 2, "step_name": "构建文献案例卡",
+            "status": "completed", "result": step2,
+        })
+
+        # Step 3: type judgement
+        step3 = _run_step3(case_card, llm, username, prompt_snapshot_dir)
+        target = _extract_recommended_cot_type(step3)
+        if target and not step3.get("constructible_cot_types"):
+            target = None
+        step3_payload = {
+            "step": 3, "step_name": "自动判定本次任务的 CoT 类型",
+            "status": "completed", "result": step3,
+        }
+        if target:
+            step3_payload["cot_type"] = target["display_name"]
+            step3_payload["cot_type_key"] = target["key"]
+        atomic_write_json(doc_dir / "step3_type_judgement.json", step3_payload)
+
+        if not target:
+            missing = step3.get("missing_information") or []
+            reason = step3.get("recommendation_reason") or "Step 3 未推荐可构建的 CoT 类型"
+            if isinstance(missing, list) and missing:
+                reason = f"{reason}；证据缺口：{'；'.join(str(item) for item in missing[:5])}"
+            return {
+                "source_index": source_index,
+                "source": source_label,
+                "status": "skipped",
+                "error": reason,
+            }
+
+        # Per-CoT type directory inside the document directory
+        type_dir = doc_dir / target["key"]
+        type_dir.mkdir(parents=True, exist_ok=True)
+
+        # Step 4
+        step4 = _run_step4(target, case_card, step1, step3, llm, username, prompt_snapshot_dir)
+        atomic_write_json(type_dir / "step4_input.json", {
+            "step": 4, "step_name": "生成 input", "status": "completed",
+            "cot_type": target["display_name"], "cot_type_key": target["key"],
+            "result": step4,
+        })
+
+        # Step 5
+        step5 = _run_step5(target, case_card, step1, step3, step4, llm, username, prompt_snapshot_dir)
+        atomic_write_json(type_dir / "step5_chain.json", {
+            "step": 5, "step_name": "生成 chainofThought", "status": "completed",
+            "cot_type": target["display_name"], "cot_type_key": target["key"],
+            "result": step5,
+        })
+
+        # Step 6
+        step6 = _run_step6(target, step4, step5, llm, username, prompt_snapshot_dir)
+        sample = _build_final_sample(target, step4, step5, step6)
+        step6_payload = {
+            "step": 6, "step_name": "生成 output", "status": "completed",
+            "cot_type": target["display_name"], "cot_type_key": target["key"],
+            "result": step6, "final_sample": sample,
+        }
+        atomic_write_json(type_dir / "step6_output.json", step6_payload)
+
+        # Enrich sample with source info
+        sample["source_index"] = source_index
+        sample["source"] = source_label
+
+        # Write per-document final_samples.json
+        atomic_write_json(doc_dir / "final_samples.json", {
+            "schema_version": SCHEMA_VERSION,
+            "source_index": source_index,
+            "source": source_label,
+            "sample_count": 1,
+            "samples": [sample],
+        })
+
+        return {
+            "source_index": source_index,
+            "source": source_label,
+            "status": "success",
+            "final_sample": sample,
+            "sample_count": 1,
+        }
+
+    except (LLMCallError, FileNotFoundError, ValueError) as exc:
+        logger.error("文献 %s (#%d) 处理失败: %s", source_label, source_index + 1, exc)
+        return {
+            "source_index": source_index,
+            "source": source_label,
+            "status": "failed",
+            "error": str(exc)[:1000],
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("文献 %s (#%d) 处理意外失败", source_label, source_index + 1)
+        return {
+            "source_index": source_index,
+            "source": source_label,
+            "status": "failed",
+            "error": str(exc)[:1000],
+        }
+
+
 def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
+    """Run the professional CoT pipeline for all documents in a task.
+
+    For single-document tasks (input_count == 1), this preserves backward
+    compatibility with the original single-document manifest step tracking.
+    For multi-document tasks, manifest steps are used for overall run progress
+    while each document is processed via process_one_document().
+    """
     register_task()
     try:
         manifest = load_manifest(run_id)
         run_dir = get_run_dir(run_id)
-        paper_text = read_json(run_dir / "source_input.json")["paper_text"]
-        samples: List[Dict[str, Any]] = []
+        prompt_snapshot_dir = run_dir / "prompts"
 
-        try:
-            manifest["status"] = "running"
-            manifest["progress_label"] = "正在执行 Step 1：筛选相关文献"
-            _update_step(manifest, "step1_screening", status="running", progress_current=10, progress_label="调用 LLM 判断可生成性")
-            save_manifest(manifest)
-            step1 = _run_step1(paper_text, llm, username)
-            atomic_write_json(run_dir / "step1_screening.json", {"step": 1, "step_name": "筛选相关文献", "status": "completed", "result": step1})
-            _update_step(manifest, "step1_screening", status="completed", progress_current=100, progress_label="已完成")
-            manifest["step1_summary"] = step1
-            save_manifest(manifest)
+        source_input = read_json(run_dir / "source_input.json")
+        text_field = source_input["text_field"]
+        source_data = read_json(run_dir / "source.json")
+        input_count = len(source_data)
 
-            if not step1.get("can_generate"):
-                stop_reason = step1.get("stop_reason") or "Step 1 判断该论文不适合构建当前支持的专业 CoT"
-                _skip_remaining(manifest, stop_reason, from_step_index=1)
-                manifest["status"] = "completed"
-                manifest["stop_reason"] = stop_reason
-                manifest["progress_label"] = stop_reason
-                manifest["final_outputs"] = _write_final_outputs(run_id, samples)
-                save_manifest(manifest)
-                return
+        manifest["status"] = "running"
+        manifest["input_count"] = input_count
+        manifest["success_count"] = 0
+        manifest["failed_count"] = 0
+        manifest["progress_label"] = f"正在处理第 1/{input_count} 篇文献"
+        save_manifest(manifest)
 
-            manifest["progress_label"] = "正在执行 Step 2：构建文献案例卡"
-            _update_step(manifest, "step2_case_card", status="running", progress_current=10, progress_label="调用 LLM 抽取案例卡")
-            save_manifest(manifest)
-            step2 = _run_step2(paper_text, llm, username)
-            case_card = step2["case_card"]
-            atomic_write_json(run_dir / "step2_case_card.json", {"step": 2, "step_name": "构建文献案例卡", "status": "completed", "result": step2})
-            _update_step(manifest, "step2_case_card", status="completed", progress_current=100, progress_label="已完成")
+        all_samples: List[Dict[str, Any]] = []
+        batch_items: List[Dict[str, Any]] = []
+
+        for idx, record in enumerate(source_data):
+            source_label = record.get("source", f"item_{idx + 1}")
+            paper_text = record.get(text_field, "")
+
+            logger.info("开始处理第 %d/%d 篇文献: %s", idx + 1, input_count, source_label)
+            manifest["progress_label"] = f"正在处理第 {idx + 1}/{input_count} 篇文献：{source_label}"
             save_manifest(manifest)
 
-            manifest["progress_label"] = "正在执行 Step 3：自动判定本次任务的 CoT 类型"
-            _update_step(manifest, "step3_type_judgement", status="running", progress_current=10, progress_label="模型正在判定 CoT 类型")
-            save_manifest(manifest)
-            step3 = _run_step3(case_card, llm, username)
-            target = _extract_recommended_cot_type(step3)
-            if target and not step3.get("constructible_cot_types"):
-                target = None
-            step3_payload = {
-                "step": 3,
-                "step_name": "自动判定本次任务的 CoT 类型",
-                "status": "completed",
-                "result": step3,
-            }
-            if target:
-                step3_payload["cot_type"] = target["display_name"]
-                step3_payload["cot_type_key"] = target["key"]
-                manifest["target_cot_type"] = {"key": target["key"], "display_name": target["display_name"]}
-                manifest["recommended_cot_type"] = {"key": target["key"], "display_name": target["display_name"]}
-                _update_step(
-                    manifest,
-                    "step3_type_judgement",
-                    status="completed",
-                    progress_current=100,
-                    progress_label=f"模型判定 CoT 类型：{target['display_name']}",
-                    cot_type=target["display_name"],
-                    cot_type_key=target["key"],
-                )
-                for step_key, artifact_name in (
-                    ("step4_input", "step4_input.json"),
-                    ("step5_chain", "step5_chain.json"),
-                    ("step6_output", "step6_output.json"),
-                ):
-                    _update_step(
-                        manifest,
-                        step_key,
-                        progress_label=f"等待执行 {target['display_name']}",
-                        cot_type=target["display_name"],
-                        cot_type_key=target["key"],
-                        artifact_path=f"{target['key']}/{artifact_name}",
-                    )
+            doc_result = process_one_document(
+                source_index=idx,
+                source_label=source_label,
+                paper_text=paper_text,
+                text_field=text_field,
+                run_dir=run_dir,
+                prompt_snapshot_dir=prompt_snapshot_dir,
+                llm=llm,
+                username=username,
+            )
+
+            batch_items.append(doc_result)
+
+            if doc_result["status"] == "success":
+                all_samples.append(doc_result["final_sample"])
+                manifest["success_count"] = len([item for item in batch_items if item["status"] == "success"])
+                manifest["failed_count"] = len([item for item in batch_items if item["status"] != "success"])
+                logger.info("第 %d/%d 篇文献处理完成: %s", idx + 1, input_count, source_label)
             else:
-                _update_step(
-                    manifest,
-                    "step3_type_judgement",
-                    status="completed",
-                    progress_current=100,
-                    progress_label="模型判定 CoT 类型：无可构建类型",
+                manifest["success_count"] = len([item for item in batch_items if item["status"] == "success"])
+                manifest["failed_count"] = len([item for item in batch_items if item["status"] != "success"])
+                logger.warning(
+                    "第 %d/%d 篇文献处理失败: %s, 错误: %s",
+                    idx + 1, input_count, source_label, doc_result.get("error", ""),
                 )
-            atomic_write_json(run_dir / "step3_type_judgement.json", step3_payload)
-            manifest["step3_type_judgement"] = step3
+
+            # Update progress based on document completion
+            done_docs = idx + 1
+            manifest["progress_percentage"] = int(round((done_docs / input_count) * 100)) if input_count else 0
+
+            # For single-doc backward compatibility: update step statuses
+            if input_count == 1:
+                _update_single_doc_manifest_steps(manifest, doc_result)
+
             save_manifest(manifest)
 
-            if not target:
-                missing = step3.get("missing_information") or []
-                reason = step3.get("recommendation_reason") or "Step 3 未推荐可构建的 CoT 类型"
-                if isinstance(missing, list) and missing:
-                    reason = f"{reason}；证据缺口：{'；'.join(str(item) for item in missing[:5])}"
-                _skip_remaining(manifest, reason, from_step_index=3)
-                manifest["status"] = "completed"
-                manifest["stop_reason"] = reason
-                manifest["progress_label"] = reason
-                manifest["final_outputs"] = _write_final_outputs(run_id, samples)
-                manifest["sample_count"] = 0
-                save_manifest(manifest)
-                return
+        # Determine final run status
+        success_count = len([item for item in batch_items if item["status"] == "success"])
+        failed_count = len([item for item in batch_items if item["status"] == "failed"])
+        skipped_count = len([item for item in batch_items if item["status"] == "skipped"])
 
-            type_dir = run_dir / target["key"]
-            type_dir.mkdir(parents=True, exist_ok=True)
+        manifest["success_count"] = success_count
+        manifest["failed_count"] = failed_count + skipped_count
 
-            manifest["progress_label"] = f"正在执行 {target['display_name']} Step 4"
-            _update_step(manifest, "step4_input", status="running", progress_current=15, progress_label="生成主 input")
-            save_manifest(manifest)
-            step4 = _run_step4(target, case_card, step1, step3, llm, username)
-            atomic_write_json(type_dir / "step4_input.json", {"step": 4, "step_name": "生成 input", "status": "completed", "cot_type": target["display_name"], "cot_type_key": target["key"], "result": step4})
-            _update_step(manifest, "step4_input", status="completed", progress_current=100, progress_label="已完成")
-            save_manifest(manifest)
+        # Write batch_summary.json
+        batch_summary = {
+            "schema_version": SCHEMA_VERSION,
+            "run_id": run_id,
+            "input_count": input_count,
+            "success_count": success_count,
+            "failed_count": failed_count + skipped_count,
+            "items": batch_items,
+            "prompt_template": manifest.get("prompt_template"),
+        }
+        atomic_write_json(run_dir / "batch_summary.json", batch_summary)
 
-            manifest["progress_label"] = f"正在执行 {target['display_name']} Step 5"
-            _update_step(manifest, "step5_chain", status="running", progress_current=15, progress_label="生成 chainofThought")
-            save_manifest(manifest)
-            step5 = _run_step5(target, case_card, step1, step3, step4, llm, username)
-            atomic_write_json(type_dir / "step5_chain.json", {"step": 5, "step_name": "生成 chainofThought", "status": "completed", "cot_type": target["display_name"], "cot_type_key": target["key"], "result": step5})
-            _update_step(manifest, "step5_chain", status="completed", progress_current=100, progress_label="已完成")
-            save_manifest(manifest)
+        # Write aggregate final_samples.json / .jsonl
+        manifest["final_outputs"] = _write_final_outputs(run_id, all_samples)
+        manifest["sample_count"] = len(all_samples)
 
-            manifest["progress_label"] = f"正在执行 {target['display_name']} Step 6"
-            _update_step(manifest, "step6_output", status="running", progress_current=15, progress_label="生成 output")
-            save_manifest(manifest)
-            step6 = _run_step6(target, step4, step5, llm, username)
-            sample = _build_final_sample(target, step4, step5, step6)
-            step6_payload = {"step": 6, "step_name": "生成 output", "status": "completed", "cot_type": target["display_name"], "cot_type_key": target["key"], "result": step6, "final_sample": sample}
-            atomic_write_json(type_dir / "step6_output.json", step6_payload)
-            samples.append(sample)
-            _update_step(manifest, "step6_output", status="completed", progress_current=100, progress_label="已完成")
-            manifest["sample_count"] = len(samples)
-            save_manifest(manifest)
+        # For single-doc backward compatibility: copy per-document artifacts to run root
+        # so that existing frontend code looking for flat paths still works.
+        if input_count == 1 and len(batch_items) == 1:
+            _write_single_doc_legacy_artifacts(run_dir, batch_items[0])
 
-            manifest["final_outputs"] = _write_final_outputs(run_id, samples)
-            manifest["sample_count"] = len(samples)
+        if success_count == 0:
+            # All documents failed
+            manifest["status"] = "failed"
+            manifest["error_message"] = f"全部 {input_count} 篇文献处理失败"
+            manifest["progress_label"] = f"全部文献处理失败（{input_count} 篇）"
+            _mark_all_steps_failed(manifest, manifest["error_message"])
+        elif success_count > 0:
             manifest["status"] = "completed"
-            manifest["progress_label"] = f"全部完成，生成 {len(samples)} 条样本"
-            save_manifest(manifest)
+            if failed_count + skipped_count > 0:
+                manifest["progress_label"] = f"完成：{success_count} 篇成功，{failed_count + skipped_count} 篇失败"
+            else:
+                manifest["progress_label"] = f"全部完成，生成 {len(all_samples)} 条样本"
 
-        except (LLMCallError, FileNotFoundError, ValueError) as exc:
-            logger.error("professional cot run %s failed: %s", run_id, exc)
-            _mark_run_failed(manifest, str(exc))
-        except Exception as exc:  # noqa: BLE001 - 后台任务必须兜底写入 manifest
-            logger.exception("professional cot run %s unexpected failure", run_id)
-            _mark_run_failed(manifest, str(exc))
+        save_manifest(manifest)
+
+    except (LLMCallError, FileNotFoundError, ValueError) as exc:
+        logger.error("professional cot run %s failed: %s", run_id, exc)
+        _mark_run_failed(load_manifest(run_id), str(exc))
+    except Exception as exc:  # noqa: BLE001 - 后台任务必须兜底写入 manifest
+        logger.exception("professional cot run %s unexpected failure", run_id)
+        _mark_run_failed(load_manifest(run_id), str(exc))
     finally:
         unregister_task()
+
+
+def _update_single_doc_manifest_steps(manifest: Dict[str, Any], doc_result: Dict[str, Any]) -> None:
+    """For backward compatibility with single-document tasks, update the manifest
+    step statuses based on the single document processing result."""
+    if doc_result["status"] == "success":
+        # All steps completed
+        for step in manifest.get("steps", []):
+            if step.get("status") in ("pending", "running"):
+                step["status"] = "completed"
+                step["progress_current"] = 100
+                step["progress_label"] = "已完成"
+        # Set target_cot_type from the document's final sample
+        sample = doc_result.get("final_sample", {})
+        if sample.get("cot_type"):
+            for cot_type in COT_TYPES:
+                if cot_type["display_name"] == sample.get("cot_type"):
+                    manifest["target_cot_type"] = {"key": cot_type["key"], "display_name": cot_type["display_name"]}
+                    manifest["recommended_cot_type"] = {"key": cot_type["key"], "display_name": cot_type["display_name"]}
+                    break
+    elif doc_result["status"] in ("failed", "skipped"):
+        error_msg = doc_result.get("error", "处理失败")
+        _skip_remaining(manifest, error_msg, from_step_index=0)
+        for step in manifest.get("steps", []):
+            if step.get("status") == "running":
+                step["status"] = "failed"
+                step["progress_label"] = "执行失败"
+                step["error_message"] = error_msg[:500]
+                break
+
+
+def _write_single_doc_legacy_artifacts(run_dir: Path, doc_result: Dict[str, Any]) -> None:
+    """Copy per-document artifacts to the run root for backward compatibility.
+
+    The original single-document pipeline wrote step artifacts directly under
+    run_dir (e.g. step1_screening.json, <cot_key>/step4_input.json). The new
+    batch pipeline writes them under documents/<seq>_<source>/ instead. For
+    single-doc runs, we also write legacy flat copies so existing code that
+    looks for the old paths still works.
+    """
+    source_index = doc_result["source_index"]
+    source_label = doc_result["source"]
+    doc_dir = _document_output_dir(run_dir, source_index, source_label)
+
+    # Copy step1, step2, step3 to run root
+    for step_file in ("step1_screening.json", "step2_case_card.json", "step3_type_judgement.json"):
+        src = doc_dir / step_file
+        if src.exists():
+            atomic_write_json(run_dir / step_file, read_json(src))
+
+    # Copy cot-type-specific step4/5/6 to run_dir/<cot_key>/stepN.json
+    sample = doc_result.get("final_sample", {})
+    cot_type_key = None
+    for ct in COT_TYPES:
+        if ct["display_name"] == sample.get("cot_type"):
+            cot_type_key = ct["key"]
+            break
+    if cot_type_key:
+        type_dir = doc_dir / cot_type_key
+        legacy_type_dir = run_dir / cot_type_key
+        legacy_type_dir.mkdir(parents=True, exist_ok=True)
+        for step_file in ("step4_input.json", "step5_chain.json", "step6_output.json"):
+            src = type_dir / step_file
+            if src.exists():
+                atomic_write_json(legacy_type_dir / step_file, read_json(src))
+
+
+def _mark_all_steps_failed(manifest: Dict[str, Any], message: str) -> None:
+    """Mark all pending/running steps as failed."""
+    for step in manifest.get("steps", []):
+        if step.get("status") in ("pending", "running"):
+            step["status"] = "failed"
+            step["progress_label"] = "执行失败"
+            step["error_message"] = message[:500]
 
 
 def _mark_run_failed(manifest: Dict[str, Any], message: str) -> None:
@@ -1101,10 +1362,14 @@ def _manifest_to_list_item(manifest: Dict[str, Any]) -> Dict[str, Any]:
         "failed_steps": manifest.get("failed_steps", 0),
         "total_steps": manifest.get("total_steps", 0),
         "sample_count": manifest.get("sample_count", 0),
+        "input_count": manifest.get("input_count", 1),
+        "success_count": manifest.get("success_count", 0),
+        "failed_count": manifest.get("failed_count", 0),
         "source_filename": manifest.get("source_file", {}).get("filename"),
         "text_field": manifest.get("source_input", {}).get("text_field"),
         "target_cot_type": manifest.get("target_cot_type"),
         "recommended_cot_type": manifest.get("recommended_cot_type"),
+        "prompt_template": manifest.get("prompt_template"),
         "model": manifest.get("llm", {}).get("model"),
         "created_at": manifest.get("created_at"),
         "updated_at": manifest.get("updated_at"),
@@ -1129,6 +1394,15 @@ def get_run_detail_for_user(run_id: str, user_id: int) -> Optional[Dict[str, Any
             detail["final_samples_preview"] = final_data.get("samples", [])[:5]
         except Exception:
             detail["final_samples_preview"] = []
+
+    # Include batch_summary if available
+    batch_summary_path = get_run_dir(run_id) / "batch_summary.json"
+    if batch_summary_path.exists():
+        try:
+            detail["batch_summary"] = read_json(batch_summary_path)
+        except Exception:
+            detail["batch_summary"] = None
+
     return detail
 
 

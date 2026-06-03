@@ -43,6 +43,12 @@ const routes = [
         meta: { title: '标注流水线2：专业 CoT 构建' },
       },
       {
+        path: 'professional-cot-prompts',
+        name: 'ProfessionalCotPrompts',
+        component: () => import('../views/CotHcot/ProfessionalCotPromptTemplates.vue'),
+        meta: { title: '标注流水线2提示词' },
+      },
+      {
         path: 'professional-cot-runs/:id',
         name: 'ProfessionalCotRunDetail',
         component: () => import('../views/CotHcot/ProfessionalCotDetail.vue'),
