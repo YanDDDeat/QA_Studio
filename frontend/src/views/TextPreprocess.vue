@@ -4,7 +4,7 @@
 
     <el-card class="tool-card">
       <template #header>
-        <span class="card-title">预处理配置</span>
+        <span class="card-title">大文献（博士论文）拆分及预处理</span>
       </template>
       <div class="config-layout">
         <div class="config-form">

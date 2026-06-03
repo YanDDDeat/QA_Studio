@@ -53,6 +53,15 @@
   - [x] 新建标注流水线2任务时选择一个完整提示词模板包版本
   - [x] 任务启动时保存完整提示词快照，历史 run 可追溯
 
+- [ ] 分支 `feature/step1-3-integrated-cot`：单COT生成 Step1-3 融合节点修复，详见 `docs/requirements/31_需求_单COT生成Step1-3融合节点修复.md`
+  - [ ] 使用融合提示词一次完成文献可用性、关键信息抽取和 CoT 类型路由
+  - [ ] 单COT生成 manifest 展示节点从 6 个逻辑步骤调整为 4 个节点
+  - [ ] Step 4/5 改为接收 `step1_3_result`，并兼容提示词快照与旧模板补默认文件
+
+- [ ] 分支 `feature/document-stage-matrix`：单COT生成文献级阶段进度视图，详见 `docs/requirements/32_需求_单COT生成文献级阶段进度视图.md`
+  - [ ] 详情接口返回 `document_stage_matrix`，按文献展示 Step1-3 / Step4 / Step5 / Step6 状态与中间产物路径
+  - [ ] 单COT生成详情页新增文献级阶段进度矩阵，支持有产物的阶段点击预览
+
 - [x] 分支 `feature/llm-field-auto-mapping`：详见 `docs/requirements/12_需求_LLM返回字段自动映射到数据库列.md`
   - [x] 新建 `field_mapper.py`：动态映射 LLM 字段到数据库列
   - [x] 改造 6 个管线阶段：替换硬编码白名单为自动映射

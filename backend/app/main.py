@@ -210,7 +210,7 @@ async def startup_event():
         from app.services.professional_cot_service import recover_zombie_runs
         cot_zombie_count = recover_zombie_runs()
         if cot_zombie_count:
-            print(f"[Startup] {cot_zombie_count} 个运行中的僵尸标注流水线2run已自动改为暂停")
+            print(f"[Startup] {cot_zombie_count} 个运行中的僵尸单COT生成流水线run已自动改为暂停")
 
     except Exception as e:
         print(f"[Startup] Error initializing: {e}")
@@ -251,7 +251,7 @@ app.include_router(dataset_assessment.router, prefix="/api/dataset-assessment", 
 app.include_router(generic_generate.router, prefix="/api/generic-generate", tags=["通用生成"])
 app.include_router(text_preprocess.router, prefix="/api/text-preprocess", tags=["文本预处理"])
 app.include_router(cot_hcot_pipeline.router, prefix="/api/cothcot", tags=["CoT/H-CoT Pipeline"])
-app.include_router(professional_cot.router, prefix="/api/professional-cot", tags=["标注流水线2"])
+app.include_router(professional_cot.router, prefix="/api/professional-cot", tags=["单COT生成流水线"])
 
 
 @app.get("/")

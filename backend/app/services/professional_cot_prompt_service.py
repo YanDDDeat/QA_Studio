@@ -104,6 +104,13 @@ COT_PROMPT_LAYOUT: List[Dict[str, Any]] = [
 ]
 
 COMMON_PROMPTS = {
+    "common.step1_3": {
+        "label": "Step 1-3：文献信息抽取与 CoT 类型路由",
+        "path": Path("common") / "step1_3_integrated_extraction_and_routing.md",
+    },
+}
+
+LEGACY_COMMON_PROMPTS = {
     "common.step1": {
         "label": "Step 1：筛选相关文献",
         "path": Path("common") / "step1_screening.md",
@@ -205,6 +212,26 @@ def _extract_common_prompt(step_no: int) -> str:
     return match.group(0).strip() if match else content
 
 
+def _read_step1_3_prompt() -> str:
+    return read_text(PROMPT_SOURCE_ROOT / "step1_3_integrated_extraction_and_routing.md")
+
+
+def _default_common_prompt_content(prompt_key: str) -> str:
+    if prompt_key == "common.step1_3":
+        return _read_step1_3_prompt()
+    legacy_info = LEGACY_COMMON_PROMPTS.get(prompt_key)
+    if legacy_info:
+        return _extract_common_prompt(legacy_info["step_no"])
+    raise PromptTemplateError("非法通用 prompt_key")
+
+
+def _ensure_common_prompt_files(prompts_dir: Path) -> None:
+    for prompt_key, info in COMMON_PROMPTS.items():
+        target = prompts_dir / info["path"]
+        if not target.exists():
+            atomic_write_text(target, _default_common_prompt_content(prompt_key))
+
+
 def _system_template_dir() -> Path:
     return TEMPLATE_STORAGE_ROOT / "system" / "default_v1"
 
@@ -232,6 +259,8 @@ def _template_manifest_path(template_dir: Path) -> Path:
 def _prompt_relative_path(prompt_key: str) -> Path:
     if prompt_key in COMMON_PROMPTS:
         return COMMON_PROMPTS[prompt_key]["path"]
+    if prompt_key in LEGACY_COMMON_PROMPTS:
+        return LEGACY_COMMON_PROMPTS[prompt_key]["path"]
 
     match = re.fullmatch(r"([a-z0-9_]+)\.(step[456])", prompt_key or "")
     if not match:
@@ -274,7 +303,11 @@ def ensure_system_template() -> Dict[str, Any]:
     prompts_dir.mkdir(parents=True, exist_ok=True)
 
     for prompt_key, info in COMMON_PROMPTS.items():
-        atomic_write_text(prompts_dir / info["path"], _extract_common_prompt(info["step_no"]))
+        atomic_write_text(prompts_dir / info["path"], _default_common_prompt_content(prompt_key))
+    for prompt_key, info in LEGACY_COMMON_PROMPTS.items():
+        target = prompts_dir / info["path"]
+        if not target.exists():
+            atomic_write_text(target, _default_common_prompt_content(prompt_key))
 
     for cot in COT_PROMPT_LAYOUT:
         source_dir = PROMPT_SOURCE_ROOT / cot["prompt_dir"]
@@ -459,9 +492,11 @@ def get_template_detail(template_id: str, user_id: int) -> Dict[str, Any]:
 
 def get_prompt_item(template_id: str, user_id: int, prompt_key: str) -> Dict[str, Any]:
     template_dir = require_template_dir(template_id, user_id)
+    _ensure_common_prompt_files(_template_prompts_dir(template_dir))
     manifest = _decorate_manifest(_load_manifest(template_dir), user_id)
     rel_path = _prompt_relative_path(prompt_key)
     content = read_text(_template_prompts_dir(template_dir) / rel_path)
+    _ensure_common_prompt_files(_template_prompts_dir(_system_template_dir()))
     default_content = read_text(_template_prompts_dir(_system_template_dir()) / rel_path)
     return {
         "prompt_key": prompt_key,
@@ -487,10 +522,12 @@ def update_prompt_item(template_id: str, user_id: int, prompt_key: str, content:
 
 def restore_prompt_item_default(template_id: str, user_id: int, prompt_key: str) -> Dict[str, Any]:
     template_dir = require_template_dir(template_id, user_id)
+    _ensure_common_prompt_files(_template_prompts_dir(template_dir))
     manifest = _load_manifest(template_dir)
     if manifest.get("is_readonly") or manifest.get("owner_id") != user_id:
         raise PromptTemplateError("只能恢复自己的用户模板")
     rel_path = _prompt_relative_path(prompt_key)
+    _ensure_common_prompt_files(_template_prompts_dir(_system_template_dir()))
     default_content = read_text(_template_prompts_dir(_system_template_dir()) / rel_path)
     atomic_write_text(_template_prompts_dir(template_dir) / rel_path, default_content)
     _save_manifest(template_dir, manifest)
@@ -604,10 +641,12 @@ def create_run_prompt_snapshot(template_id: str, user_id: int, run_dir: Path) ->
     resolved = resolve_template_for_run(user_id, template_id)
     template_dir = resolved["template_dir"]
     template_manifest = resolved["manifest"]
+    _ensure_common_prompt_files(_template_prompts_dir(template_dir))
     snapshot_dir = run_dir / "prompts"
     if snapshot_dir.exists():
         shutil.rmtree(snapshot_dir)
     shutil.copytree(_template_prompts_dir(template_dir), snapshot_dir)
+    _ensure_common_prompt_files(snapshot_dir)
     snapshot_manifest = {
         "schema_version": SCHEMA_VERSION,
         "template_id": template_manifest.get("template_id"),
@@ -627,5 +666,6 @@ def create_run_prompt_snapshot(template_id: str, user_id: int, run_dir: Path) ->
 def read_prompt_from_snapshot(prompt_snapshot_dir: Path, prompt_key: str) -> str:
     if not prompt_snapshot_dir.exists() or not (prompt_snapshot_dir / "manifest.json").exists():
         raise PromptTemplateError("run 提示词快照不存在")
+    _ensure_common_prompt_files(prompt_snapshot_dir)
     rel_path = _prompt_relative_path(prompt_key)
     return read_text(prompt_snapshot_dir / rel_path)

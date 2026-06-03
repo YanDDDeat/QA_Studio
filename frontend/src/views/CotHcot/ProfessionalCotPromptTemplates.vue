@@ -294,11 +294,9 @@ const selectedPromptBreadcrumb = computed(() => {
 const variableHint = computed(() => {
   if (!selectedPrompt.value) return ''
   const key = selectedPrompt.value.prompt_key
-  if (key.startsWith('common.step1')) return 'paper_text：输入的论文原文'
-  if (key.startsWith('common.step2')) return 'case_card：由 Step 1 筛选出的文献案例'
-  if (key.startsWith('common.step3')) return 'step1, step2：前两步的输出结果'
-  if (key.includes('.step4')) return 'step3：Step 3 的 CoT 类型判定结果；case_card：文献案例卡'
-  if (key.includes('.step5')) return 'step4：Step 4 生成的 input'
+  if (key.startsWith('common.step1_3')) return 'paper_text：输入的论文原文；source_id/source_label：文献来源标识'
+  if (key.includes('.step4')) return 'step1_3_result：融合节点输出的文献可用性、关键信息和 CoT 类型路由结果'
+  if (key.includes('.step5')) return 'step1_3_result：融合节点输出结果；step4：Step 4 生成的 input'
   if (key.includes('.step6')) return 'step4, step5：前两步的输出结果'
   return ''
 })

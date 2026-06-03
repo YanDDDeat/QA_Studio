@@ -71,6 +71,14 @@
           </el-select>
           <el-input v-else v-model="createForm.text_field" placeholder="默认 text，可手动改为 content / paper_text 等" />
         </el-form-item>
+        <el-form-item label="文献类型" prop="source_type">
+          <el-select v-model="createForm.source_type" placeholder="选择文献类型" style="width: 100%">
+            <el-option label="research_paper（研究论文）" value="research_paper" />
+            <el-option label="phd_thesis（博士论文）" value="phd_thesis" />
+            <el-option label="unknown（未知）" value="unknown" />
+          </el-select>
+          <div class="upload-tip">文献类型将传递到最终产出样本的 source_type 字段，默认 unknown。</div>
+        </el-form-item>
         <el-form-item label="提示词模板版本" prop="prompt_template_id">
           <el-select
             v-model="createForm.prompt_template_id"
@@ -145,7 +153,7 @@
           <span>单COT生成</span>
           <el-button type="primary" @click="openCreateDialog">
             <el-icon><Plus /></el-icon>
-            新建流水线2
+            新建流水线
           </el-button>
         </div>
       </template>
@@ -279,7 +287,7 @@ async function fetchRuns() {
     pagination.value.page = res.page || pagination.value.page
     pagination.value.pageSize = res.page_size || pagination.value.pageSize
   } catch (err) {
-    ElMessage.error('获取流水线2列表失败')
+    ElMessage.error('获取流水线列表失败')
   } finally {
     loading.value = false
   }
@@ -306,6 +314,7 @@ const createForm = ref({
   run_name: '',
   source_file_id: null,
   text_field: 'text',
+  source_type: 'unknown',
   llm_config_id: null,
   model: '',
   file: null,
@@ -372,6 +381,7 @@ async function openCreateDialog() {
     run_name: '',
     source_file_id: null,
     text_field: 'text',
+    source_type: 'unknown',
     llm_config_id: null,
     model: '',
     file: null,
@@ -461,6 +471,7 @@ async function handleCreate() {
       formData.append('file', selectedFile.value)
     }
     formData.append('text_field', createForm.value.text_field)
+    formData.append('source_type', createForm.value.source_type)
     formData.append('llm_config_id', createForm.value.llm_config_id)
     formData.append('model', createForm.value.model)
     formData.append('run_name', createForm.value.run_name)
