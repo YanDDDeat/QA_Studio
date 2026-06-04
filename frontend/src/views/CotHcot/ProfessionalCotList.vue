@@ -77,7 +77,7 @@
             <el-option label="phd_thesis（博士论文）" value="phd_thesis" />
             <el-option label="unknown（未知）" value="unknown" />
           </el-select>
-          <div class="upload-tip">文献类型将传递到最终产出样本的 source_type 字段，默认 unknown。</div>
+          <div class="upload-tip">文献类型将传递到最终产出样本的 source_type 字段，默认 phd_thesis。</div>
         </el-form-item>
         <el-form-item label="提示词模板版本" prop="prompt_template_id">
           <el-select
@@ -329,7 +329,7 @@ const createForm = ref({
   run_name: '',
   source_file_id: null,
   text_field: 'text',
-  source_type: 'unknown',
+  source_type: 'phd_thesis',
   llm_config_id: null,
   model: '',
   file: null,
@@ -396,7 +396,7 @@ async function openCreateDialog() {
     run_name: '',
     source_file_id: null,
     text_field: 'text',
-    source_type: 'unknown',
+    source_type: 'phd_thesis',
     llm_config_id: null,
     model: '',
     file: null,

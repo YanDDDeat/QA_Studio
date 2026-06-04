@@ -38,6 +38,7 @@
         :auto-upload="false"
         :limit="100"
         accept=".json,.md"
+        multiple
         :on-change="handleFileChange"
         :on-remove="handleFileRemove"
         :on-exceed="handleExceed"
