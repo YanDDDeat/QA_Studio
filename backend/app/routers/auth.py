@@ -146,7 +146,11 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/create-user", response_model=UserResponse)
-async def create_user(request: CreateUserRequest, db: Session = Depends(get_db)):
+async def create_user(
+    request: CreateUserRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Admin-only endpoint to create a new user account.
 
     Requires the admin password (configured via ADMIN_PASSWORD env variable)
