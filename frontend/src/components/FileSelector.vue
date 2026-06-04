@@ -36,7 +36,7 @@
     <div v-if="mode === 'upload'" class="upload-section">
       <el-upload
         :auto-upload="false"
-        :limit="1"
+        :limit="100"
         accept=".json,.md"
         :on-change="handleFileChange"
         :on-remove="handleFileRemove"
@@ -48,7 +48,7 @@
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽文件到此处或 <em>点击上传</em></div>
         <template #tip>
-          <div class="el-upload__tip">支持 .json 和 .md 格式文件</div>
+          <div class="el-upload__tip">支持 .json 和 .md 格式文件；MD 可批量上传，JSON 仍为单文件上传</div>
         </template>
       </el-upload>
 
@@ -161,7 +161,7 @@
           :disabled="uploadDisabled"
           @click="submitUpload"
         >
-          上传
+          {{ currentFileIsMd ? `上传 ${mdUploadFiles.length} 个 MD 文件` : '上传' }}
         </el-button>
       </div>
     </div>
@@ -219,6 +219,10 @@ const currentFileIsMd = computed(() => {
   const name = uploadFileList.value[0]?.name || ''
   return name.toLowerCase().endsWith('.md')
 })
+
+const mdUploadFiles = computed(() => (
+  uploadFileList.value.filter(file => (file.name || '').toLowerCase().endsWith('.md'))
+))
 
 const headingLevelOptions = computed(() => {
   const counts = headingPreview.value.level_counts || {}
@@ -382,13 +386,31 @@ async function loadHeadingPreview(file) {
 }
 
 function handleFileChange(file, fileList) {
-  uploadFileList.value = fileList
-  if (fileList.length === 0) {
+  const filename = file.name || ''
+  const lowerName = filename.toLowerCase()
+
+  if (lowerName.endsWith('.md')) {
+    uploadFileList.value = fileList.filter(item => (item.name || '').toLowerCase().endsWith('.md'))
+  } else if (lowerName.endsWith('.json')) {
+    if (fileList.length > 1) {
+      ElMessage.warning('JSON 只能上传一个文件，已保留最后选择的 JSON 文件')
+    }
+    uploadFileList.value = [file]
+  } else {
+    ElMessage.warning('仅支持 .json 和 .md 格式文件')
+    uploadFileList.value = fileList.filter(item => {
+      const name = (item.name || '').toLowerCase()
+      return name.endsWith('.md') || name.endsWith('.json')
+    })
+  }
+
+  if (uploadFileList.value.length === 0) {
     resetHeadingPreview()
     return
   }
-  if (file.name?.toLowerCase().endsWith('.md')) {
-    loadHeadingPreview(file)
+  if (currentFileIsMd.value) {
+    const previewFile = uploadFileList.value[uploadFileList.value.length - 1]
+    loadHeadingPreview(previewFile)
   } else {
     resetHeadingPreview()
   }
@@ -396,11 +418,20 @@ function handleFileChange(file, fileList) {
 
 function handleFileRemove(file, fileList) {
   uploadFileList.value = fileList
-  resetHeadingPreview()
+  if (currentFileIsMd.value && uploadFileList.value.length > 0) {
+    loadHeadingPreview(uploadFileList.value[uploadFileList.value.length - 1])
+  } else {
+    resetHeadingPreview()
+  }
 }
 
-function handleExceed() {
-  ElMessage.warning('只能上传一个文件，请先移除已选文件')
+function handleExceed(files) {
+  const hasMd = Array.from(files || []).some(file => (file.name || '').toLowerCase().endsWith('.md'))
+  if (hasMd || currentFileIsMd.value) {
+    ElMessage.warning('一次最多选择 100 个 MD 文件，请分批上传')
+    return
+  }
+  ElMessage.warning('JSON 只能上传一个文件，请先移除已选文件')
 }
 
 async function submitUpload() {
@@ -416,11 +447,13 @@ async function submitUpload() {
 
   uploadLoading.value = true
   const formData = new FormData()
-  formData.append('files', uploadFileList.value[0].raw)
 
   try {
     let res
     if (currentFileIsMd.value) {
+      mdUploadFiles.value.forEach(file => {
+        if (file.raw) formData.append('files', file.raw)
+      })
       formData.append('source_type', mdForm.value.source_type)
       formData.append('split_mode', mdForm.value.split_mode)
       if (mdForm.value.split_mode === 'section' && mdForm.value.heading_level) {
@@ -434,6 +467,7 @@ async function submitUpload() {
       formData.append('min_chars', mdForm.value.min_chars)
       res = await uploadMdFile(formData)
     } else {
+      formData.append('files', uploadFileList.value[0].raw)
       formData.append('text_field', uploadForm.value.text_field)
       res = await uploadManagedFile(formData)
     }
@@ -442,10 +476,13 @@ async function submitUpload() {
     const errors = res.errors || []
 
     if (uploaded.length > 0) {
-      ElMessage.success('文件上传成功')
-      if (uploaded[0].warning) {
-        ElMessage.warning({ message: uploaded[0].warning, duration: 8000 })
-      }
+      const successMsg = errors.length > 0
+        ? `已成功上传 ${uploaded.length} 个文件，${errors.length} 个失败`
+        : `成功上传 ${uploaded.length} 个文件`
+      ElMessage.success(successMsg)
+      uploaded
+        .filter(item => item.warning)
+        .forEach(item => ElMessage.warning({ message: `${item.filename || '文件'}: ${item.warning}`, duration: 8000 }))
       emit('update:modelValue', uploaded[0].id)
       emit('upload-success', uploaded[0])
       mode.value = 'existing'
@@ -460,7 +497,7 @@ async function submitUpload() {
     }
     if (errors.length > 0) {
       const msg = errors.map(e => `${e.filename}: ${e.error}`).join('\n')
-      ElMessage.error(`上传失败: ${msg}`)
+      ElMessage.error({ message: `上传失败 ${errors.length} 个文件:\n${msg}`, duration: 8000 })
     }
   } catch (err) {
     const detail = err.response?.data?.detail
