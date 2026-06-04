@@ -2293,11 +2293,7 @@ def get_export_zip_bytes(run_id: str, user_id: int) -> Optional[tuple]:
     if final_json.exists() and final_json.is_file():
         files_to_pack.append((final_json, "final_samples.json"))
 
-    # 3. final_samples.jsonl
-    final_jsonl = run_dir / "final_samples.jsonl"
-    if final_jsonl.exists() and final_jsonl.is_file():
-        files_to_pack.append((final_jsonl, "final_samples.jsonl"))
-
+    
     if not files_to_pack:
         return None
 
