@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File as UploadFileParam, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -464,8 +465,10 @@ async def export_zip(
     if result is None:
         raise HTTPException(status_code=404, detail="无可导出的文件")
     buf, zip_filename = result
+    # RFC 5987: encode non-ASCII filename to avoid latin-1 error in HTTP headers
+    encoded = quote(zip_filename, safe='')
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={zip_filename}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
     )
