@@ -407,7 +407,7 @@ export function getProfessionalCotTypes() {
 }
 
 export function getProfessionalCotSourceFiles(params = {}) {
-  return api.get('/file-manage', { params: { page_size: 1000, ...params } })
+  return api.get('/file-manage', { params: { page_size: 1000, source_stage: 'upload', ...params } })
 }
 
 export function startProfessionalCotRun(data) {
