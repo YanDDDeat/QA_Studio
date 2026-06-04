@@ -1170,7 +1170,8 @@ async def run_pipeline_step_bg(
             logger.error(f"Task {sub_task_id}: Sub-task not found")
             return
 
-        _execute_llm_step(
+        await asyncio.to_thread(
+            _execute_llm_step,
             db=db,
             sub_task=sub_task,
             step_name=step_name,
