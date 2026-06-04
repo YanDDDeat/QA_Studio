@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from urllib.parse import quote_plus
 from typing import List
 
 from pydantic_settings import BaseSettings
@@ -98,7 +99,7 @@ class Settings(BaseSettings):
     @property
     def DATABASE_URL(self) -> str:
         return (
-            f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}"
+            f"mysql+pymysql://{self.DB_USER}:{quote_plus(self.DB_PASSWORD)}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
             f"?charset=utf8mb4"
         )
