@@ -334,6 +334,15 @@
               下载 final_samples.jsonl
             </el-button>
             <el-button
+              type="warning"
+              size="small"
+              :disabled="!hasFinalJson"
+              @click="downloadExportZip"
+            >
+              <el-icon><Download /></el-icon>
+              打包下载（含源文件）
+            </el-button>
+            <el-button
               type="primary"
               size="small"
               :disabled="!hasFinalJson"
@@ -378,6 +387,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft, Document, Download, Loading } from '@element-plus/icons-vue'
 import {
   downloadProfessionalCotExport,
+  downloadProfessionalCotExportZip,
   getProfessionalCotArtifact,
   getProfessionalCotRunDetail,
   pauseProfessionalCotRun,
@@ -556,6 +566,26 @@ async function downloadExport(type) {
     window.URL.revokeObjectURL(url)
   } catch (err) {
     const detail = await extractErrorDetail(err, '下载失败')
+    ElMessage.error(detail)
+  }
+}
+
+async function downloadExportZip() {
+  try {
+    const blob = await downloadProfessionalCotExportZip(runId.value)
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    // 用源文件原始名命名 ZIP，方便识别
+    const sourceName = run.value?.source_file?.filename || 'source.json'
+    const stem = sourceName.replace(/\.[^.]+$/, '')
+    a.download = `${stem}_export.zip`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (err) {
+    const detail = await extractErrorDetail(err, '打包下载失败')
     ElMessage.error(detail)
   }
 }

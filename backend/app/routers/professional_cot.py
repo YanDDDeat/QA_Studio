@@ -6,7 +6,7 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File as UploadFileParam, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from app.services.professional_cot_service import (
     COT_TYPES,
     create_initial_run,
     get_export_path,
+    get_export_zip_bytes,
     get_run_detail_for_user,
     list_runs_for_user,
     load_manifest,
@@ -447,4 +448,24 @@ async def export_jsonl(
         path=str(path),
         media_type="application/x-ndjson",
         filename=f"{run_id}_final_samples.jsonl",
+    )
+
+
+@router.get("/runs/{run_id}/export/zip")
+async def export_zip(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Download ZIP archive containing source file + final samples."""
+    try:
+        result = get_export_zip_bytes(run_id, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail="无可导出的文件")
+    buf, zip_filename = result
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={zip_filename}"},
     )

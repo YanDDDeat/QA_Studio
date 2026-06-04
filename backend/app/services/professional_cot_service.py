@@ -2260,3 +2260,55 @@ def read_artifact(run_id: str, user_id: int, rel_path: str) -> Any:
 def get_export_path(run_id: str, user_id: int, export_type: str) -> Optional[Path]:
     filename = "final_samples.jsonl" if export_type == "jsonl" else "final_samples.json"
     return resolve_artifact_path(run_id, user_id, filename)
+
+
+def get_export_zip_bytes(run_id: str, user_id: int) -> Optional[tuple]:
+    """将 run 目录下的 source.json + final_samples 打包成 ZIP，返回 (BytesIO, source_filename)。
+
+    source_filename 用于前端/后端给 ZIP 文件命名（用源文件原始名，方便用户识别）。
+    老数据兼容：如果 source.json 不存在则跳过，只打包最终产物。
+    如果没有任何可打包的文件则返回 None。
+    """
+    import io
+    import zipfile
+
+    manifest = get_run_detail_for_user(run_id, user_id)
+    if manifest is None:
+        return None
+
+    run_dir = get_run_dir(run_id).resolve()
+    source_filename = manifest.get("source_file", {}).get("filename", "source.json")
+
+    # 收集要打包的文件：(磁盘路径, ZIP内文件名)
+    files_to_pack = []
+
+    # 1. source.json → 源文件_<原始文件名>.json
+    source_path = run_dir / "source.json"
+    if source_path.exists() and source_path.is_file():
+        zip_name = f"源文件_{source_filename}"
+        files_to_pack.append((source_path, zip_name))
+
+    # 2. final_samples.json
+    final_json = run_dir / "final_samples.json"
+    if final_json.exists() and final_json.is_file():
+        files_to_pack.append((final_json, "final_samples.json"))
+
+    # 3. final_samples.jsonl
+    final_jsonl = run_dir / "final_samples.jsonl"
+    if final_jsonl.exists() and final_jsonl.is_file():
+        files_to_pack.append((final_jsonl, "final_samples.jsonl"))
+
+    if not files_to_pack:
+        return None
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for disk_path, zip_name in files_to_pack:
+            zf.write(disk_path, zip_name)
+    buf.seek(0)
+
+    # ZIP 文件名：去掉源文件的扩展名，加 _export.zip
+    stem = Path(source_filename).stem if source_filename else run_id
+    zip_filename = f"{stem}_export.zip"
+
+    return buf, zip_filename
