@@ -2282,11 +2282,10 @@ def get_export_zip_bytes(run_id: str, user_id: int) -> Optional[tuple]:
     # 收集要打包的文件：(磁盘路径, ZIP内文件名)
     files_to_pack = []
 
-    # 1. source.json → 源文件_<原始文件名>.json
+    # 1. source.json → source_file.json (avoid Chinese for zip internal encoding)
     source_path = run_dir / "source.json"
     if source_path.exists() and source_path.is_file():
-        zip_name = f"源文件_{source_filename}"
-        files_to_pack.append((source_path, zip_name))
+        files_to_pack.append((source_path, "source_file.json"))
 
     # 2. final_samples.json
     final_json = run_dir / "final_samples.json"
