@@ -568,9 +568,22 @@ async function fetchFileContent(fileId) {
   }
 }
 
-function downloadPreviewFile() {
-  if (previewFileId.value) {
-    downloadManagedFile(previewFileId.value)
+async function downloadPreviewFile() {
+  if (!previewFileId.value) return
+  try {
+    const blob = await downloadManagedFile(previewFileId.value)
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = previewFileName.value || '输出文件.json'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('下载已开始')
+  } catch (err) {
+    const detail = err.response?.data?.detail || '下载失败'
+    ElMessage.error(detail)
   }
 }
 

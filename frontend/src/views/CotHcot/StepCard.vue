@@ -77,6 +77,17 @@
       </el-button>
 
       <el-button
+        v-if="step.output_file_id && step.step_name !== 'export_jsonl'"
+        type="primary"
+        size="small"
+        link
+        @click="downloadOutputFile"
+      >
+        <el-icon><Download /></el-icon>
+        下载
+      </el-button>
+
+      <el-button
         v-if="step.output_file_id && step.step_name === 'export_jsonl'"
         type="success"
         size="small"
