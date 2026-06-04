@@ -2,7 +2,7 @@
   <div class="gzip-test-page">
     <h2>Gzip 压缩上传测试</h2>
     <p style="color: #909399; margin-bottom: 16px;">
-      文件在浏览器内用 Gzip 压缩后再上传。防火墙只能看到二进制密文，无法做内容检测。
+      文件在浏览器内用 Gzip 压缩后再上传。
     </p>
 
     <el-card style="max-width: 600px;">
