@@ -43,6 +43,8 @@ logger = logging.getLogger("qa_studio.cot_quality_check")
 
 router = APIRouter()
 
+COT_QUALITY_CHECK_STAGE = StageEnum.COT_QUALITY_CHECK
+
 
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
@@ -137,6 +139,57 @@ def _update_progress(db: Session, task_id: int, current: int):
     if task:
         task.progress_current = current
         db.commit()
+
+
+def _prompt_visible_filter(current_user_id: int):
+    return or_(Prompt.user_id == current_user_id, Prompt.user_id.is_(None))
+
+
+def _resolve_cot_quality_prompt(
+    db: Session,
+    current_user: User,
+    prompt_id: Optional[int] = None,
+) -> Tuple[Optional[Prompt], str]:
+    """Resolve a CoT quality-check prompt with built-in fallback."""
+    if prompt_id:
+        prompt_obj = (
+            db.query(Prompt)
+            .filter(Prompt.id == prompt_id, _prompt_visible_filter(current_user.id))
+            .first()
+        )
+        if prompt_obj is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="提示词不存在或无权使用")
+        if prompt_obj.stage != COT_QUALITY_CHECK_STAGE:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="提示词阶段必须是 cot_quality_check")
+        return prompt_obj, prompt_obj.content
+
+    user_default = (
+        db.query(Prompt)
+        .filter(
+            Prompt.user_id == current_user.id,
+            Prompt.stage == COT_QUALITY_CHECK_STAGE,
+            Prompt.is_default == True,
+        )
+        .order_by(Prompt.id.desc())
+        .first()
+    )
+    if user_default:
+        return user_default, user_default.content
+
+    global_default = (
+        db.query(Prompt)
+        .filter(
+            Prompt.user_id.is_(None),
+            Prompt.stage == COT_QUALITY_CHECK_STAGE,
+            Prompt.is_default == True,
+        )
+        .order_by(Prompt.id.desc())
+        .first()
+    )
+    if global_default:
+        return global_default, global_default.content
+
+    return None, COT_QUALITY_CHECK_SYSTEM_PROMPT
 
 
 def _flush_results_to_files(pass_file, fail_file, assessed_file, pass_items, fail_items, assessed_items):
@@ -395,27 +448,15 @@ async def start_cot_quality_check(
     if not is_valid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=validation_msg)
 
-    # ── Resolve prompt (optional override) ──
-    prompt_content = None
-    prompt_id = None
-    if data.prompt_id:
-        prompt_obj = (
-            db.query(Prompt)
-            .filter(Prompt.id == data.prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
-            .first()
-        )
-        if prompt_obj is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="提示词不存在")
-        prompt_content = prompt_obj.content
-        prompt_id = prompt_obj.id
+    # ── Resolve prompt (explicit > user default > global default > embedded fallback) ──
+    prompt_obj, prompt_content = _resolve_cot_quality_prompt(db, current_user, data.prompt_id)
+    prompt_id = prompt_obj.id if prompt_obj else None
 
     # ── Resolve model ──
     effective_model = data.model
     if not effective_model:
-        if prompt_id:
-            prompt_obj = db.query(Prompt).filter(Prompt.id == prompt_id).first()
-            if prompt_obj and prompt_obj.model:
-                effective_model = prompt_obj.model
+        if prompt_obj and prompt_obj.model:
+            effective_model = prompt_obj.model
         if not effective_model:
             from app.config import settings
             effective_model = settings.effective_llm_model
@@ -425,10 +466,8 @@ async def start_cot_quality_check(
     api_key_override = None
     effective_llm_config_id = data.llm_config_id
 
-    if prompt_id and not effective_llm_config_id:
-        prompt_obj = db.query(Prompt).filter(Prompt.id == prompt_id).first()
-        if prompt_obj:
-            effective_llm_config_id = prompt_obj.llm_config_id
+    if prompt_obj and not effective_llm_config_id:
+        effective_llm_config_id = prompt_obj.llm_config_id
 
     if effective_llm_config_id:
         llm_config_obj = db.query(LLMConfig).filter(LLMConfig.id == effective_llm_config_id).first()
@@ -474,6 +513,28 @@ async def start_cot_quality_check(
         "status": task.status.value,
         "progress_current": task.progress_current,
         "progress_total": task.progress_total,
+    }
+
+
+@router.get("/default-prompt")
+async def get_cot_quality_check_default_prompt(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the effective default CoT quality-check prompt, including embedded fallback."""
+    prompt_obj, content = _resolve_cot_quality_prompt(db, current_user)
+    return {
+        "id": prompt_obj.id if prompt_obj else None,
+        "user_id": prompt_obj.user_id if prompt_obj else None,
+        "stage": COT_QUALITY_CHECK_STAGE.value,
+        "version": prompt_obj.version if prompt_obj else 0,
+        "name": prompt_obj.name if prompt_obj else "内置兜底提示词",
+        "content": content,
+        "model": prompt_obj.model if prompt_obj else None,
+        "llm_config_id": prompt_obj.llm_config_id if prompt_obj else None,
+        "is_default": bool(prompt_obj.is_default) if prompt_obj else True,
+        "is_builtin": prompt_obj is None,
+        "created_at": prompt_obj.created_at.isoformat() if prompt_obj and prompt_obj.created_at else None,
     }
 
 

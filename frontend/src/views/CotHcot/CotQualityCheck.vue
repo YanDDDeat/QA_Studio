@@ -32,13 +32,35 @@
             </el-form-item>
 
             <el-form-item label="选择模型">
-              <el-select v-model="form.model" placeholder="请选择LLM模型" style="width: 100%" :disabled="!selectedLLMConfigId">
+              <el-select v-model="form.model" placeholder="请选择LLM模型" style="width: 100%" :disabled="!selectedLLMConfigId" @change="modelTouched = true">
                 <el-option
                   v-for="m in currentModelOptions"
                   :key="m"
                   :label="m"
                   :value="m"
                 />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="质检提示词">
+              <el-select
+                v-model="form.prompt_id"
+                placeholder="未选择时后端使用默认/内置提示词"
+                style="width: 100%"
+                filterable
+                clearable
+                :loading="promptLoading"
+                @change="handlePromptChange"
+              >
+                <el-option
+                  v-for="p in promptOptions"
+                  :key="p.id"
+                  :label="formatPromptLabel(p)"
+                  :value="p.id"
+                >
+                  <span>{{ formatPromptLabel(p) }}</span>
+                  <span class="prompt-option-desc">{{ p.content.substring(0, 36) }}{{ p.content.length > 36 ? '...' : '' }}</span>
+                </el-option>
               </el-select>
             </el-form-item>
 
@@ -64,6 +86,28 @@
         </div>
 
         <div class="config-result">
+          <div class="prompt-panel">
+            <div class="prompt-panel-header">
+              <span class="prompt-title">当前质检提示词</span>
+              <el-tag v-if="selectedPrompt?.is_builtin" type="info" size="small">内置兜底</el-tag>
+              <el-tag v-else-if="selectedPrompt?.user_id == null" type="warning" size="small">全局共享</el-tag>
+              <el-tag v-else type="success" size="small">我的提示词</el-tag>
+            </div>
+            <el-input
+              v-model="promptEditorContent"
+              type="textarea"
+              :rows="12"
+              resize="vertical"
+              placeholder="加载质检提示词中..."
+              :disabled="taskRunning"
+            />
+            <div class="prompt-actions">
+              <el-input v-model="promptEditorName" placeholder="提示词名称" size="small" :disabled="taskRunning" />
+              <el-button size="small" type="primary" :loading="savePromptLoading" :disabled="taskRunning || !promptEditorContent.trim()" @click="handleSavePrompt">
+                {{ canUpdateSelectedPrompt ? '保存修改' : '创建为我的提示词' }}
+              </el-button>
+            </div>
+          </div>
           <div v-if="qualityCheckResult" class="result-stats">
             <div class="stat-item">
               <span class="stat-label">总记录数</span>
@@ -223,6 +267,10 @@ import {
   stopTask,
   resumeTask,
   getLLMConfigs,
+  getPrompts,
+  createPrompt,
+  updatePrompt,
+  getCotQualityCheckDefaultPrompt,
 } from '../../api'
 import FileSelector from '../../components/FileSelector.vue'
 import TaskConfigDialog from '../../components/TaskConfigDialog.vue'
@@ -233,11 +281,14 @@ const form = ref({
   file_id: null,
   output_name: '',
   model: '',
+  prompt_id: null,
 })
 
 const fileOptions = ref([])
 const llmConfigs = ref([])
 const selectedLLMConfigId = ref(null)
+const llmTouched = ref(false)
+const modelTouched = ref(false)
 const currentModelOptions = computed(() => {
   const cfg = llmConfigs.value.find(c => c.id === selectedLLMConfigId.value)
   if (!cfg) return []
@@ -251,11 +302,19 @@ const taskRunning = ref(false)
 const qualityCheckResult = ref(null)
 const logs = ref([])
 const logLoading = ref(false)
+const promptOptions = ref([])
+const selectedPrompt = ref(null)
+const promptEditorContent = ref('')
+const promptEditorName = ref('')
+const promptLoading = ref(false)
+const savePromptLoading = ref(false)
 
 let pollTimer = null
 let logTimer = null
 
 const canStart = computed(() => form.value.file_id && form.value.output_name && form.value.model && !taskRunning.value)
+const currentUserId = computed(() => Number(localStorage.getItem('user_id') || 0))
+const canUpdateSelectedPrompt = computed(() => selectedPrompt.value?.id && selectedPrompt.value.user_id === currentUserId.value)
 
 // Auto-fill output name when source file changes
 watch(() => form.value.file_id, (newFileId) => {
@@ -338,9 +397,11 @@ async function fetchFileOptions(showAll) {
 }
 
 function handleLLMConfigChange(configId) {
+  llmTouched.value = true
   const cfg = llmConfigs.value.find(c => c.id === configId)
   if (cfg) {
     form.value.model = cfg.default_model || ''
+    modelTouched.value = true
   } else {
     form.value.model = ''
   }
@@ -353,6 +414,99 @@ async function fetchLLMConfigs() {
   } catch (err) {
     ElMessage.error('获取LLM配置失败')
     llmConfigs.value = []
+  }
+}
+
+function formatPromptLabel(prompt) {
+  if (!prompt) return '内置兜底提示词'
+  const owner = prompt.user_id == null ? '全局' : '我的'
+  const def = prompt.is_default ? ' 默认' : ''
+  return `${prompt.name || `v${prompt.version}`}${def}（${owner}）`
+}
+
+function syncPromptEditor(prompt) {
+  selectedPrompt.value = prompt
+  promptEditorContent.value = prompt?.content || ''
+  promptEditorName.value = prompt?.name || 'CoT质检提示词'
+}
+
+function applyPromptDefaults(prompt) {
+  if (!prompt) return
+  if (prompt.llm_config_id && !llmTouched.value) {
+    selectedLLMConfigId.value = prompt.llm_config_id
+  }
+  if (prompt.model && !modelTouched.value) {
+    form.value.model = prompt.model
+  }
+}
+
+async function fetchPrompts() {
+  promptLoading.value = true
+  try {
+    const [promptsRes, defaultRes] = await Promise.all([
+      getPrompts({ stage: 'cot_quality_check' }),
+      getCotQualityCheckDefaultPrompt(),
+    ])
+    promptOptions.value = Array.isArray(promptsRes) ? promptsRes : []
+    const preferred = form.value.prompt_id
+      ? promptOptions.value.find(p => p.id === form.value.prompt_id)
+      : promptOptions.value.find(p => p.id === defaultRes.id)
+    if (preferred) {
+      form.value.prompt_id = preferred.id
+      syncPromptEditor(preferred)
+      applyPromptDefaults(preferred)
+    } else {
+      form.value.prompt_id = null
+      syncPromptEditor({ ...defaultRes, is_builtin: true })
+      applyPromptDefaults(defaultRes)
+    }
+  } catch (err) {
+    ElMessage.error('获取质检提示词失败')
+    promptOptions.value = []
+  } finally {
+    promptLoading.value = false
+  }
+}
+
+function handlePromptChange(promptId) {
+  const prompt = promptOptions.value.find(p => p.id === promptId)
+  if (prompt) {
+    syncPromptEditor(prompt)
+    applyPromptDefaults(prompt)
+  } else {
+    fetchPrompts()
+  }
+}
+
+async function handleSavePrompt() {
+  savePromptLoading.value = true
+  try {
+    let saved
+    if (canUpdateSelectedPrompt.value) {
+      saved = await updatePrompt(selectedPrompt.value.id, {
+        content: promptEditorContent.value,
+        name: promptEditorName.value,
+        model: form.value.model || null,
+        llm_config_id: selectedLLMConfigId.value || null,
+      })
+      ElMessage.success('提示词已保存')
+    } else {
+      saved = await createPrompt({
+        stage: 'cot_quality_check',
+        name: promptEditorName.value || 'CoT质检提示词',
+        content: promptEditorContent.value,
+        model: form.value.model || null,
+        llm_config_id: selectedLLMConfigId.value || null,
+      })
+      ElMessage.success('已创建为我的提示词')
+    }
+    await fetchPrompts()
+    form.value.prompt_id = saved.id
+    syncPromptEditor(saved)
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '保存提示词失败')
+  } finally {
+    savePromptLoading.value = false
   }
 }
 
@@ -394,6 +548,7 @@ async function handleStart() {
       output_name: form.value.output_name,
       model: form.value.model,
       llm_config_id: selectedLLMConfigId.value || null,
+      prompt_id: form.value.prompt_id || null,
     })
     taskId.value = res.task_id
     taskRunning.value = true
@@ -527,6 +682,7 @@ async function restoreTaskState() {
 
 onMounted(async () => {
   await fetchLLMConfigs()
+  await fetchPrompts()
   await restoreTaskState()
 })
 
@@ -551,6 +707,11 @@ onUnmounted(() => stopPolling())
 .stat-value { color: #303133; font-size: 14px; font-weight: 600 }
 .download-area { margin-top: 16px; display: flex; gap: 12px }
 .result-empty { text-align: center; color: #909399; padding: 40px }
+.prompt-panel { padding: 12px; border: 1px solid #ebeef5; border-radius: 6px; margin-bottom: 16px; background: #fafafa }
+.prompt-panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px }
+.prompt-title { font-size: 14px; font-weight: 600; color: #303133 }
+.prompt-actions { display: flex; gap: 8px; margin-top: 10px }
+.prompt-option-desc { float: right; color: #909399; font-size: 13px; max-width: 220px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis }
 
 .progress-card { margin-bottom: 20px }
 .card-header { display: flex; justify-content: space-between; align-items: center }

@@ -59,6 +59,11 @@
   - [ ] Step 4/5 改为接收 `step1_3_result`，并兼容提示词快照与旧模板补默认文件
 
 ## CoT质检功能
+- [x] 分支 `feature/cot-quality-configurable-prompt`：CoT质检提示词可配置，详见 `docs/requirements/37_需求_CoT质检提示词可配置.md`
+  - [x] CoT质检页面新增提示词选择与编辑入口
+  - [x] 后端按 `prompt_id` 或阶段默认提示词解析 system prompt，并保留内置兜底
+  - [x] 启动任务保存本次使用的提示词，输出格式保持兼容
+
 - [x] 分支 `feature/cothcot-preprocess-batch-md-v2`：CoT/H-CoT 文本预处理批量上传与单 COT 文件过滤，详见 `docs/requirements/36_需求_CoTHCoT文本预处理批量上传与单COT文件过滤.md`
   - [x] 大文献（博士论文）拆分及预处理支持一次选择多个 MD 文件
   - [x] 每个 MD 按同一拆分策略独立生成 JSON 文件并进入数据中心

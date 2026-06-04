@@ -523,3 +523,7 @@ export function getCotQualityCheckStatus(taskId) {
 export function getCotQualityCheckSourceFiles(params) {
   return api.get('/cot-quality-check/source-files', { params })
 }
+
+export function getCotQualityCheckDefaultPrompt() {
+  return api.get('/cot-quality-check/default-prompt')
+}
