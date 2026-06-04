@@ -59,10 +59,10 @@
   - [ ] Step 4/5 改为接收 `step1_3_result`，并兼容提示词快照与旧模板补默认文件
 
 ## CoT质检功能
-- [ ] 分支 `feature/cothcot-preprocess-batch-md-v2`：CoT/H-CoT 文本预处理批量上传与单 COT 文件过滤，详见 `docs/requirements/36_需求_CoTHCoT文本预处理批量上传与单COT文件过滤.md`
-  - [ ] 大文献（博士论文）拆分及预处理支持一次选择多个 MD 文件
-  - [ ] 每个 MD 按同一拆分策略独立生成 JSON 文件并进入数据中心
-  - [ ] 单COT生成新建流水线的系统 JSON 文件默认只展示上传阶段文件
+- [x] 分支 `feature/cothcot-preprocess-batch-md-v2`：CoT/H-CoT 文本预处理批量上传与单 COT 文件过滤，详见 `docs/requirements/36_需求_CoTHCoT文本预处理批量上传与单COT文件过滤.md`
+  - [x] 大文献（博士论文）拆分及预处理支持一次选择多个 MD 文件
+  - [x] 每个 MD 按同一拆分策略独立生成 JSON 文件并进入数据中心
+  - [x] 单COT生成新建流水线的系统 JSON 文件默认只展示上传阶段文件
 
 - [x] 分支 `feature/cot-quality-samples`：CoT质检兼容顶层 samples 数组，详见 `docs/requirements/35_需求_CoT质检兼容samples数组.md`
   - [x] 顶层包装对象存在 `samples` 数组时，将其展开为多条待质检记录
