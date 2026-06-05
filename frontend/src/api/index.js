@@ -414,6 +414,10 @@ export function startProfessionalCotRun(data) {
   return api.post('/professional-cot/runs', data)
 }
 
+export function getProfessionalCotMonitor() {
+  return api.get('/professional-cot/monitor')
+}
+
 export function listProfessionalCotRuns(params = {}) {
   return api.get('/professional-cot/runs', { params })
 }
