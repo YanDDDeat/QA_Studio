@@ -16,7 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from app.models.models import LLMConfig
+from app.models.models import LLMConfig, ProfessionalCotTypeStat
+from app.database import SessionLocal
 from app.services.llm_service import LLMCallError, call_llm_json_sync
 from app.services.professional_cot_prompt_service import (
     create_run_prompt_snapshot,
@@ -253,6 +254,101 @@ COT_TYPES: List[Dict[str, Any]] = [
 
 COT_TYPE_BY_KEY = {item["key"]: item for item in COT_TYPES}
 COT_ENUM_TEXT = "\n".join(f"{idx + 1}. {item['display_name']}" for idx, item in enumerate(COT_TYPES))
+
+
+# ---------------------------------------------------------------------------
+#  全局COT类型优先队列均衡分配
+# ---------------------------------------------------------------------------
+
+def allocate_cot_type_from_pool(candidate_keys: List[str]) -> Optional[Dict[str, Any]]:
+    """从候选池中选全局计数最小的COT类型，分配后计数+1。
+
+    Args:
+        candidate_keys: 该文献可构建的COT类型key列表（decision=build或build_with_caution）
+
+    Returns:
+        匹配到的COT类型dict（含key/display_name），或None（候选池为空）
+    """
+    if not candidate_keys:
+        return None
+
+    # 只保留在COT_TYPES中真实存在的key
+    valid_keys = [k for k in candidate_keys if k in COT_TYPE_BY_KEY]
+    if not valid_keys:
+        return None
+
+    db = SessionLocal()
+    try:
+        # 查询候选池中每类的全局计数
+        rows = db.query(ProfessionalCotTypeStat).filter(
+            ProfessionalCotTypeStat.cot_type_key.in_(valid_keys)
+        ).all()
+
+        # 构建 {key: count} 映射，缺少的行视为0（迁移脚本未跑或遗漏）
+        count_map = {}
+        for row in rows:
+            count_map[row.cot_type_key] = row.count
+        for k in valid_keys:
+            if k not in count_map:
+                count_map[k] = 0
+
+        # 选计数最小的类型（同计数无所谓，取第一个）
+        min_key = min(valid_keys, key=lambda k: count_map[k])
+        min_count = count_map[min_key]
+        target = COT_TYPE_BY_KEY[min_key]
+
+        # 分配后：该类型全局计数+1
+        stat_row = db.query(ProfessionalCotTypeStat).filter(
+            ProfessionalCotTypeStat.cot_type_key == min_key
+        ).first()
+        if stat_row:
+            stat_row.count = min_count + 1
+        else:
+            # 该类型行不存在（迁移未跑），插入一行
+            stat_row = ProfessionalCotTypeStat(
+                cot_type_key=min_key,
+                display_name=target["display_name"],
+                count=1,
+            )
+            db.add(stat_row)
+        db.commit()
+
+        logger.info(
+            "优先队列分配: 文献候选池 %s → 选择 %s (全局计数 %d→%d)",
+            valid_keys, target["display_name"], min_count, min_count + 1,
+        )
+        return target
+    except Exception as exc:
+        db.rollback()
+        logger.warning("优先队列分配失败，回退到LLM推荐: %s", exc)
+        # 分配失败时不阻塞Pipeline，回退到LLM推荐逻辑
+        return None
+    finally:
+        db.close()
+
+
+def get_cot_type_distribution() -> List[Dict[str, Any]]:
+    """查询DB返回10类COT的全局计数分布，用于monitor接口展示。"""
+    db = SessionLocal()
+    try:
+        rows = db.query(ProfessionalCotTypeStat).all()
+        row_map = {row.cot_type_key: row.count for row in rows}
+        return [
+            {
+                "key": item["key"],
+                "display_name": item["display_name"],
+                "count": row_map.get(item["key"], 0),
+            }
+            for item in COT_TYPES
+        ]
+    except Exception:
+        # DB不可用时返回10类初始0值
+        return [
+            {"key": item["key"], "display_name": item["display_name"], "count": 0}
+            for item in COT_TYPES
+        ]
+    finally:
+        db.close()
 
 
 def utc_now_iso() -> str:
@@ -1701,7 +1797,17 @@ def process_one_document(
             username=username,
             prompt_snapshot_dir=prompt_snapshot_dir,
         )
-        target = normalize_cot_type(step1_3.get("recommended_cot_type_key") or step1_3.get("recommended_cot_type"))
+        # 从候选池（decision=build或build_with_caution的类型）中，
+        # 通过全局优先队列选计数最小的COT类型
+        candidate_keys = [
+            item.get("cot_type_key")
+            for item in (step1_3.get("cot_type_judgement") or [])
+            if isinstance(item, dict) and item.get("decision") in ("build", "build_with_caution")
+        ]
+        target = allocate_cot_type_from_pool(candidate_keys)
+        # 优先队列分配失败时，回退到LLM推荐
+        if target is None:
+            target = normalize_cot_type(step1_3.get("recommended_cot_type_key") or step1_3.get("recommended_cot_type"))
         step1_3_payload = {
             "step": "1-3",
             "step_name": "文献信息抽取与 CoT 类型路由",
@@ -2161,6 +2267,7 @@ def get_running_monitor() -> Dict[str, Any]:
             "total_success_count": 0,
             "total_failed_count": 0,
             "runs": [],
+            "cot_type_distribution": get_cot_type_distribution(),
         }
 
     all_runs: List[Dict[str, Any]] = []
@@ -2205,6 +2312,7 @@ def get_running_monitor() -> Dict[str, Any]:
         "total_success_count": total_success,
         "total_failed_count": total_failed,
         "runs": all_runs,
+        "cot_type_distribution": get_cot_type_distribution(),
     }
 
 

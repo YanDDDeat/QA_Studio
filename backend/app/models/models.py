@@ -198,6 +198,15 @@ class Task(Base):
     logs = relationship("TaskLog", back_populates="task", cascade="all, delete-orphan")
 
 
+class ProfessionalCotTypeStat(Base):
+    """全局COT类型产出计数器，用于优先队列均衡分配"""
+    __tablename__ = "professional_cot_type_stats"
+
+    cot_type_key = Column(String(64), primary_key=True)   # 如 "performance_improvement"
+    display_name = Column(String(128), nullable=False)     # 如 "性能提升路径 CoT"
+    count = Column(Integer, default=0, nullable=False)     # 全局累计分配数
+
+
 class TaskLog(Base):
     __tablename__ = "task_logs"
 

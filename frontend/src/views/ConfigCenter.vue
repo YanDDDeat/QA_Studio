@@ -367,6 +367,26 @@
           </el-card>
         </div>
 
+        <!-- COT类型分布统计（手动刷新） -->
+        <div style="margin-top: 20px; display: flex; align-items: center; justify-content: space-between;">
+          <h4 style="margin: 0;">COT类型分布统计</h4>
+          <el-button type="primary" size="small" :loading="cotDistLoading" @click="fetchCotTypeDistribution">
+            <el-icon><Refresh /></el-icon>
+            刷新统计
+          </el-button>
+        </div>
+        <div class="cot-type-stats" v-loading="cotDistLoading">
+          <el-card
+            v-for="item in cotTypeDistribution"
+            :key="item.key"
+            shadow="hover"
+            class="cot-stat-card"
+          >
+            <div class="cot-stat-name">{{ item.display_name }}</div>
+            <div class="cot-stat-count">{{ item.count }}</div>
+          </el-card>
+        </div>
+
         <el-table
           :data="cotMonitor.runs"
           style="width: 100%; margin-top: 10px;"
@@ -462,6 +482,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import {
   getStages,
   getPromptConfigs,
@@ -514,9 +535,26 @@ const cotMonitor = ref({
   total_success_count: 0,
   total_failed_count: 0,
   runs: [],
+  cot_type_distribution: [],
 })
 const cotMonitorLoading = ref(false)
 let cotMonitorTimer = null
+
+// ----- COT类型分布统计（手动刷新） -----
+const cotTypeDistribution = ref([])
+const cotDistLoading = ref(false)
+
+async function fetchCotTypeDistribution() {
+  cotDistLoading.value = true
+  try {
+    const res = await getProfessionalCotMonitor()
+    cotTypeDistribution.value = res?.cot_type_distribution || []
+  } catch {
+    // 非管理员静默失败
+  } finally {
+    cotDistLoading.value = false
+  }
+}
 
 // ----- Use template dialog -----
 const useTemplateVisible = ref(false)
@@ -971,6 +1009,7 @@ async function fetchCotMonitor() {
       total_success_count: 0,
       total_failed_count: 0,
       runs: [],
+      cot_type_distribution: [],
     }
   } catch (e) {
     // 非管理员静默失败
@@ -991,6 +1030,7 @@ onMounted(async () => {
     runningTasksTimer = setInterval(fetchRunningTasks, 5000)
     fetchCotMonitor()
     cotMonitorTimer = setInterval(fetchCotMonitor, 5000)
+    fetchCotTypeDistribution()  // COT类型分布：仅首次加载，手动刷新
   }
   // Load prompts for the first stage
   if (activeStage.value) {
@@ -1175,5 +1215,31 @@ onUnmounted(() => {
 }
 .summary-fail .summary-value {
   color: #f56c6c;
+}
+
+.cot-type-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.cot-stat-card {
+  width: 210px;
+  flex-shrink: 0;
+  text-align: center;
+}
+.cot-stat-card .el-card__body {
+  padding: 12px 8px;
+}
+.cot-stat-name {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.4;
+}
+.cot-stat-count {
+  font-size: 24px;
+  font-weight: 700;
+  color: #409eff;
+  margin-top: 6px;
 }
 </style>
