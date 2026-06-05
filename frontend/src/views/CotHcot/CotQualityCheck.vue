@@ -642,8 +642,8 @@ function stopPolling() {
 async function handleDownload(fileId, type) {
   if (!fileId) { ElMessage.warning('文件不存在'); return }
   try {
-    const res = await downloadManagedFile(fileId)
-    const url = window.URL.createObjectURL(new Blob([res.data]))
+    const blob = await downloadManagedFile(fileId)
+    const url = window.URL.createObjectURL(blob instanceof Blob ? blob : new Blob([blob]))
     const link = document.createElement('a')
     link.href = url
     const suffixMap = { pass: 'pass', fail: 'fail', eval: 'eval' }
