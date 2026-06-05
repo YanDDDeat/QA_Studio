@@ -25,7 +25,7 @@ from typing import Optional
 # 默认阈值常量(可通过 monkey-patch 用于测试)
 # ---------------------------------------------------------------------------
 
-MIN_TOKEN_THRESHOLD = 100           # too_short 触发合并阈值
+MIN_TOKEN_THRESHOLD = 1000          # too_short 触发合并阈值
 SHORT_LINE_LEN = 30                 # 行长 < 此值算"短行"
 TOC_SHORT_LINE_RATIO = 0.70         # 短行占比 > 此值判定为目录(配合 TOC 模式)
 TOC_PATTERN_RATIO = 0.30            # TOC 模式行占比 > 此值即判定为目录

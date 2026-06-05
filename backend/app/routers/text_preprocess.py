@@ -24,7 +24,7 @@ router = APIRouter()
 class TextPreprocessRequest(BaseModel):
     file_id: int = Field(..., description="源 JSON 文件 ID")
     text_field: Optional[str] = Field(None, description="文本字段名；为空则使用文件记录的 text_field")
-    min_token_threshold: int = Field(200, ge=1, le=10000, description="短文本合并/保留阈值")
+    min_token_threshold: int = Field(1000, ge=1, le=10000, description="短文本合并/保留阈值")
     output_filename: Optional[str] = Field(None, description="输出文件基础名")
 
 

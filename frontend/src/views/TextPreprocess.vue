@@ -171,7 +171,7 @@ const result = ref(null)
 const form = ref({
   file_id: null,
   text_field: 'text',
-  min_token_threshold: 200,
+  min_token_threshold: 1000,
   output_filename: '',
 })
 
