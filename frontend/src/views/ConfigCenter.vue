@@ -339,6 +339,87 @@
         </el-card>
 
         <el-divider />
+        <h4>单COT生成任务监控</h4>
+        <div class="monitor-summary" v-loading="cotMonitorLoading">
+          <el-card shadow="hover" class="summary-card">
+            <div class="summary-value">{{ cotMonitor.running_count }}</div>
+            <div class="summary-label">运行中</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card">
+            <div class="summary-value">{{ cotMonitor.paused_count }}</div>
+            <div class="summary-label">已暂停</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card summary-success">
+            <div class="summary-value">{{ cotMonitor.completed_count }}</div>
+            <div class="summary-label">已完成</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card summary-fail">
+            <div class="summary-value">{{ cotMonitor.failed_count }}</div>
+            <div class="summary-label">失败</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card">
+            <div class="summary-value">{{ cotMonitor.active_user_count }}</div>
+            <div class="summary-label">使用用户数</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card">
+            <div class="summary-value">{{ cotMonitor.total_count }}</div>
+            <div class="summary-label">总任务数</div>
+          </el-card>
+        </div>
+
+        <el-table
+          :data="cotMonitor.runs"
+          style="width: 100%; margin-top: 10px;"
+          empty-text="暂无单COT生成任务"
+        >
+          <el-table-column prop="username" label="用户" width="100" />
+          <el-table-column prop="run_name" label="任务名" min-width="160" show-overflow-tooltip />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag
+                :type="row.status === 'running' ? 'primary' : row.status === 'completed' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'paused' ? 'warning' : 'info'"
+                size="small"
+              >
+                {{ row.status === 'running' ? '运行中' : row.status === 'completed' ? '已完成' : row.status === 'failed' ? '失败' : row.status === 'paused' ? '已暂停' : row.status }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="model" label="模型" width="140" show-overflow-tooltip />
+          <el-table-column prop="llm_config_name" label="LLM配置" width="120" show-overflow-tooltip />
+          <el-table-column label="输入文件" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.source_filename || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="进度" width="120">
+            <template #default="{ row }">
+              {{ row.success_count + row.failed_count }}/{{ row.input_count }}篇
+            </template>
+          </el-table-column>
+          <el-table-column label="完成率" width="100">
+            <template #default="{ row }">
+              <el-progress
+                :percentage="row.progress_percentage || 0"
+                :stroke-width="14"
+                :text-inside="true"
+                style="width: 80px;"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="CoT类型" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.recommended_cot_type?.display_name || row.target_cot_type?.display_name || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="progress_label" label="当前步骤" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="created_at" label="创建时间" width="170">
+            <template #default="{ row }">
+              {{ row.created_at ? new Date(row.created_at).toLocaleString() : '-' }}
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-divider />
         <h4>运行中任务</h4>
         <el-table
           :data="runningTasks"
@@ -396,6 +477,7 @@ import {
   getSystemConfig,
   updateSystemConfig,
   getRunningTasks,
+  getProfessionalCotMonitor,
 } from '../api'
 
 // ----- Admin detection -----
@@ -419,6 +501,22 @@ const systemConfigSaving = ref(false)
 const runningTasks = ref([])
 const runningTasksLoading = ref(false)
 let runningTasksTimer = null
+
+// ----- Professional CoT monitor state (admin) -----
+const cotMonitor = ref({
+  running_count: 0,
+  paused_count: 0,
+  completed_count: 0,
+  failed_count: 0,
+  total_count: 0,
+  active_user_count: 0,
+  total_input_count: 0,
+  total_success_count: 0,
+  total_failed_count: 0,
+  runs: [],
+})
+const cotMonitorLoading = ref(false)
+let cotMonitorTimer = null
 
 // ----- Use template dialog -----
 const useTemplateVisible = ref(false)
@@ -858,6 +956,29 @@ async function fetchRunningTasks() {
   }
 }
 
+async function fetchCotMonitor() {
+  cotMonitorLoading.value = true
+  try {
+    const res = await getProfessionalCotMonitor()
+    cotMonitor.value = res || {
+      running_count: 0,
+      paused_count: 0,
+      completed_count: 0,
+      failed_count: 0,
+      total_count: 0,
+      active_user_count: 0,
+      total_input_count: 0,
+      total_success_count: 0,
+      total_failed_count: 0,
+      runs: [],
+    }
+  } catch (e) {
+    // 非管理员静默失败
+  } finally {
+    cotMonitorLoading.value = false
+  }
+}
+
 // ----- Lifecycle -----
 onMounted(async () => {
   const tasks = [fetchLLMConfigs(), fetchStagesAndModels()]
@@ -868,6 +989,8 @@ onMounted(async () => {
   if (isAdmin.value) {
     fetchRunningTasks()
     runningTasksTimer = setInterval(fetchRunningTasks, 5000)
+    fetchCotMonitor()
+    cotMonitorTimer = setInterval(fetchCotMonitor, 5000)
   }
   // Load prompts for the first stage
   if (activeStage.value) {
@@ -879,6 +1002,10 @@ onUnmounted(() => {
   if (runningTasksTimer) {
     clearInterval(runningTasksTimer)
     runningTasksTimer = null
+  }
+  if (cotMonitorTimer) {
+    clearInterval(cotMonitorTimer)
+    cotMonitorTimer = null
   }
 })
 </script>
@@ -1016,5 +1143,37 @@ onUnmounted(() => {
   max-height: 300px;
   overflow-y: auto;
   margin: 0;
+}
+
+/* Monitor summary cards */
+.monitor-summary {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.summary-card {
+  width: 160px;
+  flex-shrink: 0;
+  text-align: center;
+}
+.summary-card .el-card__body {
+  padding: 16px 8px;
+}
+.summary-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #303133;
+}
+.summary-label {
+  font-size: 13px;
+  color: #909399;
+  margin-top: 4px;
+}
+.summary-success .summary-value {
+  color: #67c23a;
+}
+.summary-fail .summary-value {
+  color: #f56c6c;
 }
 </style>

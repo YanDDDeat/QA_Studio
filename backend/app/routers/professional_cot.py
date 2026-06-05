@@ -21,6 +21,7 @@ from app.services.professional_cot_service import (
     get_export_path,
     get_export_zip_bytes,
     get_run_detail_for_user,
+    get_running_monitor,
     list_runs_for_user,
     load_manifest,
     read_artifact,
@@ -309,6 +310,19 @@ async def create_run(
     )
 
     return result
+
+
+@router.get("/monitor")
+async def professional_cot_monitor(
+    current_user: User = Depends(get_current_user),
+):
+    """Admin-only: return running professional CoT task monitoring data."""
+    if current_user.username != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅管理员可查看单COT运行监控",
+        )
+    return get_running_monitor()
 
 
 @router.get("/runs")

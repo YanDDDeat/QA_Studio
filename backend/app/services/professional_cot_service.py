@@ -2147,6 +2147,67 @@ def _mark_run_failed(manifest: Dict[str, Any], message: str) -> None:
     save_manifest(manifest)
 
 
+def get_running_monitor() -> Dict[str, Any]:
+    """Scan all manifests and return monitoring data for admin dashboard (all statuses)."""
+    if not STORAGE_ROOT.exists():
+        return {
+            "running_count": 0,
+            "paused_count": 0,
+            "completed_count": 0,
+            "failed_count": 0,
+            "total_count": 0,
+            "active_user_count": 0,
+            "total_input_count": 0,
+            "total_success_count": 0,
+            "total_failed_count": 0,
+            "runs": [],
+        }
+
+    all_runs: List[Dict[str, Any]] = []
+    status_counts = {"running": 0, "paused": 0, "completed": 0, "failed": 0}
+    user_ids = set()
+    total_input = 0
+    total_success = 0
+    total_failed = 0
+
+    for path in STORAGE_ROOT.glob("*/manifest.json"):
+        try:
+            manifest = read_json(path)
+        except Exception:
+            continue
+        item = _manifest_to_list_item(manifest)
+        item["username"] = manifest.get("username", "未知")
+        item["user_id"] = manifest.get("user_id")
+        item["llm_config_name"] = manifest.get("llm", {}).get("llm_config_name", "")
+        item["source_filename"] = manifest.get("source_file", {}).get("filename", "")
+        all_runs.append(item)
+
+        run_status = manifest.get("status", "unknown")
+        status_counts[run_status] = status_counts.get(run_status, 0) + 1
+
+        uid = manifest.get("user_id")
+        if uid is not None:
+            user_ids.add(uid)
+        total_input += manifest.get("input_count", 0)
+        total_success += manifest.get("success_count", 0)
+        total_failed += manifest.get("failed_count", 0)
+
+    all_runs.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+
+    return {
+        "running_count": status_counts.get("running", 0),
+        "paused_count": status_counts.get("paused", 0),
+        "completed_count": status_counts.get("completed", 0),
+        "failed_count": status_counts.get("failed", 0),
+        "total_count": len(all_runs),
+        "active_user_count": len(user_ids),
+        "total_input_count": total_input,
+        "total_success_count": total_success,
+        "total_failed_count": total_failed,
+        "runs": all_runs,
+    }
+
+
 def list_runs_for_user(user_id: int, page: int = 1, page_size: int = 10) -> Dict[str, Any]:
     if not STORAGE_ROOT.exists():
         return {"items": [], "total": 0, "page": page, "page_size": page_size}
