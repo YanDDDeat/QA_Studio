@@ -338,8 +338,13 @@
           </el-form>
         </el-card>
 
-        <el-divider />
-        <h4>单COT生成任务监控</h4>
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <h4 style="margin: 0;">单COT生成任务监控</h4>
+          <el-button type="primary" size="small" :loading="cotMonitorLoading" @click="fetchCotMonitor">
+            <el-icon><Refresh /></el-icon>
+            刷新监控
+          </el-button>
+        </div>
         <div class="monitor-summary" v-loading="cotMonitorLoading">
           <el-card shadow="hover" class="summary-card">
             <div class="summary-value">{{ cotMonitor.running_count }}</div>
@@ -388,7 +393,7 @@
         </div>
 
         <el-table
-          :data="cotMonitor.runs"
+          :data="cotMonitorPagedRuns"
           style="width: 100%; margin-top: 10px;"
           empty-text="暂无单COT生成任务"
         >
@@ -439,8 +444,23 @@
           </el-table-column>
         </el-table>
 
-        <el-divider />
-        <h4>运行中任务</h4>
+        <el-pagination
+          v-if="cotMonitor.runs.length > 0"
+          layout="total, sizes, prev, pager, next"
+          :total="cotMonitor.runs.length"
+          :page-sizes="[10, 20, 50]"
+          v-model:current-page="cotMonitorPage"
+          v-model:page-size="cotMonitorPageSize"
+          style="margin-top: 12px; justify-content: flex-end;"
+        />
+
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <h4 style="margin: 0;">运行中任务</h4>
+          <el-button type="primary" size="small" :loading="runningTasksLoading" @click="fetchRunningTasks">
+            <el-icon><Refresh /></el-icon>
+            刷新任务
+          </el-button>
+        </div>
         <el-table
           :data="runningTasks"
           style="width: 100%; margin-top: 10px;"
@@ -521,7 +541,6 @@ const systemConfigSaving = ref(false)
 // ----- Running tasks state (admin) -----
 const runningTasks = ref([])
 const runningTasksLoading = ref(false)
-let runningTasksTimer = null
 
 // ----- Professional CoT monitor state (admin) -----
 const cotMonitor = ref({
@@ -538,11 +557,19 @@ const cotMonitor = ref({
   cot_type_distribution: [],
 })
 const cotMonitorLoading = ref(false)
-let cotMonitorTimer = null
 
 // ----- COT类型分布统计（手动刷新） -----
 const cotTypeDistribution = ref([])
 const cotDistLoading = ref(false)
+
+// ----- COT监控任务列表分页 -----
+const cotMonitorPage = ref(1)
+const cotMonitorPageSize = ref(10)
+const cotMonitorPagedRuns = computed(() => {
+  const runs = cotMonitor.value.runs || []
+  const start = (cotMonitorPage.value - 1) * cotMonitorPageSize.value
+  return runs.slice(start, start + cotMonitorPageSize.value)
+})
 
 async function fetchCotTypeDistribution() {
   cotDistLoading.value = true
@@ -1026,11 +1053,9 @@ onMounted(async () => {
   }
   await Promise.all(tasks)
   if (isAdmin.value) {
-    fetchRunningTasks()
-    runningTasksTimer = setInterval(fetchRunningTasks, 5000)
-    fetchCotMonitor()
-    cotMonitorTimer = setInterval(fetchCotMonitor, 5000)
-    fetchCotTypeDistribution()  // COT类型分布：仅首次加载，手动刷新
+    fetchRunningTasks()         // 运行中任务：首次加载，手动刷新
+    fetchCotMonitor()           // 单COT监控：首次加载，手动刷新
+    fetchCotTypeDistribution()  // COT类型分布：首次加载，手动刷新
   }
   // Load prompts for the first stage
   if (activeStage.value) {
@@ -1038,16 +1063,7 @@ onMounted(async () => {
   }
 })
 
-onUnmounted(() => {
-  if (runningTasksTimer) {
-    clearInterval(runningTasksTimer)
-    runningTasksTimer = null
-  }
-  if (cotMonitorTimer) {
-    clearInterval(cotMonitorTimer)
-    cotMonitorTimer = null
-  }
-})
+onUnmounted(() => {})
 </script>
 
 <style scoped>
