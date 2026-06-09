@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from functools import partial
 from typing import Optional
 from urllib.parse import quote
 
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.models import File as ManagedFile, LLMConfig, User
 from app.routers.auth import get_current_user
+from app.services.thread_pool import llm_thread_pool
 from app.services.professional_cot_service import (
     COT_TYPES,
     create_initial_run,
@@ -301,11 +303,9 @@ async def create_run(
     }
 
     asyncio.create_task(
-        asyncio.to_thread(
-            run_pipeline_sync,
-            init["run_id"],
-            init["llm"],
-            current_user.username,
+        asyncio.get_running_loop().run_in_executor(
+            llm_thread_pool,
+            partial(run_pipeline_sync, init["run_id"], init["llm"], current_user.username),
         )
     )
 
@@ -384,11 +384,9 @@ async def resume_run(
     llm_info = resume_paused_run(run_id, current_user.id)
 
     asyncio.create_task(
-        asyncio.to_thread(
-            run_pipeline_sync,
-            run_id,
-            llm_info,
-            current_user.username,
+        asyncio.get_running_loop().run_in_executor(
+            llm_thread_pool,
+            partial(run_pipeline_sync, run_id, llm_info, current_user.username),
         )
     )
 
