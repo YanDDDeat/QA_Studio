@@ -599,7 +599,7 @@ async function handleResume() {
   try {
     await resumeProfessionalCotRun(runId.value)
     ElMessage.success('流水线已恢复运行')
-    startPolling()
+    scheduleNextPoll()
     await fetchRunDetail()
   } catch (err) {
     ElMessage.error(err.response?.data?.detail || '恢复失败')
