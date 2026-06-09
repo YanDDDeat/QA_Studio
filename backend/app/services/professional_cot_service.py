@@ -2019,18 +2019,27 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
                     batch_items.append(item)
                     if item.get("status") in ("success", "failed", "skipped"):
                         completed_indices.add(item.get("source_index", -1))
-                    if item.get("status") == "success":
-                        # Reload final_sample from per-doc artifact
-                        doc_dir_name = f"{str(item.get('source_index', 0) + 1).zfill(4)}_{_sanitize_dirname(item.get('source', ''))}"
-                        doc_dir = run_dir / "documents" / doc_dir_name
-                        sample_path = doc_dir / "final_sample.json"
-                        if sample_path.exists():
-                            sample = read_json(sample_path)
-                            if isinstance(sample, dict):
-                                all_samples.append(sample)
 
             manifest["success_count"] = len([i for i in batch_items if i.get("status") == "success"])
             manifest["failed_count"] = len([i for i in batch_items if i.get("status") != "success"])
+
+        # Reload previously generated samples from the run-level final output.
+        # During resume, this ensures all_samples includes samples from prior
+        # run segments so that final_samples.json is complete — the per-document
+        # reconstruction was buggy (looked for "final_sample.json" singular, but
+        # process_one_document writes "final_samples.json" plural).
+        final_samples_path = run_dir / "final_samples.json"
+        if final_samples_path.exists():
+            try:
+                final_data = read_json(final_samples_path)
+                if isinstance(final_data.get("samples"), list):
+                    all_samples.extend(final_data["samples"])
+                    logger.info(
+                        "从 final_samples.json 恢复了 %d 条已有样本",
+                        len(final_data["samples"]),
+                    )
+            except Exception as exc:
+                logger.warning("恢复已有样本失败，将从零开始: %s", exc)
 
         for idx, record in enumerate(source_data):
             # ---- Cooperative cancellation: re-read manifest to detect pause ----
@@ -2134,6 +2143,7 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
         # Final batch_summary and final_outputs are already written incrementally;
         # only update the final counts, display CoT type summary and status here.
         manifest["failed_count"] = failed_count + skipped_count
+        manifest["sample_count"] = len(all_samples)
         _update_manifest_cot_type_summary(manifest, all_samples)
         _write_batch_summary(run_dir, run_id, input_count, batch_items, manifest)
 
@@ -2416,10 +2426,122 @@ def resolve_artifact_path(run_id: str, user_id: int, rel_path: str) -> Optional[
     return target
 
 
+def _rebuild_final_samples_from_docs(run_dir: Path) -> bool:
+    """从 per-document 产物重建 run 级别的 final_samples.json。
+
+    解决 resume bug 导致 run 级别文件被不完整的 all_samples 覆盖的问题。
+    每篇成功文献在 documents/<序号>_<source>/final_samples.json 中保有完整样本，
+    本函数将它们聚合并写回 run_dir/final_samples.json 和 final_samples.jsonl。
+
+    Returns True if rebuild was performed, False if no per-doc files found.
+    """
+    documents_dir = run_dir / "documents"
+    if not documents_dir.exists():
+        return False
+
+    all_samples: List[Dict[str, Any]] = []
+    for doc_dir in sorted(documents_dir.iterdir()):
+        if not doc_dir.is_dir():
+            continue
+        sample_file = doc_dir / "final_samples.json"
+        if not sample_file.exists():
+            continue
+        try:
+            data = read_json(sample_file)
+        except Exception:
+            logger.warning("读取 per-doc 样本失败: %s", sample_file)
+            continue
+        if isinstance(data.get("samples"), list) and data["samples"]:
+            all_samples.extend(data["samples"])
+
+    if not all_samples:
+        return False
+
+    # 按 source_index 排序后重新编号
+    all_samples.sort(key=lambda s: s.get("source_index", 0))
+    for idx, sample in enumerate(all_samples, start=1):
+        sample["id"] = idx
+
+    final_json = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": str(run_dir.name),
+        "pipeline_name": PIPELINE_NAME,
+        "sample_count": len(all_samples),
+        "samples": all_samples,
+    }
+    atomic_write_json(run_dir / "final_samples.json", final_json)
+    jsonl_content = "".join(json.dumps(s, ensure_ascii=False) + "\n" for s in all_samples)
+    atomic_write_text(run_dir / "final_samples.jsonl", jsonl_content)
+
+    # 同步更新 manifest 的 sample_count
+    manifest_path = run_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = read_json(manifest_path)
+            if manifest.get("sample_count") != len(all_samples):
+                manifest["sample_count"] = len(all_samples)
+                manifest["updated_at"] = utc_now_iso()
+                atomic_write_json(manifest_path, manifest)
+        except Exception:
+            pass
+
+    logger.info(
+        "从 per-document 产物重建 final_samples：%d 条样本", len(all_samples),
+    )
+    return True
+
+
+def _ensure_final_samples(run_dir: Path) -> None:
+    """确保 run 级别 final_samples.json 是最新的完整版本。
+
+    如果 run 级别文件的样本数与 documents/ 下 per-doc 文件数量不一致，
+    说明发生了 resume bug 导致数据不完整，自动从 per-doc 文件重建。
+    """
+    final_path = run_dir / "final_samples.json"
+    documents_dir = run_dir / "documents"
+    if not documents_dir.exists() or not final_path.exists():
+        return
+
+    # 快速比对：统计 documents/ 下有多少个包含 final_samples.json 的目录
+    try:
+        per_doc_count = sum(
+            1 for d in documents_dir.iterdir()
+            if d.is_dir() and (d / "final_samples.json").exists()
+        )
+    except Exception:
+        return
+
+    if per_doc_count == 0:
+        return
+
+    # 读取 run 级别文件的 sample_count
+    try:
+        run_level = read_json(final_path)
+        run_sample_count = len(run_level.get("samples", []))
+    except Exception:
+        run_sample_count = -1
+
+    if run_sample_count < per_doc_count:
+        logger.info(
+            "检测到 final_samples.json 样本数(%d) < per-doc 文件数(%d)，自动重建",
+            run_sample_count, per_doc_count,
+        )
+        _rebuild_final_samples_from_docs(run_dir)
+
+
 def read_artifact(run_id: str, user_id: int, rel_path: str) -> Any:
     target = resolve_artifact_path(run_id, user_id, rel_path)
     if target is None:
         return None
+
+    # 读取 final_samples.json / final_samples.jsonl 时，自动从 per-doc 修复不完整的数据
+    if target.name in ("final_samples.json", "final_samples.jsonl"):
+        try:
+            run_dir = get_run_dir(run_id)
+            _ensure_final_samples(run_dir)
+        except ValueError:
+            pass
+
     if target.suffix.lower() == ".jsonl":
         with open(target, "r", encoding="utf-8") as f:
             return {"content": f.read()}
@@ -2427,8 +2549,16 @@ def read_artifact(run_id: str, user_id: int, rel_path: str) -> Any:
 
 
 def get_export_path(run_id: str, user_id: int, export_type: str) -> Optional[Path]:
+    """返回导出文件路径，导出前自动从 per-doc 文件修复不完整数据。"""
     filename = "final_samples.jsonl" if export_type == "jsonl" else "final_samples.json"
-    return resolve_artifact_path(run_id, user_id, filename)
+    path = resolve_artifact_path(run_id, user_id, filename)
+    if path is not None:
+        try:
+            run_dir = get_run_dir(run_id)
+            _ensure_final_samples(run_dir)
+        except ValueError:
+            pass
+    return path
 
 
 def get_export_zip_bytes(run_id: str, user_id: int) -> Optional[tuple]:
@@ -2437,6 +2567,7 @@ def get_export_zip_bytes(run_id: str, user_id: int) -> Optional[tuple]:
     source_filename 用于前端/后端给 ZIP 文件命名（用源文件原始名，方便用户识别）。
     老数据兼容：如果 source.json 不存在则跳过，只打包最终产物。
     如果没有任何可打包的文件则返回 None。
+    导出前自动从 per-doc 文件修复不完整数据。
     """
     import io
     import zipfile
@@ -2447,6 +2578,9 @@ def get_export_zip_bytes(run_id: str, user_id: int) -> Optional[tuple]:
 
     run_dir = get_run_dir(run_id).resolve()
     source_filename = manifest.get("source_file", {}).get("filename", "source.json")
+
+    # 导出前自动从 per-doc 修复可能不完整的 final_samples
+    _ensure_final_samples(run_dir)
 
     # 收集要打包的文件：(磁盘路径, ZIP内文件名)
     files_to_pack = []
@@ -2461,7 +2595,7 @@ def get_export_zip_bytes(run_id: str, user_id: int) -> Optional[tuple]:
     if final_json.exists() and final_json.is_file():
         files_to_pack.append((final_json, "final_samples.json"))
 
-    
+
     if not files_to_pack:
         return None
 
