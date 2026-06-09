@@ -549,7 +549,7 @@ onMounted(async () => {
 
 <style scoped>
 .page-container {
-  max-width: 1200px;
+  width: 100%;
 }
 .card-header {
   display: flex;
