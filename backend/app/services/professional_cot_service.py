@@ -2451,8 +2451,14 @@ def _rebuild_final_samples_from_docs(run_dir: Path) -> bool:
         except Exception:
             logger.warning("读取 per-doc 样本失败: %s", sample_file)
             continue
-        if isinstance(data.get("samples"), list) and data["samples"]:
-            all_samples.extend(data["samples"])
+        if not isinstance(data.get("samples"), list) or not data["samples"]:
+            continue
+        # 只保留包含完整字段的样本，过滤失败的半成品
+        for sample in data["samples"]:
+            if not isinstance(sample, dict):
+                continue
+            if sample.get("cot_type") and sample.get("input") and sample.get("output"):
+                all_samples.append(sample)
 
     if not all_samples:
         return False
@@ -2494,37 +2500,34 @@ def _rebuild_final_samples_from_docs(run_dir: Path) -> bool:
 def _ensure_final_samples(run_dir: Path) -> None:
     """确保 run 级别 final_samples.json 是最新的完整版本。
 
-    如果 run 级别文件的样本数与 documents/ 下 per-doc 文件数量不一致，
-    说明发生了 resume bug 导致数据不完整，自动从 per-doc 文件重建。
+    对比 batch_summary.success_count 与 final_samples.json 的样本数：
+    如果不一致，说明发生了 resume bug 导致数据不完整，自动从 per-doc 文件重建。
     """
     final_path = run_dir / "final_samples.json"
-    documents_dir = run_dir / "documents"
-    if not documents_dir.exists() or not final_path.exists():
+    batch_summary_path = run_dir / "batch_summary.json"
+    if not final_path.exists() or not batch_summary_path.exists():
         return
 
-    # 快速比对：统计 documents/ 下有多少个包含 final_samples.json 的目录
     try:
-        per_doc_count = sum(
-            1 for d in documents_dir.iterdir()
-            if d.is_dir() and (d / "final_samples.json").exists()
-        )
+        batch_summary = read_json(batch_summary_path)
+        expected_count = batch_summary.get("success_count", 0)
     except Exception:
         return
 
-    if per_doc_count == 0:
+    # success_count 为 0 说明没有成功文献，不需要修复
+    if expected_count == 0:
         return
 
-    # 读取 run 级别文件的 sample_count
     try:
         run_level = read_json(final_path)
         run_sample_count = len(run_level.get("samples", []))
     except Exception:
         run_sample_count = -1
 
-    if run_sample_count < per_doc_count:
+    if run_sample_count < expected_count:
         logger.info(
-            "检测到 final_samples.json 样本数(%d) < per-doc 文件数(%d)，自动重建",
-            run_sample_count, per_doc_count,
+            "检测到 final_samples.json 样本数(%d) < 成功文献数(%d)，自动重建",
+            run_sample_count, expected_count,
         )
         _rebuild_final_samples_from_docs(run_dir)
 
