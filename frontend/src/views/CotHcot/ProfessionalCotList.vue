@@ -431,20 +431,23 @@ async function fetchDialogData() {
 }
 
 async function handleCreate() {
+  if (createLoading.value) return
+  createLoading.value = true
   const formRef = createFormRef.value
-  if (!formRef) return
+  if (!formRef) { createLoading.value = false; return }
   try {
     await formRef.validate()
   } catch {
+    createLoading.value = false
     return
   }
   if (inputMode.value === 'existing' && !createForm.value.source_file_id) {
     ElMessage.error('请选择系统已有 JSON 文件')
-    return
+    createLoading.value = false; return
   }
   if (inputMode.value === 'upload' && !selectedFile.value) {
     ElMessage.error('请选择要上传的 JSON 文件')
-    return
+    createLoading.value = false; return
   }
 
   // Check if JSON elements have 'source' field; warn user if missing
@@ -469,15 +472,13 @@ async function handleCreate() {
             { confirmButtonText: '继续', cancelButtonText: '取消', type: 'warning' }
           )
         } catch {
-          return
+          createLoading.value = false; return
         }
       }
     }
   } catch {
     // JSON parse or preview fetch failed — skip check, proceed as-is
   }
-
-  createLoading.value = true
   try {
     const formData = new FormData()
     if (inputMode.value === 'existing') {
