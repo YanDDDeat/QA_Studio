@@ -302,11 +302,9 @@ async def create_run(
         "input_count": len(source_data),
     }
 
-    asyncio.create_task(
-        asyncio.get_running_loop().run_in_executor(
-            llm_thread_pool,
-            partial(run_pipeline_sync, init["run_id"], init["llm"], current_user.username),
-        )
+    asyncio.get_running_loop().run_in_executor(
+        llm_thread_pool,
+        partial(run_pipeline_sync, init["run_id"], init["llm"], current_user.username),
     )
 
     return result
@@ -383,11 +381,9 @@ async def resume_run(
 
     llm_info = resume_paused_run(run_id, current_user.id)
 
-    asyncio.create_task(
-        asyncio.get_running_loop().run_in_executor(
-            llm_thread_pool,
-            partial(run_pipeline_sync, run_id, llm_info, current_user.username),
-        )
+    asyncio.get_running_loop().run_in_executor(
+        llm_thread_pool,
+        partial(run_pipeline_sync, run_id, llm_info, current_user.username),
     )
 
     return {
