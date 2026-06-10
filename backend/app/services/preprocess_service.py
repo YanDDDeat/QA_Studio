@@ -5,6 +5,10 @@
   2. 过滤：识别目录 / 参考文献 / 图片堆 / 表格残骸 / 低自然语言
   3. 合并：对过短 chunk 按顺序向后吸收邻居直到达到阈值
 
+支持两种模式：
+  - classify_first (默认): 先逐条分类再合并，适合大段落 chunk
+  - merge_first: 先合并到阈值再对合并块分类，适合微 chunk (每条约 1-2 字)
+
 设计原则：
 - 纯函数，零数据库依赖，零 IO（除标准库）
 - 确定性输出：同样输入永远得到同样输出，便于断点恢复
@@ -137,12 +141,16 @@ def preprocess_chunks(
     raw_records: list,
     text_field: str,
     min_token_threshold: int = MIN_TOKEN_THRESHOLD,
+    merge_before_classify: bool = True,
 ) -> "tuple[list[ProcessedChunk], PreprocessStats]":
     """对原始 chunks 做清洗 + 过滤 + 合并。
 
     Args:
         raw_records: 上传 JSON 解析后的原始记录列表(每条通常是 dict)
         text_field: 取文本的字段名(如 "text")
+        min_token_threshold: 合并目标 token 数
+        merge_before_classify: False=先逐条分类再合并(默认,适合大段落);
+                               True=先合并到阈值再分类(适合微 chunk)
 
     Returns:
         processed_chunks: 实际要送 LLM 的 chunk 列表
@@ -150,14 +158,36 @@ def preprocess_chunks(
     """
     original_count = len(raw_records)
 
-    # ── 步骤 1:抽取原始文本 ──
+    # Step 1: extract texts
     texts = [_extract_text(r, text_field) for r in raw_records]
 
-    # ── 步骤 2:预扫描页眉页脚 ──
+    # Step 2: detect headers/footers
     blacklist = detect_headers_footers(texts)
 
-    # ── 步骤 3:逐条清洗 + 分类 ──
-    # processed_items[i] = (cleaned_text, skip_reason_or_None)
+    if merge_before_classify:
+        return _preprocess_merge_first(
+            raw_records, texts, blacklist, min_token_threshold, original_count,
+        )
+    else:
+        return _preprocess_classify_first(
+            raw_records, texts, blacklist, min_token_threshold, original_count,
+        )
+
+
+def _preprocess_classify_first(
+    raw_records: list,
+    texts: "list[str]",
+    blacklist: "list[str]",
+    min_token_threshold: int,
+    original_count: int,
+) -> "tuple[list[ProcessedChunk], PreprocessStats]":
+    """默认模式：先逐条清洗+分类，再对未分类的短 chunk 向后合并。
+
+    分类命中的 chunk 作为 merge barrier — 不会与前后 chunk 合并。
+    适合每个 chunk 已经是完整段落的大文本场景。
+    """
+
+    # Step 3: clean + classify each chunk
     processed_items: "list[tuple[str, Optional[str]]]" = []
     for text in texts:
         if not text:
@@ -167,7 +197,7 @@ def preprocess_chunks(
         reason = classify(cleaned, raw=text, min_token_threshold=min_token_threshold)
         processed_items.append((cleaned, reason))
 
-    # ── 步骤 4:合并 too_short + 收集跳过 ──
+    # Step 4: merge short chunks, collect skipped
     final_chunks: "list[ProcessedChunk]" = []
     skipped: "list[SkippedChunk]" = []
     kept_by_merge = 0
@@ -179,14 +209,13 @@ def preprocess_chunks(
         if reason is None:
             tokens = estimate_tokens(text)
             if tokens >= min_token_threshold:
-                # 达标,直接通过
                 final_chunks.append(
                     _make_chunk(text, raw_records[i], merged_from=None)
                 )
                 i += 1
                 continue
 
-            # 触发合并:向后吸收(同 source、reason 为 None)
+            # merge forward (stops at classified chunks and source boundaries)
             merged_text, merged_indices, end = merge_forward(
                 processed_items, raw_records, i, min_token_threshold=min_token_threshold
             )
@@ -200,20 +229,15 @@ def preprocess_chunks(
                 )
                 if len(merged_indices) > 1:
                     kept_by_merge += 1
-                # 被吸收的(merged_indices[1:])标记为 merged
                 for idx in merged_indices[1:]:
                     skipped.append(
                         SkippedChunk(idx, texts[idx], "已合并")
                     )
                 i = end
             else:
-                # 末尾孤儿:无法吸收到足够 token
                 skipped.append(
                     SkippedChunk(i, texts[i], "末尾过短")
                 )
-                # 即使没达标,仍要前进到 end(避免单条无限循环)
-                # merge_forward 至少返回 i+1;若 end>i+1 说明吸收了但仍不足,
-                # 这些被吸收的也算被丢弃 → 全部记为 末尾过短
                 for idx in merged_indices[1:]:
                     skipped.append(
                         SkippedChunk(idx, texts[idx], "末尾过短")
@@ -223,10 +247,106 @@ def preprocess_chunks(
             skipped.append(SkippedChunk(i, texts[i], reason))
             i += 1
 
-    # 跳过记录按原始 index 升序排列,方便用户审查
     skipped.sort(key=lambda s: s.original_index)
+    breakdown: dict = {}
+    for s in skipped:
+        breakdown[s.skip_reason] = breakdown.get(s.skip_reason, 0) + 1
 
-    # 统计分布
+    stats = PreprocessStats(
+        original_count=original_count,
+        kept_count=len(final_chunks),
+        kept_by_merge_count=kept_by_merge,
+        skipped_count=len(skipped),
+        skip_breakdown=breakdown,
+        skipped_records=skipped,
+        header_footer_blacklist=list(blacklist),
+    )
+    return final_chunks, stats
+
+
+def _preprocess_merge_first(
+    raw_records: list,
+    texts: "list[str]",
+    blacklist: "list[str]",
+    min_token_threshold: int,
+    original_count: int,
+) -> "tuple[list[ProcessedChunk], PreprocessStats]":
+    """先合并后分类模式：先清洗，再贪心合并到阈值，最后对合并块分类过滤。
+
+    合并时只受 source 边界约束，不做单条分类阻断。
+    适合微 chunk 场景 — 每个 chunk 只有一两个字，自身无法被有效分类。
+    """
+
+    # Step 3: clean each chunk (no classification yet)
+    cleaned_texts: "list[str]" = []
+    for text in texts:
+        if not text:
+            cleaned_texts.append("")
+        else:
+            cleaned_texts.append(clean_text(text, blacklist))
+
+    # Step 4: greedy merge — absorb forward until threshold, source-boundary only
+    merged_blocks: "list[tuple[str, list[int]]]" = []
+    i = 0
+    n = len(cleaned_texts)
+
+    while i < n:
+        if not cleaned_texts[i]:
+            i += 1
+            continue
+
+        current_text = cleaned_texts[i]
+        current_indices = [i]
+        current_source = _get_source(raw_records[i])
+        j = i + 1
+
+        while j < n and estimate_tokens(current_text) < min_token_threshold:
+            if not cleaned_texts[j]:
+                j += 1
+                continue
+            if _get_source(raw_records[j]) != current_source:
+                break
+            current_text = current_text + MERGE_SEPARATOR + cleaned_texts[j]
+            current_indices.append(j)
+            j += 1
+
+        merged_blocks.append((current_text, current_indices))
+        i = j
+
+    # Step 5: classify each merged block, filter bad ones
+    final_chunks: "list[ProcessedChunk]" = []
+    skipped: "list[SkippedChunk]" = []
+    kept_by_merge = 0
+
+    for merged_text, indices in merged_blocks:
+        reason = classify(
+            merged_text,
+            raw=merged_text,
+            min_token_threshold=min_token_threshold,
+            short_lines_are_normal=True,  # 微chunk每行都短,跳过短行密集TOC规则
+        )
+
+        if reason is None:
+            first_idx = indices[0]
+            final_chunks.append(_make_chunk(
+                merged_text,
+                raw_records[first_idx],
+                merged_from=indices if len(indices) > 1 else None,
+            ))
+            if len(indices) > 1:
+                kept_by_merge += 1
+                for idx in indices[1:]:
+                    skipped.append(SkippedChunk(idx, texts[idx], "已合并"))
+        else:
+            for idx in indices:
+                skipped.append(SkippedChunk(idx, texts[idx], reason))
+
+    # Collect empty chunks
+    for i, text in enumerate(texts):
+        if not text and not any(s.original_index == i for s in skipped):
+            skipped.append(SkippedChunk(i, "", "内容为空"))
+
+    skipped.sort(key=lambda s: s.original_index)
     breakdown: dict = {}
     for s in skipped:
         breakdown[s.skip_reason] = breakdown.get(s.skip_reason, 0) + 1
@@ -251,7 +371,7 @@ def preprocess_chunks(
 def estimate_tokens(text: str) -> int:
     """粗估 token 数,针对 qwen 类 tokenizer。
 
-    公式:中文字数 × 1.5 + 英文单词数 × 1.3 + 其他字符 × 0.5
+    公式:中文字数 x 1.5 + 英文单词数 x 1.3 + 其他字符 x 0.5
     """
     if not text:
         return 0
@@ -340,9 +460,10 @@ def classify(
     cleaned: str,
     raw: str,
     min_token_threshold: int = MIN_TOKEN_THRESHOLD,
+    short_lines_are_normal: bool = False,
 ) -> Optional[str]:
     """按优先级判定 skip_reason,命中即返回;
-    都不命中且不 too_short 时返回 None(留给步骤 4 决定合并或保留)。
+    都不命中时返回 None(表示通过,可以保留)。
 
     优先级:
       1. toc           目录页
@@ -351,7 +472,8 @@ def classify(
       4. table_residue 表格残骸
       5. low_alpha     低自然语言
 
-    too_short 不在此处判定 — 由步骤 4 通过 estimate_tokens 处理。
+    short_lines_are_normal: True 时跳过短行密集型目录判定(规则 B),
+    仅用章节模式+页码判定目录。适用于合并后的微 chunk 块。
     """
     # 0. 清洗后全空 → 看 raw 形态判定
     if not cleaned or not cleaned.strip():
@@ -362,7 +484,7 @@ def classify(
         return "低自然语言"
 
     # 1. 目录
-    if _is_toc(cleaned):
+    if _is_toc(cleaned, short_lines_are_normal=short_lines_are_normal):
         return "目录"
 
     # 2. 参考文献
@@ -388,7 +510,7 @@ def classify(
 
 
 # ---------------------------------------------------------------------------
-# 合并:对过短 chunk 向后吸收
+# 合并:对过短 chunk 向后吸收 (classify-first 模式使用)
 # ---------------------------------------------------------------------------
 
 
@@ -403,14 +525,11 @@ def merge_forward(
     停止条件(任一满足):
       - 已达 MIN_TOKEN_THRESHOLD
       - 越界
-      - 下一条 reason != None(被过滤的 chunk 不能用于合并)
+      - 下一条 reason != None(被分类的 chunk 不能用于合并)
       - 下一条 source 与起始不同(防止跨来源拼接)
 
     Returns:
         (merged_text, merged_indices, end)
-        - merged_text:已合并文本
-        - merged_indices:被合并的原始 index 列表(至少含 start_idx)
-        - end:循环应继续的位置(已消费的下一位)
     """
     start_text = processed_items[start_idx][0]
     start_source = _get_source(raw_records[start_idx])
@@ -422,10 +541,8 @@ def merge_forward(
 
     while end < n and estimate_tokens(merged_text) < min_token_threshold:
         next_text, next_reason = processed_items[end]
-        # 不能吸收已被分类标记的 chunk(toc/references/...)
         if next_reason is not None:
             break
-        # 跨 source 不合并
         next_source = _get_source(raw_records[end])
         if next_source != start_source:
             break
@@ -448,7 +565,6 @@ def _extract_text(record, text_field: str) -> str:
         val = record.get(text_field, "")
         if val:
             return str(val)
-        # 与原 question_generate.py 主循环保持一致的 fallback
         for alt in ["text", "content", "body", "paragraph"]:
             alt_val = record.get(alt, "")
             if alt_val:
@@ -509,41 +625,41 @@ def _table_char_ratio(text: str) -> float:
 
 
 def _natural_language_ratio(text: str) -> float:
-    """中英文字符占总字符的比例 — 衡量"自然语言含量"。"""
+    """中英文字符占非空白字符的比例 — 衡量"自然语言含量"。
+
+    分母排除空白字符,避免微 chunk 合并时大量 \\n\\n 分隔符稀释比例。
+    """
     if not text:
         return 0.0
     chinese = sum(1 for c in text if _CN_LO <= c <= _CN_HI)
     english_chars = sum(len(w) for w in _ENGLISH_WORD_PATTERN.findall(text))
-    return (chinese + english_chars) / len(text)
+    meaningful = max(len(text) - sum(1 for c in text if c.isspace()), 1)
+    return (chinese + english_chars) / meaningful
 
 
-def _is_toc(text: str) -> bool:
+def _is_toc(text: str, short_lines_are_normal: bool = False) -> bool:
     """目录判定（含中文式目录支持）。
 
     命中任一即判定为 TOC:
       A) 章节模式行 >= 2 行 AND 占非空行比例 > TOC_PATTERN_RATIO
          AND 至少 1 个页码标记（点引导 / 括号页码）
-         → 标准多行目录
       B) 短行(< SHORT_LINE_LEN)占比 > TOC_SHORT_LINE_RATIO
          AND 非空行 >= 5 AND 至少 1 个页码标记
-         → 短行密集型目录
+         （仅在 short_lines_are_normal=False 时启用。合并模式下每行都短,
+          此规则会误伤，故跳过。）
 
     章节模式：第X章/节 | 数字小节(1.1) | 中文数字(一、二、)
     页码标记：行尾点引导(... 123) | 括号页码 (123) / （123）
-
-    要求"页码标记"是为了不误伤正文里的中文列举段落
-    （如 "一、效率高 二、可扩展 三、易维护"）。
     """
     non_empty_lines = [l for l in text.splitlines() if l.strip()]
     if not non_empty_lines:
         return False
 
-    chapter_pattern_hits = 0      # 章节模式行计数
-    page_marker_hits = 0          # 页码标记次数（点引导 / 括号页码）
+    chapter_pattern_hits = 0
+    page_marker_hits = 0
     short_line_hits = 0
     for line in non_empty_lines:
         stripped = line.strip()
-        # 章节模式判定
         is_chapter = (
             _TOC_CHAPTER_PATTERN.match(stripped) is not None
             or _TOC_SECTION_PATTERN.match(stripped) is not None
@@ -551,7 +667,6 @@ def _is_toc(text: str) -> bool:
         )
         if is_chapter:
             chapter_pattern_hits += 1
-        # 页码标记判定（同一行可能既有章节又有页码，分开计数）
         if (
             _TOC_DOT_LEADER_PATTERN.search(stripped)
             or _DOT_LEADER_TAIL_PATTERN.search(stripped)
@@ -571,13 +686,14 @@ def _is_toc(text: str) -> bool:
         and page_marker_hits >= 1
     ):
         return True
-    # B. 短行密集型目录
-    if (
-        short_ratio > TOC_SHORT_LINE_RATIO
-        and len(non_empty_lines) >= 5
-        and page_marker_hits >= 1
-    ):
-        return True
+    # B. 短行密集型目录（合并模式下跳过 — 微 chunk 每行都短,此规则会误伤）
+    if not short_lines_are_normal:
+        if (
+            short_ratio > TOC_SHORT_LINE_RATIO
+            and len(non_empty_lines) >= 5
+            and page_marker_hits >= 1
+        ):
+            return True
     return False
 
 
@@ -601,7 +717,6 @@ def _is_references(text: str) -> bool:
     ):
         return True
 
-    # 关键词密度
     keyword_hits = len(_REF_KEYWORD_PATTERN.findall(text))
     if keyword_hits >= 3 and keyword_hits / max(len(text), 1) * 100 > 1.0:
         return True

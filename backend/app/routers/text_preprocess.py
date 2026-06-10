@@ -26,6 +26,7 @@ class TextPreprocessRequest(BaseModel):
     text_field: Optional[str] = Field(None, description="文本字段名；为空则使用文件记录的 text_field")
     min_token_threshold: int = Field(1000, ge=1, le=10000, description="短文本合并/保留阈值")
     output_filename: Optional[str] = Field(None, description="输出文件基础名")
+    merge_before_classify: bool = Field(True, description="True=先合并到阈值再分类过滤；False=先分类再合并")
 
 
 @router.get("/source-files")
@@ -92,6 +93,7 @@ async def run_text_preprocess(
         raw_records,
         text_field,
         min_token_threshold=data.min_token_threshold,
+        merge_before_classify=data.merge_before_classify,
     )
 
     processed_payload = []

@@ -36,6 +36,15 @@
               <span class="form-tip">低于该值会尝试向后合并，仍不足则写入过滤明细</span>
             </el-form-item>
 
+            <el-form-item label="合并策略">
+              <el-switch
+                v-model="form.merge_before_classify"
+                active-text="先合并后过滤"
+                inactive-text="先过滤后合并"
+              />
+              <span class="form-tip">微chunk场景（每条约1-2字）建议开启"先合并后过滤"</span>
+            </el-form-item>
+
             <el-form-item label="输出文件名">
               <el-input v-model="form.output_filename" placeholder="可选，系统会追加时间戳和后缀" clearable />
             </el-form-item>
@@ -173,6 +182,7 @@ const form = ref({
   text_field: 'text',
   min_token_threshold: 1000,
   output_filename: '',
+  merge_before_classify: true,
 })
 
 const canRun = computed(() => (
@@ -256,6 +266,7 @@ async function handleRun() {
       text_field: form.value.text_field,
       min_token_threshold: form.value.min_token_threshold,
       output_filename: form.value.output_filename || null,
+      merge_before_classify: form.value.merge_before_classify,
     })
     result.value = res
     ElMessage.success('预处理完成，已生成新文件')
