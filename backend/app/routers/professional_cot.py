@@ -13,8 +13,8 @@ from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.models.models import File as ManagedFile, LLMConfig, User
+from app.database import SessionLocal, get_db
+from app.models.models import File as ManagedFile, LLMConfig, Task, StageEnum, TaskStatusEnum, User
 from app.routers.auth import get_current_user
 from app.services.thread_pool import llm_thread_pool
 from app.services.professional_cot_service import (
@@ -25,11 +25,9 @@ from app.services.professional_cot_service import (
     get_run_detail_for_user,
     get_running_monitor,
     list_runs_for_user,
-    load_manifest,
     read_artifact,
     resume_paused_run,
     run_pipeline_sync,
-    save_manifest,
 )
 from app.services.professional_cot_prompt_service import (
     PromptTemplateError,
@@ -73,7 +71,6 @@ def _validate_source_json(raw: bytes, text_field: str):
     if len(data) == 0:
         raise HTTPException(status_code=400, detail="JSON 数组不能为空")
 
-    # Validate every element
     missing_indices = []
     empty_indices = []
     for idx, elem in enumerate(data):
@@ -97,7 +94,6 @@ def _validate_source_json(raw: bytes, text_field: str):
             detail=f"第 {', '.join(str(i) for i in empty_indices)} 个元素字段 '{text_field}' 内容不能为空",
         )
 
-    # Concatenate all text_field values as paper_text for the pipeline
     paper_text = "\n\n".join(elem[text_field] for elem in data)
     return data, paper_text
 
@@ -298,13 +294,13 @@ async def create_run(
         "run_id": init["run_id"],
         "status": "running",
         "message": "单COT生成流水线已启动，请前往详情页查看实时进度",
-        "manifest": init["manifest"],
-        "input_count": len(source_data),
+        "manifest": init.get("manifest", {}),
+        "input_count": init["input_count"],
     }
 
     asyncio.get_running_loop().run_in_executor(
         llm_thread_pool,
-        partial(run_pipeline_sync, init["run_id"], init["llm"], current_user.username),
+        partial(run_pipeline_sync, init["task_id"], init["llm"], current_user.username),
     )
 
     return result
@@ -338,7 +334,7 @@ async def get_run_detail(
     run_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """Read one run detail from manifest and final preview."""
+    """Read one run detail from DB (Task + CotSample + CotStepLog)."""
     try:
         detail = get_run_detail_for_user(run_id, current_user.id)
     except ValueError as exc:
@@ -369,21 +365,31 @@ async def resume_run(
     run_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """Resume a paused run. Re-reads manifest, restores status to running, and restarts the background pipeline."""
+    """Resume a paused or failed run from DB."""
+    # Validate ownership and status
     try:
-        manifest = load_manifest(run_id)
-    except FileNotFoundError:
+        task_id = int(run_id)
+    except (ValueError, TypeError):
         raise HTTPException(status_code=404, detail="运行记录不存在")
-    if manifest.get("user_id") != current_user.id:
-        raise HTTPException(status_code=403, detail="无权操作此任务")
-    if manifest.get("status") not in ("paused", "failed"):
-        raise HTTPException(status_code=400, detail=f"当前状态为 {manifest.get('status')}，无法恢复；只有 paused 或 failed 的 run 可以恢复")
+
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="运行记录不存在")
+        if task.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="无权操作此任务")
+        if task.status not in (TaskStatusEnum.PAUSED, TaskStatusEnum.FAILED):
+            raise HTTPException(status_code=400,
+                                detail=f"当前状态为 {task.status.value}, 无法恢复；只有 paused 或 failed 的 run 可以恢复")
+    finally:
+        db.close()
 
     llm_info = resume_paused_run(run_id, current_user.id)
 
     asyncio.get_running_loop().run_in_executor(
         llm_thread_pool,
-        partial(run_pipeline_sync, run_id, llm_info, current_user.username),
+        partial(run_pipeline_sync, task_id, llm_info, current_user.username),
     )
 
     return {
@@ -398,28 +404,38 @@ async def pause_run(
     run_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """Pause a running run. Writes paused status to manifest so the background loop detects it and exits."""
+    """Pause a running run. Updates Task.status in DB."""
     try:
-        manifest = load_manifest(run_id)
-    except FileNotFoundError:
+        task_id = int(run_id)
+    except (ValueError, TypeError):
         raise HTTPException(status_code=404, detail="运行记录不存在")
-    if manifest.get("user_id") != current_user.id:
-        raise HTTPException(status_code=403, detail="无权操作此任务")
-    if manifest.get("status") != "running":
-        raise HTTPException(status_code=400, detail=f"当前状态为 {manifest.get('status')}，无法暂停；只有 running 的 run 可以暂停")
 
-    done_count = (manifest.get("success_count") or 0) + (manifest.get("failed_count") or 0)
-    total_count = manifest.get("input_count") or 1
-    manifest["status"] = "paused"
-    manifest["stop_reason"] = "用户手动暂停"
-    manifest["progress_label"] = f"已暂停（完成 {done_count}/{total_count} 篇文献）"
-    save_manifest(manifest)
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="运行记录不存在")
+        if task.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="无权操作此任务")
+        if task.status != TaskStatusEnum.RUNNING:
+            raise HTTPException(status_code=400,
+                                detail=f"当前状态为 {task.status.value}, 无法暂停；只有 running 的 run 可以暂停")
 
-    return {
-        "run_id": run_id,
-        "status": "paused",
-        "message": "单COT生成流水线已标记为暂停，后台任务将在当前文献处理完成后停止",
-    }
+        done_count = (task.success_count or 0) + (task.failed_count or 0)
+        total_count = task.input_count or 1
+        task.status = TaskStatusEnum.PAUSED
+        task.run_extra = task.run_extra or {}
+        task.run_extra["stop_reason"] = "用户手动暂停"
+        task.progress_label = f"已暂停（完成 {done_count}/{total_count} 篇文献）"
+        db.commit()
+
+        return {
+            "run_id": run_id,
+            "status": "paused",
+            "message": "单COT生成流水线已标记为暂停，后台任务将在当前文献处理完成后停止",
+        }
+    finally:
+        db.close()
 
 
 @router.get("/runs/{run_id}/export/json")
@@ -473,7 +489,6 @@ async def export_zip(
     if result is None:
         raise HTTPException(status_code=404, detail="无可导出的文件")
     buf, zip_filename = result
-    # RFC 5987: encode non-ASCII filename to avoid latin-1 error in HTTP headers
     encoded = quote(zip_filename, safe='')
     return StreamingResponse(
         buf,
