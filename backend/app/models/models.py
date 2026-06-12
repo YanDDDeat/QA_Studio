@@ -28,6 +28,7 @@ class StageEnum(str, PyEnum):
     DATASET_ASSESSMENT = "dataset_assessment"
     GENERIC = "generic"
     COT_HCOT_PIPELINE = "cot_hcot_pipeline"  # CoT/H-CoT 标注流水线
+    PROFESSIONAL_COT = "professional_cot"  # 专业 CoT 管线（标注流水线2）
 
 
 # SQLAlchemy 2.0 解析混合 Enum 类时 dict keys 用的是 member 名称而非值
@@ -160,6 +161,8 @@ class Prompt(Base):
     llm_config_id = Column(Integer, ForeignKey("llm_configs.id"), nullable=True, index=True)
     is_default = Column(Boolean, default=False, nullable=False)
     reference_fields = Column(JSON, nullable=True)  # 附加参考字段列表，如 ["input","output","domain"]
+    template_id = Column(String(128), nullable=True)  # 提示词模板包 ID（用于专业 CoT / H-CoT 分组）
+    prompt_key = Column(String(128), nullable=True)   # 模板内 prompt 标识，如 "performance_improvement.step4"
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="prompts")
@@ -189,7 +192,12 @@ class Task(Base):
     chunk_index = Column(Integer, nullable=True)  # chunk 序号（0-based），标识该子任务属于哪个 chunk
     l0_question_index = Column(Integer, nullable=True)  # L0 总问题序号（0-based），标识 per-L0 步骤属于哪个总问题
     total_chunks = Column(Integer, nullable=True)  # 该流水线的总 chunk 数
-    prompt_template_id = Column(String(128), nullable=True)  # H-CoT prompt template ID
+    prompt_template_id = Column(String(128), nullable=True)  # H-CoT / professional CoT prompt template ID
+    input_count = Column(Integer, default=1)         # 专业 CoT：输入文献数
+    success_count = Column(Integer, default=0)       # 专业 CoT：成功文献数
+    failed_count = Column(Integer, default=0)        # 专业 CoT：失败文献数
+    sample_count = Column(Integer, default=0)        # 专业 CoT：总产出样本数
+    run_extra = Column(JSON, nullable=True)           # 专业 CoT：扩展元数据（source_input, recommended_cot_type 等）
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -205,6 +213,45 @@ class ProfessionalCotTypeStat(Base):
     cot_type_key = Column(String(64), primary_key=True)   # 如 "performance_improvement"
     display_name = Column(String(128), nullable=False)     # 如 "性能提升路径 CoT"
     count = Column(Integer, default=0, nullable=False)     # 全局累计分配数
+
+
+class CotSample(Base):
+    """专业 CoT 管线产出的单条训练样本"""
+    __tablename__ = "cot_samples"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    source_index = Column(Integer, default=0)
+    source = Column(String(512), nullable=True)
+    source_type = Column(String(32), default="unknown")
+    cot_type = Column(String(128), nullable=True)
+    cot_type_key = Column(String(64), nullable=True, index=True)
+    input = Column(Text, nullable=True)
+    chainofThought = Column(Text, nullable=True)
+    output = Column(Text, nullable=True)
+    evidence_trace = Column(Text, nullable=True)
+    step_results = Column(JSON, nullable=True)  # 各步骤 LLM 原始返回
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CotStepLog(Base):
+    """专业 CoT 管线每篇文献每步骤的执行日志"""
+    __tablename__ = "cot_step_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    source_index = Column(Integer, default=0, comment="文献序号，-1 表示 task 级别")
+    step_key = Column(String(64), nullable=False, comment="step1_3_integrated/step4_input/step5_chain/step6_output")
+    status = Column(String(16), default="pending")
+    progress_current = Column(Integer, default=0)
+    progress_label = Column(String(256), nullable=True)
+    cot_type = Column(String(128), nullable=True)
+    cot_type_key = Column(String(64), nullable=True)
+    artifact_path = Column(String(512), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class TaskLog(Base):
