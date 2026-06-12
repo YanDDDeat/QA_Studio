@@ -1,19 +1,19 @@
-"""File-based prompt template management for professional CoT pipeline.
+"""DB-based prompt template management for professional CoT pipeline.
 
 需求 29：标注流水线2提示词模板管理。
-第一版仅使用文件化存储，不接入全局 Prompt 表，不做数据库迁移。
+Migrated from file-based storage to MySQL prompts table.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from app.database import SessionLocal
+from app.models.models import Prompt, Task, StageEnum
 
 SYSTEM_TEMPLATE_ID = "system_default_v1"
 SYSTEM_TEMPLATE_NAME = "系统默认模板 v1"
@@ -106,24 +106,20 @@ COT_PROMPT_LAYOUT: List[Dict[str, Any]] = [
 COMMON_PROMPTS = {
     "common.step1_3": {
         "label": "Step 1-3：文献信息抽取与 CoT 类型路由",
-        "path": Path("common") / "step1_3_integrated_extraction_and_routing.md",
     },
 }
 
 LEGACY_COMMON_PROMPTS = {
     "common.step1": {
         "label": "Step 1：筛选相关文献",
-        "path": Path("common") / "step1_screening.md",
         "step_no": 1,
     },
     "common.step2": {
         "label": "Step 2：构建文献案例卡",
-        "path": Path("common") / "step2_case_card.md",
         "step_no": 2,
     },
     "common.step3": {
         "label": "Step 3：判定 CoT 类型",
-        "path": Path("common") / "step3_target_judgement.md",
         "step_no": 3,
     },
 }
@@ -134,145 +130,52 @@ STEP_PROMPTS = {
     "step6": {"label": "Step 6：生成 output", "path_name": "step6_output.md"},
 }
 
-
-class PromptTemplateError(ValueError):
-    """Raised when prompt template operations are invalid."""
-
-
-def _find_project_root() -> Path:
-    marker = Path("docs") / "background" / "3类COT提示词" / "专业Cot构建.md"
-    candidates: List[Path] = []
-    env_root = os.getenv("QA_STUDIO_ROOT") or os.getenv("PROJECT_ROOT")
-    if env_root:
-        candidates.append(Path(env_root))
-
-    current_file = Path(__file__).resolve()
-    candidates.extend(current_file.parents)
-    cwd = Path.cwd().resolve()
-    candidates.append(cwd)
-    candidates.extend(cwd.parents)
-    candidates.extend([Path("/app"), Path("/workspace"), Path("/code")])
-
-    seen = set()
-    for candidate in candidates:
-        try:
-            resolved = candidate.resolve()
-        except OSError:
-            resolved = candidate
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if (resolved / marker).exists():
-            return resolved
-    return current_file.parents[3]
+# ---------------------------------------------------------------------------
+# Prompt key helpers (unchanged from original — these define the structure)
+# ---------------------------------------------------------------------------
 
 
-PROJECT_ROOT = _find_project_root()
-PROMPT_SOURCE_ROOT = PROJECT_ROOT / "docs" / "background" / "3类COT提示词"
-TEMPLATE_STORAGE_ROOT = PROJECT_ROOT / "storage" / "professional_cot_prompt_templates"
-RUN_STORAGE_ROOT = PROJECT_ROOT / "storage" / "professional_cot_runs"
-
-
-def utc_now_iso() -> str:
-    return datetime.utcnow().isoformat()
-
-
-def atomic_write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, path)
-
-
-def atomic_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.write(content)
-    os.replace(tmp_path, path)
-
-
-def read_json(path: Path) -> Any:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def read_text(path: Path) -> str:
-    if not path.exists():
-        raise PromptTemplateError(f"提示词文件不存在：{path}")
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
-
-
-def _extract_common_prompt(step_no: int) -> str:
-    content = read_text(PROMPT_SOURCE_ROOT / "专业Cot构建.md")
-    pattern = re.compile(rf"###\s*Step\s*{step_no}[^\n]*\n(.*?)(?=\n###\s*Step\s*\d+|\Z)", re.S | re.I)
-    match = pattern.search(content)
-    return match.group(0).strip() if match else content
-
-
-def _read_step1_3_prompt() -> str:
-    return read_text(PROMPT_SOURCE_ROOT / "step1_3_integrated_extraction_and_routing.md")
-
-
-def _default_common_prompt_content(prompt_key: str) -> str:
-    if prompt_key == "common.step1_3":
-        return _read_step1_3_prompt()
-    legacy_info = LEGACY_COMMON_PROMPTS.get(prompt_key)
-    if legacy_info:
-        return _extract_common_prompt(legacy_info["step_no"])
-    raise PromptTemplateError("非法通用 prompt_key")
-
-
-def _ensure_common_prompt_files(prompts_dir: Path) -> None:
-    for prompt_key, info in COMMON_PROMPTS.items():
-        target = prompts_dir / info["path"]
-        if not target.exists():
-            atomic_write_text(target, _default_common_prompt_content(prompt_key))
-
-
-def _system_template_dir() -> Path:
-    return TEMPLATE_STORAGE_ROOT / "system" / "default_v1"
-
-
-def _user_root(user_id: int) -> Path:
-    return TEMPLATE_STORAGE_ROOT / "users" / str(user_id)
-
-
-def _user_templates_root(user_id: int) -> Path:
-    return _user_root(user_id) / "templates"
-
-
-def _preferences_path(user_id: int) -> Path:
-    return _user_root(user_id) / "preferences.json"
-
-
-def _template_prompts_dir(template_dir: Path) -> Path:
-    return template_dir / "prompts"
-
-
-def _template_manifest_path(template_dir: Path) -> Path:
-    return template_dir / "manifest.json"
-
-
-def _prompt_relative_path(prompt_key: str) -> Path:
+def _validate_prompt_key(prompt_key: str) -> None:
+    """Raise PromptTemplateError if prompt_key is not in the known schema."""
     if prompt_key in COMMON_PROMPTS:
-        return COMMON_PROMPTS[prompt_key]["path"]
+        return
     if prompt_key in LEGACY_COMMON_PROMPTS:
-        return LEGACY_COMMON_PROMPTS[prompt_key]["path"]
-
+        return
     match = re.fullmatch(r"([a-z0-9_]+)\.(step[456])", prompt_key or "")
     if not match:
         raise PromptTemplateError("非法 prompt_key")
     cot_key, step_key = match.groups()
     if cot_key not in {item["key"] for item in COT_PROMPT_LAYOUT}:
         raise PromptTemplateError("CoT 类型不在当前支持范围内")
-    return Path("cot_types") / cot_key / STEP_PROMPTS[step_key]["path_name"]
+    if step_key not in STEP_PROMPTS:
+        raise PromptTemplateError("非法步骤 key")
 
 
-def _prompt_path(template_dir: Path, prompt_key: str) -> Path:
-    return _template_prompts_dir(template_dir) / _prompt_relative_path(prompt_key)
+def _all_prompt_keys() -> List[str]:
+    """Return all 31 prompt keys for a template."""
+    keys = list(COMMON_PROMPTS.keys())
+    for cot in COT_PROMPT_LAYOUT:
+        for step_key in STEP_PROMPTS:
+            keys.append(f"{cot['key']}.{step_key}")
+    return keys
+
+
+# ---------------------------------------------------------------------------
+# Error class
+# ---------------------------------------------------------------------------
+
+
+class PromptTemplateError(ValueError):
+    """Raised when prompt template operations are invalid."""
+
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
+
+def utc_now_iso() -> str:
+    return datetime.utcnow().isoformat()
 
 
 def _slugify_name(name: str) -> str:
@@ -284,61 +187,19 @@ def _slugify_name(name: str) -> str:
     return text[:48]
 
 
-def _load_manifest(template_dir: Path) -> Dict[str, Any]:
-    path = _template_manifest_path(template_dir)
-    if not path.exists():
-        raise PromptTemplateError("模板 manifest 不存在")
-    return read_json(path)
+# ---------------------------------------------------------------------------
+# Preferences (file-based — kept as-is per task spec)
+# ---------------------------------------------------------------------------
+
+import json as _json
+import os as _os
+from pathlib import Path as _Path
+
+_PREFERENCES_ROOT = _Path(__file__).resolve().parents[3] / "storage" / "professional_cot_prompt_templates"
 
 
-def _save_manifest(template_dir: Path, manifest: Dict[str, Any]) -> None:
-    manifest["updated_at"] = utc_now_iso()
-    atomic_write_json(_template_manifest_path(template_dir), manifest)
-
-
-def ensure_system_template() -> Dict[str, Any]:
-    """Create or repair the read-only system template from docs/background."""
-    template_dir = _system_template_dir()
-    prompts_dir = _template_prompts_dir(template_dir)
-    prompts_dir.mkdir(parents=True, exist_ok=True)
-
-    for prompt_key, info in COMMON_PROMPTS.items():
-        atomic_write_text(prompts_dir / info["path"], _default_common_prompt_content(prompt_key))
-    for prompt_key, info in LEGACY_COMMON_PROMPTS.items():
-        target = prompts_dir / info["path"]
-        if not target.exists():
-            atomic_write_text(target, _default_common_prompt_content(prompt_key))
-
-    for cot in COT_PROMPT_LAYOUT:
-        source_dir = PROMPT_SOURCE_ROOT / cot["prompt_dir"]
-        for step_key, step_info in STEP_PROMPTS.items():
-            source_name = cot[step_key]
-            target = prompts_dir / "cot_types" / cot["key"] / step_info["path_name"]
-            atomic_write_text(target, read_text(source_dir / source_name))
-
-    manifest_path = _template_manifest_path(template_dir)
-    now = utc_now_iso()
-    if manifest_path.exists():
-        manifest = read_json(manifest_path)
-        created_at = manifest.get("created_at") or now
-    else:
-        created_at = now
-    manifest = {
-        "schema_version": SCHEMA_VERSION,
-        "template_id": SYSTEM_TEMPLATE_ID,
-        "name": SYSTEM_TEMPLATE_NAME,
-        "owner_type": "system",
-        "owner_id": None,
-        "base_template_id": None,
-        "version": 1,
-        "status": "active",
-        "is_system": True,
-        "is_readonly": True,
-        "created_at": created_at,
-        "updated_at": now,
-    }
-    atomic_write_json(manifest_path, manifest)
-    return manifest
+def _preferences_path(user_id: int) -> _Path:
+    return _PREFERENCES_ROOT / "users" / str(user_id) / "preferences.json"
 
 
 def _read_preferences(user_id: int) -> Dict[str, Any]:
@@ -346,7 +207,8 @@ def _read_preferences(user_id: int) -> Dict[str, Any]:
     if not path.exists():
         return {"default_template_id": None, "last_used_template_id": None}
     try:
-        data = read_json(path)
+        with open(path, "r", encoding="utf-8") as f:
+            data = _json.load(f)
     except Exception:
         return {"default_template_id": None, "last_used_template_id": None}
     return {
@@ -360,38 +222,69 @@ def _write_preferences(user_id: int, data: Dict[str, Any]) -> None:
         "default_template_id": data.get("default_template_id"),
         "last_used_template_id": data.get("last_used_template_id"),
     }
-    atomic_write_json(_preferences_path(user_id), payload)
+    path = _preferences_path(user_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        _json.dump(payload, f, ensure_ascii=False, indent=2)
+    _os.replace(tmp_path, path)
 
 
-def get_user_preferences(user_id: int) -> Dict[str, Any]:
-    ensure_system_template()
-    preferences = _read_preferences(user_id)
-    default_id = preferences.get("default_template_id")
-    if default_id and get_template_dir(default_id, user_id) is None:
-        preferences["default_template_id"] = None
-        _write_preferences(user_id, preferences)
-    return preferences
+# ---------------------------------------------------------------------------
+# DB helpers
+# ---------------------------------------------------------------------------
 
 
-def _iter_user_template_dirs(user_id: int) -> List[Path]:
-    root = _user_templates_root(user_id)
-    if not root.exists():
-        return []
-    return [path for path in root.iterdir() if path.is_dir() and _template_manifest_path(path).exists()]
+def _get_meta_row(db, template_id: str) -> Optional[Prompt]:
+    """Get a representative row for template metadata (any row for this template_id)."""
+    return db.query(Prompt).filter(
+        Prompt.template_id == template_id,
+        Prompt.stage == StageEnum.PROFESSIONAL_COT,
+    ).first()
+
+
+def _get_prompt_row(db, template_id: str, prompt_key: str) -> Optional[Prompt]:
+    return db.query(Prompt).filter(
+        Prompt.template_id == template_id,
+        Prompt.prompt_key == prompt_key,
+        Prompt.stage == StageEnum.PROFESSIONAL_COT,
+    ).first()
+
+
+def _require_prompt_row(db, template_id: str, prompt_key: str) -> Prompt:
+    row = _get_prompt_row(db, template_id, prompt_key)
+    if row is None:
+        raise PromptTemplateError(f"提示词不存在：{template_id}/{prompt_key}")
+    return row
+
+
+def _build_manifest_from_row(row: Prompt) -> Dict[str, Any]:
+    """Build a manifest dict from a Prompt row's metadata columns."""
+    ref = row.reference_fields or {}
+    is_system = (row.template_id or "").startswith("system_")
+    return {
+        "schema_version": ref.get("schema_version", SCHEMA_VERSION),
+        "template_id": row.template_id,
+        "name": row.name or "",
+        "owner_type": "system" if is_system else "user",
+        "owner_id": row.user_id,
+        "base_template_id": ref.get("base_template_id"),
+        "version": row.version or 1,
+        "status": "active",
+        "is_system": is_system,
+        "is_readonly": is_system,
+        "created_at": row.created_at.isoformat() if row.created_at else utc_now_iso(),
+        "updated_at": utc_now_iso(),
+    }
 
 
 def _count_template_usage(template_id: str) -> int:
-    if not RUN_STORAGE_ROOT.exists():
-        return 0
-    count = 0
-    for manifest_path in RUN_STORAGE_ROOT.glob("*/manifest.json"):
-        try:
-            manifest = read_json(manifest_path)
-        except Exception:
-            continue
-        if manifest.get("prompt_template", {}).get("template_id") == template_id:
-            count += 1
-    return count
+    """Count how many tasks reference this template via prompt_template_id."""
+    db = SessionLocal()
+    try:
+        return db.query(Task).filter(Task.prompt_template_id == template_id).count()
+    finally:
+        db.close()
 
 
 def _decorate_manifest(manifest: Dict[str, Any], user_id: int) -> Dict[str, Any]:
@@ -405,50 +298,83 @@ def _decorate_manifest(manifest: Dict[str, Any], user_id: int) -> Dict[str, Any]
     return item
 
 
-def list_templates(user_id: int) -> Dict[str, Any]:
-    ensure_system_template()
-    templates = [_decorate_manifest(_load_manifest(_system_template_dir()), user_id)]
-    for template_dir in _iter_user_template_dirs(user_id):
-        try:
-            manifest = _load_manifest(template_dir)
-        except Exception:
-            continue
-        if manifest.get("status") != "active":
-            continue
-        templates.append(_decorate_manifest(manifest, user_id))
-    templates.sort(key=lambda item: (item.get("owner_type") != "system", item.get("created_at") or ""))
-    preferences = get_user_preferences(user_id)
-    effective_default_id = preferences.get("default_template_id") or SYSTEM_TEMPLATE_ID
-    return {
-        "templates": templates,
-        "preferences": preferences,
-        "effective_default_template_id": effective_default_id,
-        "system_template_id": SYSTEM_TEMPLATE_ID,
-    }
+def _template_exists(db, template_id: str) -> bool:
+    return db.query(Prompt).filter(
+        Prompt.template_id == template_id,
+        Prompt.stage == StageEnum.PROFESSIONAL_COT,
+    ).first() is not None
 
 
-def get_template_dir(template_id: str, user_id: int) -> Optional[Path]:
-    ensure_system_template()
-    if template_id == SYSTEM_TEMPLATE_ID:
-        return _system_template_dir()
-    expected_prefix = f"user_{user_id}_"
-    if not str(template_id or "").startswith(expected_prefix):
-        return None
-    for template_dir in _iter_user_template_dirs(user_id):
-        try:
-            manifest = _load_manifest(template_dir)
-        except Exception:
-            continue
-        if manifest.get("template_id") == template_id and manifest.get("owner_id") == user_id:
-            return template_dir
-    return None
-
-
-def require_template_dir(template_id: str, user_id: int) -> Path:
-    template_dir = get_template_dir(template_id, user_id)
-    if template_dir is None:
+def _require_template(db, template_id: str, user_id: int) -> Prompt:
+    """Require that the template exists and user has access, return a metadata row."""
+    row = _get_meta_row(db, template_id)
+    if row is None:
         raise PromptTemplateError("模板不存在或无权访问")
-    return template_dir
+    is_system = (template_id or "").startswith("system_")
+    if not is_system:
+        expected_prefix = f"user_{user_id}_"
+        if not str(template_id or "").startswith(expected_prefix):
+            raise PromptTemplateError("模板不存在或无权访问")
+    return row
+
+
+# ---------------------------------------------------------------------------
+# Public API — list / detail
+# ---------------------------------------------------------------------------
+
+
+def list_templates(user_id: int) -> Dict[str, Any]:
+    """Return all templates (system + user) with decorated manifests."""
+    db = SessionLocal()
+    try:
+        # Get distinct template_ids for professional_cot stage
+        rows = db.query(Prompt.template_id, Prompt.user_id).filter(
+            Prompt.stage == StageEnum.PROFESSIONAL_COT,
+        ).distinct().all()
+
+        template_ids_seen = set()
+        templates = []
+        for template_id, owner_id in rows:
+            if template_id in template_ids_seen:
+                continue
+            template_ids_seen.add(template_id)
+            is_system = (template_id or "").startswith("system_")
+            # For user templates, only show those belonging to this user
+            if not is_system and owner_id != user_id:
+                continue
+            meta_row = _get_meta_row(db, template_id)
+            if meta_row is None:
+                continue
+            manifest = _build_manifest_from_row(meta_row)
+            if manifest.get("status") != "active":
+                continue
+            templates.append(_decorate_manifest(manifest, user_id))
+
+        templates.sort(key=lambda item: (item.get("owner_type") != "system", item.get("created_at") or ""))
+        preferences = get_user_preferences(user_id)
+        effective_default_id = preferences.get("default_template_id") or SYSTEM_TEMPLATE_ID
+        return {
+            "templates": templates,
+            "preferences": preferences,
+            "effective_default_template_id": effective_default_id,
+            "system_template_id": SYSTEM_TEMPLATE_ID,
+        }
+    finally:
+        db.close()
+
+
+def get_user_preferences(user_id: int) -> Dict[str, Any]:
+    preferences = _read_preferences(user_id)
+    default_id = preferences.get("default_template_id")
+    if default_id:
+        db = SessionLocal()
+        try:
+            if not _template_exists(db, default_id):
+                preferences["default_template_id"] = None
+                _write_preferences(user_id, preferences)
+        finally:
+            db.close()
+    return preferences
 
 
 def build_prompt_tree() -> List[Dict[str, Any]]:
@@ -481,121 +407,204 @@ def build_prompt_tree() -> List[Dict[str, Any]]:
 
 
 def get_template_detail(template_id: str, user_id: int) -> Dict[str, Any]:
-    template_dir = require_template_dir(template_id, user_id)
-    manifest = _decorate_manifest(_load_manifest(template_dir), user_id)
-    return {
-        "manifest": manifest,
-        "tree": build_prompt_tree(),
-        "prompt_count": len(COMMON_PROMPTS) + len(COT_PROMPT_LAYOUT) * len(STEP_PROMPTS),
-    }
+    db = SessionLocal()
+    try:
+        row = _require_template(db, template_id, user_id)
+        manifest = _decorate_manifest(_build_manifest_from_row(row), user_id)
+        return {
+            "manifest": manifest,
+            "tree": build_prompt_tree(),
+            "prompt_count": len(COMMON_PROMPTS) + len(COT_PROMPT_LAYOUT) * len(STEP_PROMPTS),
+        }
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Public API — prompt item CRUD
+# ---------------------------------------------------------------------------
 
 
 def get_prompt_item(template_id: str, user_id: int, prompt_key: str) -> Dict[str, Any]:
-    template_dir = require_template_dir(template_id, user_id)
-    _ensure_common_prompt_files(_template_prompts_dir(template_dir))
-    manifest = _decorate_manifest(_load_manifest(template_dir), user_id)
-    rel_path = _prompt_relative_path(prompt_key)
-    content = read_text(_template_prompts_dir(template_dir) / rel_path)
-    _ensure_common_prompt_files(_template_prompts_dir(_system_template_dir()))
-    default_content = read_text(_template_prompts_dir(_system_template_dir()) / rel_path)
-    return {
-        "prompt_key": prompt_key,
-        "content": content,
-        "default_content": default_content,
-        "relative_path": rel_path.as_posix(),
-        "manifest": manifest,
-    }
+    _validate_prompt_key(prompt_key)
+    db = SessionLocal()
+    try:
+        row = _require_template(db, template_id, user_id)
+        manifest = _decorate_manifest(_build_manifest_from_row(row), user_id)
+
+        prompt_row = _require_prompt_row(db, template_id, prompt_key)
+        content = prompt_row.content or ""
+
+        # Get default content from system template
+        sys_row = _get_prompt_row(db, SYSTEM_TEMPLATE_ID, prompt_key)
+        default_content = sys_row.content if sys_row else ""
+
+        return {
+            "prompt_key": prompt_key,
+            "content": content,
+            "default_content": default_content,
+            "relative_path": prompt_key,  # keep compatibility — frontend may use this
+            "manifest": manifest,
+        }
+    finally:
+        db.close()
 
 
 def update_prompt_item(template_id: str, user_id: int, prompt_key: str, content: str) -> Dict[str, Any]:
     if not str(content or "").strip():
         raise PromptTemplateError("Prompt 内容不能为空")
-    template_dir = require_template_dir(template_id, user_id)
-    manifest = _load_manifest(template_dir)
-    if manifest.get("is_readonly") or manifest.get("owner_id") != user_id:
-        raise PromptTemplateError("只能编辑自己的用户模板")
-    target = _prompt_path(template_dir, prompt_key)
-    atomic_write_text(target, content)
-    _save_manifest(template_dir, manifest)
+    _validate_prompt_key(prompt_key)
+    db = SessionLocal()
+    try:
+        row = _require_template(db, template_id, user_id)
+        manifest = _build_manifest_from_row(row)
+        if manifest.get("is_readonly") or manifest.get("owner_id") != user_id:
+            raise PromptTemplateError("只能编辑自己的用户模板")
+
+        prompt_row = _require_prompt_row(db, template_id, prompt_key)
+        prompt_row.content = content
+        db.commit()
+    finally:
+        db.close()
     return get_prompt_item(template_id, user_id, prompt_key)
 
 
 def restore_prompt_item_default(template_id: str, user_id: int, prompt_key: str) -> Dict[str, Any]:
-    template_dir = require_template_dir(template_id, user_id)
-    _ensure_common_prompt_files(_template_prompts_dir(template_dir))
-    manifest = _load_manifest(template_dir)
-    if manifest.get("is_readonly") or manifest.get("owner_id") != user_id:
-        raise PromptTemplateError("只能恢复自己的用户模板")
-    rel_path = _prompt_relative_path(prompt_key)
-    _ensure_common_prompt_files(_template_prompts_dir(_system_template_dir()))
-    default_content = read_text(_template_prompts_dir(_system_template_dir()) / rel_path)
-    atomic_write_text(_template_prompts_dir(template_dir) / rel_path, default_content)
-    _save_manifest(template_dir, manifest)
+    _validate_prompt_key(prompt_key)
+    db = SessionLocal()
+    try:
+        row = _require_template(db, template_id, user_id)
+        manifest = _build_manifest_from_row(row)
+        if manifest.get("is_readonly") or manifest.get("owner_id") != user_id:
+            raise PromptTemplateError("只能恢复自己的用户模板")
+
+        sys_row = _require_prompt_row(db, SYSTEM_TEMPLATE_ID, prompt_key)
+        default_content = sys_row.content or ""
+
+        prompt_row = _require_prompt_row(db, template_id, prompt_key)
+        prompt_row.content = default_content
+        db.commit()
+    finally:
+        db.close()
     return get_prompt_item(template_id, user_id, prompt_key)
 
 
-def _next_template_dir(user_id: int, name: str) -> Path:
-    base_slug = _slugify_name(name)
-    root = _user_templates_root(user_id)
-    root.mkdir(parents=True, exist_ok=True)
-    candidate = root / base_slug
-    index = 2
-    while candidate.exists():
-        candidate = root / f"{base_slug}_{index}"
-        index += 1
-    return candidate
+# ---------------------------------------------------------------------------
+# Public API — template lifecycle
+# ---------------------------------------------------------------------------
 
 
 def duplicate_template(template_id: str, user_id: int, name: str) -> Dict[str, Any]:
-    source_dir = require_template_dir(template_id, user_id)
-    source_manifest = _load_manifest(source_dir)
     new_name = (name or "").strip()
     if not new_name:
         raise PromptTemplateError("模板名称不能为空")
 
-    target_dir = _next_template_dir(user_id, new_name)
-    shutil.copytree(_template_prompts_dir(source_dir), _template_prompts_dir(target_dir))
-    now = utc_now_iso()
-    existing_versions = [
-        int((_load_manifest(path).get("version") or 0))
-        for path in _iter_user_template_dirs(user_id)
-        if path != target_dir
-    ]
-    version = (max(existing_versions) if existing_versions else 0) + 1
-    template_id_new = f"user_{user_id}_{target_dir.name}"
-    manifest = {
-        "schema_version": SCHEMA_VERSION,
-        "template_id": template_id_new,
-        "name": new_name,
-        "owner_type": "user",
-        "owner_id": user_id,
-        "base_template_id": source_manifest.get("template_id"),
-        "version": version,
-        "status": "active",
-        "is_system": False,
-        "is_readonly": False,
-        "created_at": now,
-        "updated_at": now,
-    }
-    atomic_write_json(_template_manifest_path(target_dir), manifest)
-    return _decorate_manifest(manifest, user_id)
+    db = SessionLocal()
+    try:
+        source_row = _require_template(db, template_id, user_id)
+        source_manifest = _build_manifest_from_row(source_row)
+
+        # Generate new template_id
+        slug = _slugify_name(new_name)
+        new_template_id = f"user_{user_id}_{slug}"
+
+        # Ensure uniqueness
+        existing = _get_meta_row(db, new_template_id)
+        counter = 2
+        while existing is not None:
+            new_template_id = f"user_{user_id}_{slug}_{counter}"
+            existing = _get_meta_row(db, new_template_id)
+            counter += 1
+
+        # Compute next version
+        max_version = db.query(Prompt.version).filter(
+            Prompt.stage == StageEnum.PROFESSIONAL_COT,
+            Prompt.user_id == user_id,
+        ).order_by(Prompt.version.desc()).first()
+        version = (max_version[0] + 1) if max_version and max_version[0] else 1
+
+        now = datetime.utcnow()
+        ref_fields = {
+            "schema_version": SCHEMA_VERSION,
+            "base_template_id": source_manifest.get("template_id"),
+        }
+
+        # Copy all prompt rows from source
+        source_rows = db.query(Prompt).filter(
+            Prompt.template_id == template_id,
+            Prompt.stage == StageEnum.PROFESSIONAL_COT,
+        ).all()
+
+        for src in source_rows:
+            new_row = Prompt(
+                user_id=user_id,
+                stage=StageEnum.PROFESSIONAL_COT,
+                version=version,
+                name=new_name,
+                content=src.content,
+                template_id=new_template_id,
+                prompt_key=src.prompt_key,
+                reference_fields=ref_fields,
+                created_at=now,
+                is_default=False,
+            )
+            db.add(new_row)
+
+        db.commit()
+
+        # Return manifest for the new template
+        new_meta = _get_meta_row(db, new_template_id)
+        manifest = _build_manifest_from_row(new_meta) if new_meta else {
+            "schema_version": SCHEMA_VERSION,
+            "template_id": new_template_id,
+            "name": new_name,
+            "owner_type": "user",
+            "owner_id": user_id,
+            "base_template_id": source_manifest.get("template_id"),
+            "version": version,
+            "status": "active",
+            "is_system": False,
+            "is_readonly": False,
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+        return _decorate_manifest(manifest, user_id)
+    finally:
+        db.close()
 
 
 def rename_template(template_id: str, user_id: int, name: str) -> Dict[str, Any]:
     new_name = (name or "").strip()
     if not new_name:
         raise PromptTemplateError("模板名称不能为空")
-    template_dir = require_template_dir(template_id, user_id)
-    manifest = _load_manifest(template_dir)
-    if manifest.get("is_readonly") or manifest.get("owner_id") != user_id:
-        raise PromptTemplateError("只能重命名自己的用户模板")
-    manifest["name"] = new_name
-    _save_manifest(template_dir, manifest)
-    return _decorate_manifest(manifest, user_id)
+
+    db = SessionLocal()
+    try:
+        row = _require_template(db, template_id, user_id)
+        manifest = _build_manifest_from_row(row)
+        if manifest.get("is_readonly") or manifest.get("owner_id") != user_id:
+            raise PromptTemplateError("只能重命名自己的用户模板")
+
+        # Update name on all rows of this template
+        db.query(Prompt).filter(
+            Prompt.template_id == template_id,
+            Prompt.stage == StageEnum.PROFESSIONAL_COT,
+        ).update({"name": new_name})
+        db.commit()
+
+        # Re-fetch for updated manifest
+        row = _get_meta_row(db, template_id)
+        return _decorate_manifest(_build_manifest_from_row(row), user_id)
+    finally:
+        db.close()
 
 
 def set_default_template(template_id: str, user_id: int) -> Dict[str, Any]:
-    require_template_dir(template_id, user_id)
+    db = SessionLocal()
+    try:
+        _require_template(db, template_id, user_id)
+    finally:
+        db.close()
     preferences = _read_preferences(user_id)
     preferences["default_template_id"] = template_id
     preferences["last_used_template_id"] = template_id
@@ -604,16 +613,28 @@ def set_default_template(template_id: str, user_id: int) -> Dict[str, Any]:
 
 
 def delete_template(template_id: str, user_id: int) -> Dict[str, Any]:
-    template_dir = require_template_dir(template_id, user_id)
-    manifest = _load_manifest(template_dir)
-    if manifest.get("is_system") or manifest.get("is_readonly"):
-        raise PromptTemplateError("系统模板不可删除")
-    if manifest.get("owner_id") != user_id:
-        raise PromptTemplateError("只能删除自己的用户模板")
-    used_count = _count_template_usage(template_id)
-    if used_count > 0:
-        raise PromptTemplateError("模板已被历史 run 使用，不能删除")
-    shutil.rmtree(template_dir)
+    db = SessionLocal()
+    try:
+        row = _require_template(db, template_id, user_id)
+        manifest = _build_manifest_from_row(row)
+        if manifest.get("is_system") or manifest.get("is_readonly"):
+            raise PromptTemplateError("系统模板不可删除")
+        if manifest.get("owner_id") != user_id:
+            raise PromptTemplateError("只能删除自己的用户模板")
+
+        used_count = _count_template_usage(template_id)
+        if used_count > 0:
+            raise PromptTemplateError("模板已被历史 run 使用，不能删除")
+
+        # Delete all prompt rows for this template
+        db.query(Prompt).filter(
+            Prompt.template_id == template_id,
+            Prompt.stage == StageEnum.PROFESSIONAL_COT,
+        ).delete()
+        db.commit()
+    finally:
+        db.close()
+
     preferences = _read_preferences(user_id)
     if preferences.get("default_template_id") == template_id:
         preferences["default_template_id"] = None
@@ -623,49 +644,82 @@ def delete_template(template_id: str, user_id: int) -> Dict[str, Any]:
     return {"deleted": True, "template_id": template_id}
 
 
+# ---------------------------------------------------------------------------
+# Public API — run-time snapshot / resolution
+# ---------------------------------------------------------------------------
+
+
 def resolve_template_for_run(user_id: int, template_id: Optional[str]) -> Dict[str, Any]:
-    ensure_system_template()
+    """Resolve which template to use for a pipeline run."""
     selected_id = (template_id or "").strip()
     if not selected_id:
         preferences = get_user_preferences(user_id)
         selected_id = preferences.get("default_template_id") or SYSTEM_TEMPLATE_ID
-    template_dir = require_template_dir(selected_id, user_id)
-    manifest = _decorate_manifest(_load_manifest(template_dir), user_id)
-    preferences = _read_preferences(user_id)
-    preferences["last_used_template_id"] = selected_id
-    _write_preferences(user_id, preferences)
-    return {"template_id": selected_id, "template_dir": template_dir, "manifest": manifest}
+
+    db = SessionLocal()
+    try:
+        row = _require_template(db, selected_id, user_id)
+        manifest = _decorate_manifest(_build_manifest_from_row(row), user_id)
+
+        preferences = _read_preferences(user_id)
+        preferences["last_used_template_id"] = selected_id
+        _write_preferences(user_id, preferences)
+
+        return {"template_id": selected_id, "manifest": manifest}
+    finally:
+        db.close()
 
 
-def create_run_prompt_snapshot(template_id: str, user_id: int, run_dir: Path) -> Dict[str, Any]:
-    resolved = resolve_template_for_run(user_id, template_id)
-    template_dir = resolved["template_dir"]
-    template_manifest = resolved["manifest"]
-    _ensure_common_prompt_files(_template_prompts_dir(template_dir))
-    snapshot_dir = run_dir / "prompts"
-    if snapshot_dir.exists():
-        shutil.rmtree(snapshot_dir)
-    shutil.copytree(_template_prompts_dir(template_dir), snapshot_dir)
-    _ensure_common_prompt_files(snapshot_dir)
-    snapshot_manifest = {
-        "schema_version": SCHEMA_VERSION,
-        "template_id": template_manifest.get("template_id"),
-        "template_name": template_manifest.get("name"),
-        "owner_type": template_manifest.get("owner_type"),
-        "owner_id": template_manifest.get("owner_id"),
-        "version": template_manifest.get("version"),
-        "base_template_id": template_manifest.get("base_template_id"),
-        "snapshot_created_at": utc_now_iso(),
-        "snapshot_path": "prompts/",
-        "prompt_count": len(COMMON_PROMPTS) + len(COT_PROMPT_LAYOUT) * len(STEP_PROMPTS),
-    }
-    atomic_write_json(snapshot_dir / "manifest.json", snapshot_manifest)
-    return snapshot_manifest
+def create_run_prompt_snapshot(template_id: str, user_id: int, task_id: int) -> Dict[str, Any]:
+    """Record the template snapshot info on the Task row.
+
+    Takes task_id (int) instead of run_dir (Path).
+    Writes snapshot metadata to Task.run_extra['prompt_snapshot'].
+    """
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is None:
+            raise PromptTemplateError(f"任务不存在：{task_id}")
+
+        resolved = resolve_template_for_run(user_id, template_id)
+        template_manifest = resolved["manifest"]
+
+        snapshot_manifest = {
+            "schema_version": SCHEMA_VERSION,
+            "template_id": template_manifest.get("template_id"),
+            "template_name": template_manifest.get("name"),
+            "owner_type": template_manifest.get("owner_type"),
+            "owner_id": template_manifest.get("owner_id"),
+            "version": template_manifest.get("version"),
+            "base_template_id": template_manifest.get("base_template_id"),
+            "snapshot_created_at": utc_now_iso(),
+            "snapshot_path": "prompts/",  # keep compatibility
+            "prompt_count": len(COMMON_PROMPTS) + len(COT_PROMPT_LAYOUT) * len(STEP_PROMPTS),
+        }
+
+        # Write to Task.run_extra
+        run_extra = task.run_extra or {}
+        run_extra["prompt_snapshot"] = snapshot_manifest
+        task.run_extra = run_extra
+        task.prompt_template_id = template_manifest.get("template_id")
+        db.commit()
+
+        return snapshot_manifest
+    finally:
+        db.close()
 
 
-def read_prompt_from_snapshot(prompt_snapshot_dir: Path, prompt_key: str) -> str:
-    if not prompt_snapshot_dir.exists() or not (prompt_snapshot_dir / "manifest.json").exists():
-        raise PromptTemplateError("run 提示词快照不存在")
-    _ensure_common_prompt_files(prompt_snapshot_dir)
-    rel_path = _prompt_relative_path(prompt_key)
-    return read_text(prompt_snapshot_dir / rel_path)
+def read_prompt_from_snapshot(template_id: str, prompt_key: str) -> str:
+    """Read a prompt from the DB by template_id + prompt_key.
+
+    Called during pipeline execution to fetch the prompt content
+    that was snapshotted for this run.
+    """
+    _validate_prompt_key(prompt_key)
+    db = SessionLocal()
+    try:
+        row = _require_prompt_row(db, template_id, prompt_key)
+        return row.content or ""
+    finally:
+        db.close()

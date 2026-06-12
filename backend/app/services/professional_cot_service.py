@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from app.models.models import LLMConfig, ProfessionalCotTypeStat
+from app.models.models import LLMConfig, ProfessionalCotTypeStat, Task, StageEnum
 from app.database import SessionLocal
 from app.services.llm_service import LLMCallError, call_llm_json_sync
 from app.services.professional_cot_prompt_service import (
@@ -1115,24 +1115,24 @@ def _read_prompt_file(path: Path) -> str:
         return f.read()
 
 
-def _extract_step_prompt(step_no: int, prompt_snapshot_dir: Optional[Path] = None) -> str:
-    if prompt_snapshot_dir is not None:
-        return read_prompt_from_snapshot(prompt_snapshot_dir, f"common.step{step_no}")
+def _extract_step_prompt(step_no: int, prompt_template_id: Optional[str] = None) -> str:
+    if prompt_template_id is not None:
+        return read_prompt_from_snapshot(prompt_template_id, f"common.step{step_no}")
     content = _read_prompt_file(PROMPT_ROOT / "专业Cot构建.md")
     pattern = re.compile(rf"###\s*Step\s*{step_no}[^\n]*\n(.*?)(?=\n###\s*Step\s*\d+|\Z)", re.S | re.I)
     match = pattern.search(content)
     return match.group(0).strip() if match else content
 
 
-def _extract_step1_3_integrated_prompt(prompt_snapshot_dir: Optional[Path] = None) -> str:
-    if prompt_snapshot_dir is not None:
-        return read_prompt_from_snapshot(prompt_snapshot_dir, "common.step1_3")
+def _extract_step1_3_integrated_prompt(prompt_template_id: Optional[str] = None) -> str:
+    if prompt_template_id is not None:
+        return read_prompt_from_snapshot(prompt_template_id, "common.step1_3")
     return _read_prompt_file(PROMPT_ROOT / "step1_3_integrated_extraction_and_routing.md")
 
 
-def _type_prompt(cot_type: Dict[str, Any], step_no: int, prompt_snapshot_dir: Optional[Path] = None) -> str:
-    if prompt_snapshot_dir is not None:
-        return read_prompt_from_snapshot(prompt_snapshot_dir, f"{cot_type['key']}.step{step_no}")
+def _type_prompt(cot_type: Dict[str, Any], step_no: int, prompt_template_id: Optional[str] = None) -> str:
+    if prompt_template_id is not None:
+        return read_prompt_from_snapshot(prompt_template_id, f"{cot_type['key']}.step{step_no}")
     filename = cot_type[f"step{step_no}"]
     return _read_prompt_file(PROMPT_ROOT / cot_type["prompt_dir"] / filename)
 
@@ -1187,10 +1187,10 @@ def _run_step1_3_integrated(
     source_type: Optional[str] = None,
     llm: Dict[str, Any],
     username: str,
-    prompt_snapshot_dir: Optional[Path] = None,
+    prompt_template_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     prompt = f"""
-{_extract_step1_3_integrated_prompt(prompt_snapshot_dir)}
+{_extract_step1_3_integrated_prompt(prompt_template_id)}
 
 强制约束：
 - 本节点只允许完成文献可用性判断、关键信息抽取、CoT 类型路由。
@@ -1263,9 +1263,9 @@ full_literature:
     return result
 
 
-def _run_step1(paper_text: str, llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
+def _run_step1(paper_text: str, llm: Dict[str, Any], username: str, prompt_template_id: Optional[str] = None) -> Dict[str, Any]:
     prompt = f"""
-{_extract_step_prompt(1, prompt_snapshot_dir)}
+{_extract_step_prompt(1, prompt_template_id)}
 
 强制约束：
 - 只能在以下 10 类 CoT 枚举中选择类型，输出名称必须使用枚举原文：
@@ -1294,9 +1294,9 @@ def _run_step1(paper_text: str, llm: Dict[str, Any], username: str, prompt_snaps
     return result
 
 
-def _run_step2(paper_text: str, llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
+def _run_step2(paper_text: str, llm: Dict[str, Any], username: str, prompt_template_id: Optional[str] = None) -> Dict[str, Any]:
     prompt = f"""
-{_extract_step_prompt(2, prompt_snapshot_dir)}
+{_extract_step_prompt(2, prompt_template_id)}
 
 强制约束：
 - JSON 顶层必须是对象，必须包含 case_card。
@@ -1353,9 +1353,9 @@ def _extract_recommended_cot_type(step3: Dict[str, Any]) -> Optional[Dict[str, A
     return None
 
 
-def _run_step3(case_card: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
+def _run_step3(case_card: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_template_id: Optional[str] = None) -> Dict[str, Any]:
     prompt = f"""
-{_extract_step_prompt(3, prompt_snapshot_dir)}
+{_extract_step_prompt(3, prompt_template_id)}
 
 强制约束：
 - Step 3 的输入仅为 Step 2 产出的 case_card；不要读取完整论文正文，不要补写 case_card 中不存在的证据。
@@ -1416,9 +1416,9 @@ case_card：
     return result
 
 
-def _run_step4(cot_type: Dict[str, Any], step1_3_result: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
+def _run_step4(cot_type: Dict[str, Any], step1_3_result: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_template_id: Optional[str] = None) -> Dict[str, Any]:
     prompt = f"""
-{_type_prompt(cot_type, 4, prompt_snapshot_dir)}
+{_type_prompt(cot_type, 4, prompt_template_id)}
 
 强制约束：
 - 当前 cot_type 固定为：{cot_type['display_name']}。
@@ -1443,10 +1443,10 @@ step1_3_result：
     return result
 
 
-def _run_step5(cot_type: Dict[str, Any], step1_3_result: Dict[str, Any], step4: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
+def _run_step5(cot_type: Dict[str, Any], step1_3_result: Dict[str, Any], step4: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_template_id: Optional[str] = None) -> Dict[str, Any]:
     selected_input = step4.get("selected_input") or step4.get("input") or ""
     prompt = f"""
-{_type_prompt(cot_type, 5, prompt_snapshot_dir)}
+{_type_prompt(cot_type, 5, prompt_template_id)}
 
 强制约束：
 - 当前 cot_type 固定为：{cot_type['display_name']}。
@@ -1477,11 +1477,11 @@ Step 4 结果：
     return result
 
 
-def _run_step6(cot_type: Dict[str, Any], step4: Dict[str, Any], step5: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_snapshot_dir: Optional[Path] = None) -> Dict[str, Any]:
+def _run_step6(cot_type: Dict[str, Any], step4: Dict[str, Any], step5: Dict[str, Any], llm: Dict[str, Any], username: str, prompt_template_id: Optional[str] = None) -> Dict[str, Any]:
     selected_input = step4.get("selected_input") or step4.get("input") or ""
     chain = step5.get("chainofThought") or []
     prompt = f"""
-{_type_prompt(cot_type, 6, prompt_snapshot_dir)}
+{_type_prompt(cot_type, 6, prompt_template_id)}
 
 强制约束：
 - 当前 cot_type 固定为：{cot_type['display_name']}。
@@ -1694,7 +1694,29 @@ def create_initial_run(
         "error_message": None,
     }
     try:
-        prompt_snapshot = create_run_prompt_snapshot(prompt_template_id, user_id, run_dir)
+        # Create a Task row to record prompt snapshot metadata
+        task_prompt_template_id = prompt_template_id
+        resolved_template_id = None
+        db = SessionLocal()
+        try:
+            task = Task(
+                user_id=user_id,
+                stage=StageEnum.PROFESSIONAL_COT,
+                status="running",
+                progress_current=0,
+                progress_total=input_count,
+                progress_label="初始化中…",
+                prompt_template_id=task_prompt_template_id,
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+            task_id = task.id
+        finally:
+            db.close()
+
+        prompt_snapshot = create_run_prompt_snapshot(prompt_template_id, user_id, task_id)
+        resolved_template_id = prompt_snapshot.get("template_id")
     except ValueError as exc:
         shutil.rmtree(run_dir, ignore_errors=True)
         raise ValueError(str(exc))
@@ -1737,7 +1759,7 @@ def process_one_document(
     paper_text: str,
     text_field: str,
     run_dir: Path,
-    prompt_snapshot_dir: Path,
+    prompt_template_id: str,
     llm: Dict[str, Any],
     username: str,
     source_id: Optional[str] = None,
@@ -1795,7 +1817,7 @@ def process_one_document(
             source_type=source_type,
             llm=llm,
             username=username,
-            prompt_snapshot_dir=prompt_snapshot_dir,
+            prompt_template_id=prompt_template_id,
         )
         # 从候选池（decision=build或build_with_caution的类型）中，
         # 通过全局优先队列选计数最小的COT类型
@@ -1881,7 +1903,7 @@ def process_one_document(
         # Step 4
         _update_manifest_step("step4_input", status="running", progress_current=15,
                               progress_label=f"文献 {source_index + 1}/{input_count}：生成 {target['display_name']} input")
-        step4 = _run_step4(target, step1_3, llm, username, prompt_snapshot_dir)
+        step4 = _run_step4(target, step1_3, llm, username, prompt_template_id)
         atomic_write_json(type_dir / "step4_input.json", {
             "step": 4, "step_name": "生成 input", "status": "completed",
             "cot_type": target["display_name"], "cot_type_key": target["key"],
@@ -1894,7 +1916,7 @@ def process_one_document(
         # Step 5
         _update_manifest_step("step5_chain", status="running", progress_current=15,
                               progress_label=f"文献 {source_index + 1}/{input_count}：生成 {target['display_name']} chainofThought")
-        step5 = _run_step5(target, step1_3, step4, llm, username, prompt_snapshot_dir)
+        step5 = _run_step5(target, step1_3, step4, llm, username, prompt_template_id)
         atomic_write_json(type_dir / "step5_chain.json", {
             "step": 5, "step_name": "生成 chainofThought", "status": "completed",
             "cot_type": target["display_name"], "cot_type_key": target["key"],
@@ -1907,7 +1929,7 @@ def process_one_document(
         # Step 6
         _update_manifest_step("step6_output", status="running", progress_current=15,
                               progress_label=f"文献 {source_index + 1}/{input_count}：生成 {target['display_name']} output")
-        step6 = _run_step6(target, step4, step5, llm, username, prompt_snapshot_dir)
+        step6 = _run_step6(target, step4, step5, llm, username, prompt_template_id)
         sample = _build_final_sample(target, step4, step5, step6, source_type=source_type)
         step6_payload = {
             "step": 6, "step_name": "生成 output", "status": "completed",
@@ -1992,7 +2014,9 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
     try:
         manifest = load_manifest(run_id)
         run_dir = get_run_dir(run_id)
-        prompt_snapshot_dir = run_dir / "prompts"
+        # Get template_id from the prompt snapshot stored in manifest
+        prompt_template_info = manifest.get("prompt_template", {})
+        prompt_template_id = prompt_template_info.get("template_id") or "system_default_v1"
 
         source_input = read_json(run_dir / "source_input.json")
         text_field = source_input["text_field"]
@@ -2076,7 +2100,7 @@ def run_pipeline_sync(run_id: str, llm: Dict[str, Any], username: str) -> None:
                 paper_text=paper_text,
                 text_field=text_field,
                 run_dir=run_dir,
-                prompt_snapshot_dir=prompt_snapshot_dir,
+                prompt_template_id=prompt_template_id,
                 llm=llm,
                 username=username,
                 source_id=record.get("source_id") or record.get("id") or record.get("doi") or source_label,
