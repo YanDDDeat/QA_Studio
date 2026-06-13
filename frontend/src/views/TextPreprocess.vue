@@ -180,7 +180,7 @@ const result = ref(null)
 const form = ref({
   file_id: null,
   text_field: 'text',
-  min_token_threshold: 1500,
+  min_token_threshold: 300,
   output_filename: '',
   merge_before_classify: true,
 })
