@@ -475,7 +475,11 @@ export function getProfessionalCotPromptItem(templateId, promptKey) {
 }
 
 export function updateProfessionalCotPromptItem(templateId, promptKey, data) {
-  return api.put(`/professional-cot/prompts/templates/${templateId}/items/${promptKey}`, data)
+  return api.post('/professional-cot/prompts/update-item', {
+    template_id: templateId,
+    prompt_key: promptKey,
+    content: typeof data === 'string' ? data : data.content
+  })
 }
 
 export function restoreDefaultProfessionalCotPromptItem(templateId, promptKey) {
