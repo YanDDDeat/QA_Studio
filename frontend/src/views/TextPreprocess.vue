@@ -1,10 +1,10 @@
 <template>
   <div class="page-container">
-    <h2>文本预处理</h2>
 
     <el-card class="tool-card">
       <template #header>
-        <span class="card-title">预处理配置</span>
+      <span class="card-title">大文献（博士论文）拆分及预处理</span>
+      <p class="card-desc">对上传的博士论文进行章节拆分和清洗，生成更适合 LLM 处理的数据。</p>
       </template>
       <div class="config-layout">
         <div class="config-form">
@@ -180,7 +180,7 @@ const result = ref(null)
 const form = ref({
   file_id: null,
   text_field: 'text',
-  min_token_threshold: 1000,
+  min_token_threshold: 1500,
   output_filename: '',
   merge_before_classify: true,
 })
@@ -421,6 +421,12 @@ const PreviewCard = defineComponent({
 .card-title {
   font-size: 16px;
   font-weight: 600;
+}
+.card-desc {
+  margin: 6px 0 0;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .config-layout {
   display: flex;

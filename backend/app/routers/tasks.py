@@ -99,24 +99,24 @@ async def list_tasks(
     db: Session = Depends(get_db),
 ):
     """List all tasks belonging to the current user, with pagination."""
-    query = db.query(Task).filter(Task.user_id == current_user.id)
+    filters = [Task.user_id == current_user.id]
     if stage:
         if stage not in [s.value for s in StageEnum]:
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid stage: {stage}",
             )
-        query = query.filter(Task.stage == StageEnum(stage))
+        filters.append(Task.stage == StageEnum(stage))
     if task_status:
         if task_status not in [s.value for s in TaskStatusEnum]:
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status: {task_status}",
             )
-        query = query.filter(Task.status == TaskStatusEnum(task_status))
+        filters.append(Task.status == TaskStatusEnum(task_status))
 
-    total = query.count()
-    tasks = query.order_by(Task.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    total = db.query(func.count(Task.id)).filter(*filters).scalar()
+    tasks = db.query(Task).filter(*filters).order_by(Task.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
     # 合并去重一次查完，避免 N+1
     all_file_ids = set()

@@ -84,6 +84,37 @@
           </el-menu-item>
         </el-sub-menu>
 
+        <el-sub-menu index="group-cot-hcot">
+          <template #title>
+            <el-icon><Tickets /></el-icon>
+            <span>CoT/H-CoT 标注</span>
+          </template>
+          <el-menu-item index="/cot-hcot-text-preprocess">
+            <el-icon><Operation /></el-icon>
+            <span>文本预处理</span>
+          </el-menu-item>
+          <el-menu-item index="/cot-hcot-workflows">
+            <el-icon><Tickets /></el-icon>
+            <span>多COT生成</span>
+          </el-menu-item>
+          <el-menu-item index="/hcot-prompts">
+            <el-icon><Document /></el-icon>
+            <span>多COT提示词</span>
+          </el-menu-item>
+          <el-menu-item index="/professional-cot-runs">
+            <el-icon><Tickets /></el-icon>
+            <span>单COT生成</span>
+          </el-menu-item>
+          <el-menu-item index="/professional-cot-prompts">
+            <el-icon><Document /></el-icon>
+            <span>单COT提示词</span>
+          </el-menu-item>
+          <el-menu-item index="/cot-quality-check">
+            <el-icon><CircleCheck /></el-icon>
+            <span>CoT质检</span>
+          </el-menu-item>
+        </el-sub-menu>
+
         <el-sub-menu index="group-tools">
           <template #title>
             <el-icon><Tools /></el-icon>
@@ -207,7 +238,7 @@ import {
   EditPen, Share, Checked, Document, Select,
   DataAnalysis, Folder, Setting, ArrowDown, UserFilled,
   Operation, Filter, Grid, List, Tools, Connection, Upload,
-  CircleCheck, MagicStick,
+  CircleCheck, MagicStick, Tickets,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()

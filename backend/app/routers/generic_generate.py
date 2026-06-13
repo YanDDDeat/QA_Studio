@@ -409,12 +409,12 @@ async def get_generic_generate_status(
     processed_count = 0
     if task.file_id:
         processed_count = (
-            db.query(Dataset)
+            db.query(func.count(Dataset.id))
             .filter(
                 Dataset.file_id == task.file_id,
                 Dataset.user_id == current_user.id,
             )
-            .count()
+            .scalar()
         )
 
     return TaskStatusResponse(
@@ -523,12 +523,12 @@ async def retry_generic_generate(
 
     # Count source records (用于进度跟踪)
     remaining_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(
             Dataset.file_id == source_fid,
             Dataset.user_id == current_user.id,
         )
-        .count()
+        .scalar()
     )
 
     # Keep progress_current for breakpoint resume

@@ -19,6 +19,48 @@ const routes = [
         meta: { title: '文本预处理' },
       },
       {
+        path: 'cot-hcot-text-preprocess',
+        name: 'CotHcotTextPreprocess',
+        component: () => import('../views/CotHcot/CotHcotTextPreprocess.vue'),
+        meta: { title: '文本预处理' },
+      },
+      {
+        path: 'cot-hcot-workflows',
+        name: 'CotHcotWorkflows',
+        component: () => import('../views/CotHcot/WorkflowList.vue'),
+        meta: { title: 'CoT/H-CoT 标注' },
+      },
+      {
+        path: 'cot-hcot-workflows/:id',
+        name: 'CotHcotWorkflowDetail',
+        component: () => import('../views/CotHcot/WorkflowDetail.vue'),
+        meta: { title: '多COT生成详情' },
+      },
+      {
+        path: 'professional-cot-runs',
+        name: 'ProfessionalCotRuns',
+        component: () => import('../views/CotHcot/ProfessionalCotList.vue'),
+        meta: { title: '单COT生成' },
+      },
+      {
+        path: 'professional-cot-prompts',
+        name: 'ProfessionalCotPrompts',
+        component: () => import('../views/CotHcot/ProfessionalCotPromptTemplates.vue'),
+        meta: { title: '单COT提示词' },
+      },
+      {
+        path: 'hcot-prompts',
+        name: 'HcotPrompts',
+        component: () => import('../views/CotHcot/HcotPromptTemplates.vue'),
+        meta: { title: '多COT提示词' },
+      },
+      {
+        path: 'professional-cot-runs/:id',
+        name: 'ProfessionalCotRunDetail',
+        component: () => import('../views/CotHcot/ProfessionalCotDetail.vue'),
+        meta: { title: '单COT生成详情' },
+      },
+      {
         path: 'question-generate',
         name: 'QuestionGenerate',
         component: () => import('../views/QuestionGenerate.vue'),
@@ -65,6 +107,12 @@ const routes = [
         name: 'CotFilter',
         component: () => import('../views/CotFilter.vue'),
         meta: { title: 'COT过滤', stage: 'cot_filter' },
+      },
+      {
+        path: 'cot-quality-check',
+        name: 'CotQualityCheck',
+        component: () => import('../views/CotHcot/CotQualityCheck.vue'),
+        meta: { title: 'CoT质检', stage: 'cot_quality_check' },
       },
       {
         path: 'dataset-processing',

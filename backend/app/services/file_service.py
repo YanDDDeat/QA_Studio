@@ -40,9 +40,11 @@ STAGE_LABELS = {
     StageEnum.DATA_EVALUATE: "数据评估",
     StageEnum.QUALITY_CHECK: "质检",
     StageEnum.COT_FILTER: "COT过滤",
+    StageEnum.COT_QUALITY_CHECK: "CoT质检",
     StageEnum.DATASET_SPLIT: "数据集切分",
     StageEnum.DATASET_ASSESSMENT: "评分标准生成",
     StageEnum.GENERIC: "通用生成",
+    StageEnum.COT_HCOT_PIPELINE: "CoT标注",
 }
 
 
@@ -167,6 +169,11 @@ def ensure_datasets_for_file(db: Session, file_id: int, user_id: int) -> list:
         "score",
     }
 
+    def _serialize_import_value(value):
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
     def _is_number_like(value) -> bool:
         if isinstance(value, (int, float)):
             return True
@@ -202,10 +209,8 @@ def ensure_datasets_for_file(db: Session, file_id: int, user_id: int) -> list:
         for key, value in record.items():
             canonical = _resolve_import_field(key, value)
             if canonical is not None:
-                if isinstance(value, (list, dict)):
-                    kwargs[canonical] = json.dumps(value, ensure_ascii=False)
-                elif value is not None:
-                    kwargs[canonical] = str(value)
+                if value is not None:
+                    kwargs[canonical] = _serialize_import_value(value)
             else:
                 # Skip internal fields
                 if key not in ("id", "user_id", "file_id", "current_stage", "created_at", "updated_at"):
@@ -457,8 +462,9 @@ def create_output_file(
 
     suffix_name = username or str(user_id)
 
-    upload_dir = os.path.join("uploads", str(user_id))
-    os.makedirs(upload_dir, exist_ok=True)
+    # 生成文件与用户上传源文件分目录存放，避免物理文件混在一起。
+    output_dir = os.path.join("outputs", str(user_id))
+    os.makedirs(output_dir, exist_ok=True)
 
     desired_filename = _build_output_filename(
         source_filename=source_file.filename if source_file else "output",
@@ -467,7 +473,7 @@ def create_output_file(
         username_or_id=suffix_name,
         name_suffix=name_suffix,
     )
-    filename, file_path = _resolve_unique_path(upload_dir, desired_filename)
+    filename, file_path = _resolve_unique_path(output_dir, desired_filename)
 
     payload = initial_content if initial_content is not None else []
     with open(file_path, "w", encoding="utf-8") as f:
@@ -613,10 +619,10 @@ def create_fail_file(
     source_base = os.path.splitext(source_file.filename)[0]
     desired_filename = f"{source_base}_{suffix}.json"
 
-    upload_dir = os.path.join("uploads", str(user_id))
-    os.makedirs(upload_dir, exist_ok=True)
+    output_dir = os.path.join("outputs", str(user_id))
+    os.makedirs(output_dir, exist_ok=True)
 
-    filename, file_path = _resolve_unique_path(upload_dir, desired_filename)
+    filename, file_path = _resolve_unique_path(output_dir, desired_filename)
 
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(fail_records, f, ensure_ascii=False, indent=2)

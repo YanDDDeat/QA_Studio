@@ -464,21 +464,21 @@ async def get_quality_check_status(
 
     # Count pass/fail from task logs for this specific task
     pass_count = (
-        db.query(TaskLog)
+        db.query(func.count(TaskLog.id))
         .filter(
             TaskLog.task_id == task_id,
             TaskLog.log_content.contains("质检通过"),
         )
-        .count()
+        .scalar()
     )
 
     fail_count = (
-        db.query(TaskLog)
+        db.query(func.count(TaskLog.id))
         .filter(
             TaskLog.task_id == task_id,
             TaskLog.log_content.contains("质检失败"),
         )
-        .count()
+        .scalar()
     )
 
     return TaskStatusResponse(
@@ -589,13 +589,13 @@ async def retry_quality_check(
 
     # Count remaining qualifying datasets for progress tracking
     remaining_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(
             Dataset.file_id == source_fid,
             Dataset.user_id == current_user.id,
             Dataset.current_stage == StageEnum.DATA_EVALUATE,
         )
-        .count()
+        .scalar()
     )
 
     # Keep progress_current for breakpoint resume

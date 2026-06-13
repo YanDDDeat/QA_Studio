@@ -16,7 +16,7 @@ from app.database import get_db
 from app.models.models import Dataset, File, Task, TaskStatusEnum, StageEnum, User
 from app.routers.auth import get_current_user
 from app.services.file_manage_service import filter_record_fields, filter_records_fields
-from app.services.md_parser import _split_by_section, _split_by_paragraph
+from app.services.md_parser import scan_md_headings, _split_by_heading_level, _split_by_section, _split_by_paragraph, _split_by_numbering_depth
 
 router = APIRouter()
 
@@ -61,28 +61,31 @@ async def list_managed_files(
 ):
     """List all files for the current user, with search and sort.
     Admin users can set all_users=true to see all users' files."""
-    query = db.query(File)
+    filters = []
 
     is_admin_all = all_users and current_user.username == "admin"
     # Admin can see all users' files when all_users flag is set
     if not is_admin_all:
-        query = query.filter(File.user_id == current_user.id)
+        filters.append(File.user_id == current_user.id)
     elif user_id is not None:
-        query = query.filter(File.user_id == user_id)
+        filters.append(File.user_id == user_id)
 
     if search:
-        query = query.filter(File.filename.like(f"%{search}%"))
+        filters.append(File.filename.like(f"%{search}%"))
     if source_stage == "upload":
-        query = query.filter(File.source_stage.is_(None))
+        filters.append(File.source_stage.is_(None))
     elif source_stage:
         if source_stage not in [s.value for s in StageEnum]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid source_stage: {source_stage}",
             )
-        query = query.filter(File.source_stage == StageEnum(source_stage))
+        filters.append(File.source_stage == StageEnum(source_stage))
+
+    total = db.query(func.count(File.id)).filter(*filters).scalar()
 
     # Sorting
+    query = db.query(File).filter(*filters)
     if sort == "time_asc":
         query = query.order_by(File.created_at.asc())
     elif sort == "name_asc":
@@ -90,7 +93,6 @@ async def list_managed_files(
     else:  # time_desc (default)
         query = query.order_by(File.id.desc())
 
-    total = query.count()
     offset = (page - 1) * page_size
     files = query.offset(offset).limit(page_size).all()
     return {
@@ -433,11 +435,38 @@ async def gzip_upload_test(
 SOURCE_TYPE_CHOICES = ['文献', '图书', '其他']
 
 
+@router.post("/md-heading-preview")
+async def preview_md_headings(
+    file: UploadFile = FastAPIFile(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Parse Markdown headings for upload preview without saving files or writing DB."""
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext != ".md":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .md files are accepted",
+        )
+
+    content_bytes = await file.read()
+    try:
+        content = content_bytes.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Encoding error: {str(e)}",
+        )
+
+    return scan_md_headings(content)
+
+
 @router.post("/upload-md")
 async def upload_md_files(
     files: List[UploadFile] = FastAPIFile(...),
     source_type: str = Form(...),
     split_mode: str = Form('full'),
+    heading_level: Optional[int] = Form(None),
+    depth: int = Form(1),
     min_title_level: int = Form(1),
     max_title_level: int = Form(6),
     min_chars: int = Form(100),
@@ -447,17 +476,23 @@ async def upload_md_files(
     """Upload MD files, convert to JSON, save only the JSON output (MD not saved).
 
     source_type: '文献' | '图书' | '其他'
-    split_mode: 'full' (整篇不切分) | 'section' (按章节) | 'paragraph' (按段落)
+    split_mode: 'full' (整篇不切分) | 'section' (按章节/指定标题级别) | 'paragraph' (按段落)
+    heading_level: optional 1-6, used when split_mode is 'section'
     """
     if source_type not in SOURCE_TYPE_CHOICES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"source_type must be one of {SOURCE_TYPE_CHOICES}",
         )
-    if split_mode not in ('full', 'section', 'paragraph'):
+    if split_mode not in ('full', 'section', 'paragraph', 'numbering'):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="split_mode must be one of: full, section, paragraph",
+            detail="split_mode must be one of: full, section, paragraph, numbering",
+        )
+    if heading_level is not None and not 1 <= heading_level <= 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="heading_level must be between 1 and 6",
         )
 
     upload_dir = os.path.join("uploads", str(current_user.id))
@@ -487,15 +522,26 @@ async def upload_md_files(
         else:
             try:
                 if split_mode == 'section':
-                    raw_chunks = _split_by_section(
-                        content, file.filename,
-                        min_title_level=min_title_level,
-                        max_title_level=max_title_level,
-                    )
-                else:  # paragraph
+                    if heading_level is not None:
+                        raw_chunks = _split_by_heading_level(
+                            content, file.filename,
+                            heading_level=heading_level,
+                        )
+                    else:
+                        raw_chunks = _split_by_section(
+                            content, file.filename,
+                            min_title_level=min_title_level,
+                            max_title_level=max_title_level,
+                        )
+                elif split_mode == 'paragraph':
                     raw_chunks = _split_by_paragraph(
                         content, file.filename,
                         min_chars=min_chars,
+                    )
+                else:  # numbering
+                    raw_chunks = _split_by_numbering_depth(
+                        content, file.filename,
+                        depth=depth,
                     )
             except Exception as e:
                 errors.append({"filename": file.filename, "error": f"Parse error: {str(e)}"})
@@ -548,6 +594,80 @@ async def upload_md_files(
     return {"uploaded": results, "errors": errors}
 
 
+class SaveJsonContentRequest(BaseModel):
+    filename: str
+    content: str  # JSON string
+    text_field: str = "text"
+
+
+@router.post("/save-json-content")
+async def save_json_content(
+    request: SaveJsonContentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save a JSON string directly to the data center (no file upload needed).
+
+    Used by the MD merge tool to save generated JSON to the server.
+    """
+    # Validate JSON content
+    try:
+        parsed = json.loads(request.content)
+    except (json.JSONDecodeError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"JSON 解析失败: {str(e)}")
+
+    upload_dir = os.path.join("uploads", str(current_user.id))
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Build filename
+    filename = request.filename.strip()
+    if not filename.endswith(".json"):
+        filename += ".json"
+    # Sanitize
+    filename = os.path.basename(filename)
+
+    file_path = os.path.join(upload_dir, filename)
+    if os.path.exists(file_path):
+        base, ext = os.path.splitext(filename)
+        counter = 1
+        while os.path.exists(os.path.join(upload_dir, f"{base}_{counter}{ext}")):
+            counter += 1
+        file_path = os.path.join(upload_dir, f"{base}_{counter}{ext}")
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(request.content)
+
+    # Check text_field
+    records = parsed if isinstance(parsed, list) else [parsed]
+    text_field_warning = None
+    if records and isinstance(records[0], dict):
+        sample = records[0]
+        if request.text_field not in sample:
+            text_field_warning = f"指定的text字段「{request.text_field}」不存在于JSON中"
+
+    file_record = File(
+        user_id=current_user.id,
+        filename=os.path.basename(file_path),
+        file_type="json",
+        file_path=file_path,
+        source_stage=None,
+        text_field=request.text_field,
+    )
+    db.add(file_record)
+    db.commit()
+    db.refresh(file_record)
+
+    result = {
+        "id": file_record.id,
+        "filename": file_record.filename,
+        "file_type": file_record.file_type,
+        "text_field": file_record.text_field,
+    }
+    if text_field_warning:
+        result["warning"] = text_field_warning
+    return result
+
+
 @router.post("/{file_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_managed_file(
     file_id: int,
@@ -567,9 +687,9 @@ async def delete_managed_file(
 
     # Check if any RUNNING tasks reference this file — block deletion
     running_tasks = (
-        db.query(Task)
+        db.query(func.count(Task.id))
         .filter(Task.file_id == file_id, Task.status == TaskStatusEnum.RUNNING)
-        .count()
+        .scalar()
     )
     if running_tasks > 0:
         raise HTTPException(
@@ -621,9 +741,9 @@ async def batch_delete_managed_files(
             continue
 
         running_count = (
-            db.query(Task)
+            db.query(func.count(Task.id))
             .filter(Task.file_id == file_id, Task.status == TaskStatusEnum.RUNNING)
-            .count()
+            .scalar()
         )
         if running_count > 0:
             skipped.append({"id": file_id, "reason": "有运行中的任务引用此文件"})
@@ -750,9 +870,9 @@ async def sync_file_to_disk(
         )
 
     datasets_count = (
-        db.query(Dataset)
+        db.query(func.count(Dataset.id))
         .filter(Dataset.file_id == file_id)
-        .count()
+        .scalar()
     )
 
     if datasets_count == 0:

@@ -46,6 +46,8 @@ uploads/
 backend/uploads/
 backend/outputs/
 storage/
+# Vendor dependencies (installed packages, do not commit)
+backend/vendor/
 
 # Local DB
 *.db
@@ -54,3 +56,9 @@ storage/
 # Test temp files
 test_body.json
 test_output_*.txt
+
+# Temp/debug scripts
+backend/fix_status.py
+
+# Exported data files
+*_export_jsonl.json

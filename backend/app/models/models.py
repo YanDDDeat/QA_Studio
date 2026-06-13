@@ -22,15 +22,25 @@ class StageEnum(str, PyEnum):
     DATA_EVALUATE = "data_evaluate"
     QUALITY_CHECK = "quality_check"
     COT_FILTER = "cot_filter"
+    COT_FLOW = "cot_flow"              # 旧数据兼容（废弃值，勿主动使用）
+    COT_QUALITY_CHECK = "cot_quality_check"  # CoT质检
     DATASET_SPLIT = "dataset_split"
     DATASET_ASSESSMENT = "dataset_assessment"
     GENERIC = "generic"
+    COT_HCOT_PIPELINE = "cot_hcot_pipeline"  # CoT/H-CoT 标注流水线
+    PROFESSIONAL_COT = "professional_cot"  # 专业 CoT 管线（标注流水线2）
 
 
 # SQLAlchemy 2.0 解析混合 Enum 类时 dict keys 用的是 member 名称而非值
 # 通过 values_callable 让 SA 正确获取枚举的字符串值
+# native_enum=False → 用 VARCHAR 存储而非 MySQL ENUM，容忍未知值避免 LookupError
 def _stage_enum_type(**kw):
-    return Enum(StageEnum, values_callable=lambda x: [m.value for m in x], **kw)
+    return Enum(
+        StageEnum,
+        values_callable=lambda x: [m.value for m in x],
+        native_enum=False,
+        **kw,
+    )
 
 
 class TaskStatusEnum(str, PyEnum):
@@ -151,6 +161,8 @@ class Prompt(Base):
     llm_config_id = Column(Integer, ForeignKey("llm_configs.id"), nullable=True, index=True)
     is_default = Column(Boolean, default=False, nullable=False)
     reference_fields = Column(JSON, nullable=True)  # 附加参考字段列表，如 ["input","output","domain"]
+    template_id = Column(String(128), nullable=True)  # 提示词模板包 ID（用于专业 CoT / H-CoT 分组）
+    prompt_key = Column(String(128), nullable=True)   # 模板内 prompt 标识，如 "performance_improvement.step4"
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="prompts")
@@ -168,14 +180,78 @@ class Task(Base):
     source_file_id = Column(Integer, nullable=True)
     model = Column(String(128), nullable=True)
     prompt_id = Column(Integer, ForeignKey("prompts.id"), nullable=True)
-    status = Column(Enum(TaskStatusEnum), default=TaskStatusEnum.PENDING, nullable=False)
+    status = Column(Enum(TaskStatusEnum, native_enum=False, values_callable=lambda x: [m.value for m in x], create_constraint=False), default=TaskStatusEnum.PENDING, nullable=False)
     progress_current = Column(Integer, default=0, nullable=True)
     progress_total = Column(Integer, default=0, nullable=True)
+    progress_label = Column(String(100), nullable=True)  # 步骤进度阶段描述，如"调用 LLM..."
+    # --- CoT/H-CoT Pipeline fields ---
+    parent_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True, index=True)  # 子步骤链接到父流水线
+    pipeline_mode = Column(String(16), nullable=True)  # "hcot" or "cot"，仅父任务填写
+    pipeline_name = Column(String(128), nullable=True)  # 用户定义的流水线名称
+    step_name = Column(String(64), nullable=True)  # 步骤标识如 "fact_card_gen"，仅子任务填写
+    chunk_index = Column(Integer, nullable=True)  # chunk 序号（0-based），标识该子任务属于哪个 chunk
+    l0_question_index = Column(Integer, nullable=True)  # L0 总问题序号（0-based），标识 per-L0 步骤属于哪个总问题
+    total_chunks = Column(Integer, nullable=True)  # 该流水线的总 chunk 数
+    prompt_template_id = Column(String(128), nullable=True)  # H-CoT / professional CoT prompt template ID
+    input_count = Column(Integer, default=1)         # 专业 CoT：输入文献数
+    success_count = Column(Integer, default=0)       # 专业 CoT：成功文献数
+    failed_count = Column(Integer, default=0)        # 专业 CoT：失败文献数
+    sample_count = Column(Integer, default=0)        # 专业 CoT：总产出样本数
+    run_extra = Column(JSON, nullable=True)           # 专业 CoT：扩展元数据（source_input, recommended_cot_type 等）
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="tasks")
     logs = relationship("TaskLog", back_populates="task", cascade="all, delete-orphan")
+
+
+class ProfessionalCotTypeStat(Base):
+    """全局COT类型产出计数器，用于优先队列均衡分配"""
+    __tablename__ = "professional_cot_type_stats"
+
+    cot_type_key = Column(String(64), primary_key=True)   # 如 "performance_improvement"
+    display_name = Column(String(128), nullable=False)     # 如 "性能提升路径 CoT"
+    count = Column(Integer, default=0, nullable=False)     # 全局累计分配数
+
+
+class CotSample(Base):
+    """专业 CoT 管线产出的单条训练样本"""
+    __tablename__ = "cot_samples"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    source_index = Column(Integer, default=0)
+    source = Column(String(512), nullable=True)
+    source_type = Column(String(32), default="unknown")
+    cot_type = Column(String(128), nullable=True)
+    cot_type_key = Column(String(64), nullable=True, index=True)
+    input = Column(Text, nullable=True)
+    chainofThought = Column(Text, nullable=True)
+    output = Column(Text, nullable=True)
+    evidence_trace = Column(Text, nullable=True)
+    step_results = Column(JSON, nullable=True)  # 各步骤 LLM 原始返回
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CotStepLog(Base):
+    """专业 CoT 管线每篇文献每步骤的执行日志"""
+    __tablename__ = "cot_step_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    source_index = Column(Integer, default=0, comment="文献序号，-1 表示 task 级别")
+    step_key = Column(String(64), nullable=False, comment="step1_3_integrated/step4_input/step5_chain/step6_output")
+    status = Column(String(16), default="pending")
+    progress_current = Column(Integer, default=0)
+    progress_label = Column(String(256), nullable=True)
+    cot_type = Column(String(128), nullable=True)
+    cot_type_key = Column(String(64), nullable=True)
+    artifact_path = Column(String(512), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class TaskLog(Base):

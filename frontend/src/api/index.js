@@ -255,8 +255,16 @@ export function uploadManagedFile(data) {
   return api.post('/file-manage/upload', data)
 }
 
+export function previewMdHeadings(data) {
+  return api.post('/file-manage/md-heading-preview', data)
+}
+
 export function uploadMdFile(data) {
   return api.post('/file-manage/upload-md', data)
+}
+
+export function saveJsonContent(data) {
+  return api.post('/file-manage/save-json-content', data)
 }
 
 export function deleteManagedFile(id) {
@@ -354,4 +362,176 @@ export function getDatasetAssessmentSourceFiles(params) {
 // Prompts for Assessment stage
 export function getAssessmentPrompts(params) {
   return api.get('/prompts', { params })
+}
+
+// CoT/H-CoT Pipeline API
+export function startCothcotPipeline(data) {
+  return api.post('/cothcot/start', data)
+}
+
+export function runCothcotStep(data) {
+  return api.post('/cothcot/run-step', data)
+}
+
+export function listCothcotWorkflows() {
+  return api.get('/cothcot/workflows')
+}
+
+export function getCothcotWorkflowDetail(taskId) {
+  return api.get(`/cothcot/workflow/${taskId}`)
+}
+
+export function getCothcotPipelineSteps(mode) {
+  return api.get(`/cothcot/steps/${mode}`)
+}
+
+export function getCothcotSourceFiles() {
+  return api.get('/cothcot/source-files')
+}
+
+export function getCothcotPipelinePrompts(mode) {
+  return api.get(`/cothcot/prompts/list/${mode}`)
+}
+
+export function autoRunCothcotPipeline(data) {
+  return api.post('/cothcot/auto-run', data)
+}
+
+export function autoContinueCothcotPipeline(taskId) {
+  return api.post(`/cothcot/auto-continue/${taskId}`)
+}
+
+// Professional CoT Pipeline API（标注流水线2）
+export function getProfessionalCotTypes() {
+  return api.get('/professional-cot/cot-types')
+}
+
+export function getProfessionalCotSourceFiles(params = {}) {
+  return api.get('/file-manage', { params: { page_size: 1000, source_stage: 'upload', ...params } })
+}
+
+export function startProfessionalCotRun(data) {
+  return api.post('/professional-cot/runs', data)
+}
+
+export function getProfessionalCotMonitor() {
+  return api.get('/professional-cot/monitor')
+}
+
+export function listProfessionalCotRuns(params = {}) {
+  return api.get('/professional-cot/runs', { params })
+}
+
+export function getProfessionalCotRunDetail(runId) {
+  return api.get(`/professional-cot/runs/${runId}`)
+}
+
+export function getProfessionalCotArtifact(runId, path) {
+  return api.get(`/professional-cot/runs/${runId}/artifact`, { params: { path } })
+}
+
+export function downloadProfessionalCotExport(runId, type) {
+  return api.get(`/professional-cot/runs/${runId}/export/${type}`, { responseType: 'blob' })
+}
+
+export function downloadProfessionalCotExportZip(runId) {
+  return api.get(`/professional-cot/runs/${runId}/export/zip`, { responseType: 'blob' })
+}
+
+export function resumeProfessionalCotRun(runId) {
+  return api.post(`/professional-cot/runs/${runId}/resume`)
+}
+
+export function pauseProfessionalCotRun(runId) {
+  return api.post(`/professional-cot/runs/${runId}/pause`)
+}
+
+export function listProfessionalCotPromptTemplates() {
+  return api.get('/professional-cot/prompts/templates')
+}
+
+export function getProfessionalCotPromptTemplate(templateId) {
+  return api.get(`/professional-cot/prompts/templates/${templateId}`)
+}
+
+export function duplicateProfessionalCotPromptTemplate(templateId, data) {
+  return api.post(`/professional-cot/prompts/templates/${templateId}/duplicate`, data)
+}
+
+export function renameProfessionalCotPromptTemplate(templateId, data) {
+  return api.put(`/professional-cot/prompts/templates/${templateId}`, data)
+}
+
+export function setDefaultProfessionalCotPromptTemplate(templateId) {
+  return api.post(`/professional-cot/prompts/templates/${templateId}/set-default`)
+}
+
+export function deleteProfessionalCotPromptTemplate(templateId) {
+  return api.delete(`/professional-cot/prompts/templates/${templateId}`)
+}
+
+export function getProfessionalCotPromptItem(templateId, promptKey) {
+  return api.get(`/professional-cot/prompts/templates/${templateId}/items/${promptKey}`)
+}
+
+export function updateProfessionalCotPromptItem(templateId, promptKey, data) {
+  return api.put(`/professional-cot/prompts/templates/${templateId}/items/${promptKey}`, data)
+}
+
+export function restoreDefaultProfessionalCotPromptItem(templateId, promptKey) {
+  return api.post(`/professional-cot/prompts/templates/${templateId}/items/${promptKey}/restore-default`)
+}
+
+// H-CoT Prompt Template API
+export function listHcotPromptTemplates() {
+  return api.get('/cothcot/prompts/templates')
+}
+
+export function getHcotPromptTemplate(templateId) {
+  return api.get(`/cothcot/prompts/templates/${templateId}`)
+}
+
+export function duplicateHcotPromptTemplate(templateId, data) {
+  return api.post(`/cothcot/prompts/templates/${templateId}/duplicate`, data)
+}
+
+export function renameHcotPromptTemplate(templateId, data) {
+  return api.put(`/cothcot/prompts/templates/${templateId}`, data)
+}
+
+export function setDefaultHcotPromptTemplate(templateId) {
+  return api.post(`/cothcot/prompts/templates/${templateId}/set-default`)
+}
+
+export function deleteHcotPromptTemplate(templateId) {
+  return api.delete(`/cothcot/prompts/templates/${templateId}`)
+}
+
+export function getHcotPromptItem(templateId, promptKey) {
+  return api.get(`/cothcot/prompts/templates/${templateId}/items/${promptKey}`)
+}
+
+export function updateHcotPromptItem(templateId, promptKey, data) {
+  return api.put(`/cothcot/prompts/templates/${templateId}/items/${promptKey}`, data)
+}
+
+export function restoreDefaultHcotPromptItem(templateId, promptKey) {
+  return api.post(`/cothcot/prompts/templates/${templateId}/items/${promptKey}/restore-default`)
+}
+
+// ---- CoT质检 ----
+export function startCotQualityCheck(data) {
+  return api.post('/cot-quality-check/start', data)
+}
+
+export function getCotQualityCheckStatus(taskId) {
+  return api.get(`/cot-quality-check/status/${taskId}`)
+}
+
+export function getCotQualityCheckSourceFiles(params) {
+  return api.get('/cot-quality-check/source-files', { params })
+}
+
+export function getCotQualityCheckDefaultPrompt() {
+  return api.get('/cot-quality-check/default-prompt')
 }

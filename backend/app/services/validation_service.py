@@ -25,6 +25,7 @@ STAGE_REQUIRED_FIELDS: Dict[str, List[str]] = {
     "data_evaluate": ["input", "output"],
     "quality_check": ["input", "output"],
     "cot_filter": ["cot"],
+    "cot_quality_check": ["input", "chain_of_thought", "output"],
     "dataset_split": ["task_type"],
     "dataset_assessment": ["task_type", "output"],
     "generic": [],
@@ -68,6 +69,12 @@ def validate_file_fields(
     else:
         required = STAGE_REQUIRED_FIELDS.get(stage, [])
 
+    # Field aliases: for cot_quality_check, chain_of_thought can also be chainofThought or cot
+    _FIELD_ALIASES = {
+        "cot_quality_check": {"chain_of_thought": ["chainofThought", "cot"]},
+    }
+    stage_aliases = _FIELD_ALIASES.get(stage, {})
+
     if not required:
         # No specific field requirements — accept any file
         return True, "", {"total": total, "qualified": total, "missing_fields": {}}
@@ -86,8 +93,19 @@ def validate_file_fields(
         has_all = True
         for field in required:
             value = record.get(field, "")
-            # Consider empty string, None, empty list, empty dict as "missing"
+            # If primary field is missing/empty, try aliases for this stage
             if value is None or value == "" or value == [] or value == {}:
+                aliases = stage_aliases.get(field, [])
+                if isinstance(aliases, str):
+                    aliases = [aliases]
+                found = False
+                for alias in aliases:
+                    alt_value = record.get(alias, "")
+                    if alt_value and alt_value is not None and alt_value != "" and alt_value != [] and alt_value != {}:
+                        found = True
+                        break
+                if found:
+                    continue
                 missing_counts[field] = missing_counts.get(field, 0) + 1
                 has_all = False
 

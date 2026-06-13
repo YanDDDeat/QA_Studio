@@ -5,6 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -29,13 +30,15 @@ class PromptCreate(BaseModel):
 class PromptUpdate(BaseModel):
     content: Optional[str] = None
     model: Optional[str] = None
+    llm_config_id: Optional[int] = None
+    name: Optional[str] = None
 
 
 class PromptResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
+    user_id: Optional[int] = None
     stage: str
     version: int
     content: str
@@ -43,6 +46,7 @@ class PromptResponse(BaseModel):
     llm_config_id: Optional[int] = None
     reference_fields: Optional[List[str]] = None
     name: Optional[str] = None
+    is_default: bool = False
     created_at: Optional[datetime] = None
 
 
@@ -55,8 +59,8 @@ async def list_prompts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all prompts belonging to the current user. Optionally filter by stage."""
-    query = db.query(Prompt).filter(Prompt.user_id == current_user.id)
+    """List prompts visible to the current user. Optionally filter by stage."""
+    query = db.query(Prompt).filter(or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
     if stage:
         if stage not in [s.value for s in StageEnum]:
             raise HTTPException(
@@ -64,7 +68,7 @@ async def list_prompts(
                 detail=f"Invalid stage: {stage}",
             )
         query = query.filter(Prompt.stage == StageEnum(stage))
-    prompts = query.order_by(Prompt.id.desc()).all()
+    prompts = query.order_by(Prompt.user_id.isnot(None).desc(), Prompt.is_default.desc(), Prompt.id.desc()).all()
     return prompts
 
 
@@ -74,10 +78,10 @@ async def get_prompt(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get a prompt by ID (must belong to current user)."""
+    """Get a prompt by ID (must belong to current user or be global)."""
     prompt = (
         db.query(Prompt)
-        .filter(Prompt.id == prompt_id, Prompt.user_id == current_user.id)
+        .filter(Prompt.id == prompt_id, or_(Prompt.user_id == current_user.id, Prompt.user_id.is_(None)))
         .first()
     )
     if prompt is None:

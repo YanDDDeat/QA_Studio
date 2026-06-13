@@ -338,8 +338,129 @@
           </el-form>
         </el-card>
 
-        <el-divider />
-        <h4>运行中任务</h4>
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <h4 style="margin: 0;">单COT生成任务监控</h4>
+          <el-button type="primary" size="small" :loading="cotMonitorLoading" @click="fetchCotMonitor">
+            <el-icon><Refresh /></el-icon>
+            刷新监控
+          </el-button>
+        </div>
+        <div class="monitor-summary" v-loading="cotMonitorLoading">
+          <el-card shadow="hover" class="summary-card">
+            <div class="summary-value">{{ cotMonitor.running_count }}</div>
+            <div class="summary-label">运行中</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card">
+            <div class="summary-value">{{ cotMonitor.paused_count }}</div>
+            <div class="summary-label">已暂停</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card summary-success">
+            <div class="summary-value">{{ cotMonitor.completed_count }}</div>
+            <div class="summary-label">已完成</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card summary-fail">
+            <div class="summary-value">{{ cotMonitor.failed_count }}</div>
+            <div class="summary-label">失败</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card">
+            <div class="summary-value">{{ cotMonitor.active_user_count }}</div>
+            <div class="summary-label">使用用户数</div>
+          </el-card>
+          <el-card shadow="hover" class="summary-card">
+            <div class="summary-value">{{ cotMonitor.total_count }}</div>
+            <div class="summary-label">总任务数</div>
+          </el-card>
+        </div>
+
+        <!-- COT类型分布统计（手动刷新） -->
+        <div style="margin-top: 20px; display: flex; align-items: center; justify-content: space-between;">
+          <h4 style="margin: 0;">COT类型分布统计</h4>
+          <el-button type="primary" size="small" :loading="cotDistLoading" @click="fetchCotTypeDistribution">
+            <el-icon><Refresh /></el-icon>
+            刷新统计
+          </el-button>
+        </div>
+        <div class="cot-type-stats" v-loading="cotDistLoading">
+          <el-card
+            v-for="item in cotTypeDistribution"
+            :key="item.key"
+            shadow="hover"
+            class="cot-stat-card"
+          >
+            <div class="cot-stat-name">{{ item.display_name }}</div>
+            <div class="cot-stat-count">{{ item.count }}</div>
+          </el-card>
+        </div>
+
+        <el-table
+          :data="cotMonitorPagedRuns"
+          style="width: 100%; margin-top: 10px;"
+          empty-text="暂无单COT生成任务"
+        >
+          <el-table-column prop="username" label="用户" width="100" />
+          <el-table-column prop="run_name" label="任务名" min-width="160" show-overflow-tooltip />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag
+                :type="row.status === 'running' ? 'primary' : row.status === 'completed' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'paused' ? 'warning' : 'info'"
+                size="small"
+              >
+                {{ row.status === 'running' ? '运行中' : row.status === 'completed' ? '已完成' : row.status === 'failed' ? '失败' : row.status === 'paused' ? '已暂停' : row.status }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="model" label="模型" width="140" show-overflow-tooltip />
+          <el-table-column prop="llm_config_name" label="LLM配置" width="120" show-overflow-tooltip />
+          <el-table-column label="输入文件" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.source_filename || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="进度" width="120">
+            <template #default="{ row }">
+              {{ row.success_count + row.failed_count }}/{{ row.input_count }}篇
+            </template>
+          </el-table-column>
+          <el-table-column label="完成率" width="100">
+            <template #default="{ row }">
+              <el-progress
+                :percentage="row.progress_percentage || 0"
+                :stroke-width="14"
+                :text-inside="true"
+                style="width: 80px;"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="CoT类型" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.recommended_cot_type?.display_name || row.target_cot_type?.display_name || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="progress_label" label="当前步骤" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="created_at" label="创建时间" width="170">
+            <template #default="{ row }">
+              {{ row.created_at ? new Date(row.created_at).toLocaleString() : '-' }}
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-pagination
+          v-if="cotMonitor.runs.length > 0"
+          layout="total, sizes, prev, pager, next"
+          :total="cotMonitor.runs.length"
+          :page-sizes="[10, 20, 50]"
+          v-model:current-page="cotMonitorPage"
+          v-model:page-size="cotMonitorPageSize"
+          style="margin-top: 12px; justify-content: flex-end;"
+        />
+
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <h4 style="margin: 0;">运行中任务</h4>
+          <el-button type="primary" size="small" :loading="runningTasksLoading" @click="fetchRunningTasks">
+            <el-icon><Refresh /></el-icon>
+            刷新任务
+          </el-button>
+        </div>
         <el-table
           :data="runningTasks"
           style="width: 100%; margin-top: 10px;"
@@ -381,6 +502,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import {
   getStages,
   getPromptConfigs,
@@ -396,6 +518,7 @@ import {
   getSystemConfig,
   updateSystemConfig,
   getRunningTasks,
+  getProfessionalCotMonitor,
 } from '../api'
 
 // ----- Admin detection -----
@@ -418,7 +541,47 @@ const systemConfigSaving = ref(false)
 // ----- Running tasks state (admin) -----
 const runningTasks = ref([])
 const runningTasksLoading = ref(false)
-let runningTasksTimer = null
+
+// ----- Professional CoT monitor state (admin) -----
+const cotMonitor = ref({
+  running_count: 0,
+  paused_count: 0,
+  completed_count: 0,
+  failed_count: 0,
+  total_count: 0,
+  active_user_count: 0,
+  total_input_count: 0,
+  total_success_count: 0,
+  total_failed_count: 0,
+  runs: [],
+  cot_type_distribution: [],
+})
+const cotMonitorLoading = ref(false)
+
+// ----- COT类型分布统计（手动刷新） -----
+const cotTypeDistribution = ref([])
+const cotDistLoading = ref(false)
+
+// ----- COT监控任务列表分页 -----
+const cotMonitorPage = ref(1)
+const cotMonitorPageSize = ref(10)
+const cotMonitorPagedRuns = computed(() => {
+  const runs = cotMonitor.value.runs || []
+  const start = (cotMonitorPage.value - 1) * cotMonitorPageSize.value
+  return runs.slice(start, start + cotMonitorPageSize.value)
+})
+
+async function fetchCotTypeDistribution() {
+  cotDistLoading.value = true
+  try {
+    const res = await getProfessionalCotMonitor()
+    cotTypeDistribution.value = res?.cot_type_distribution || []
+  } catch {
+    // 非管理员静默失败
+  } finally {
+    cotDistLoading.value = false
+  }
+}
 
 // ----- Use template dialog -----
 const useTemplateVisible = ref(false)
@@ -858,6 +1021,30 @@ async function fetchRunningTasks() {
   }
 }
 
+async function fetchCotMonitor() {
+  cotMonitorLoading.value = true
+  try {
+    const res = await getProfessionalCotMonitor()
+    cotMonitor.value = res || {
+      running_count: 0,
+      paused_count: 0,
+      completed_count: 0,
+      failed_count: 0,
+      total_count: 0,
+      active_user_count: 0,
+      total_input_count: 0,
+      total_success_count: 0,
+      total_failed_count: 0,
+      runs: [],
+      cot_type_distribution: [],
+    }
+  } catch (e) {
+    // 非管理员静默失败
+  } finally {
+    cotMonitorLoading.value = false
+  }
+}
+
 // ----- Lifecycle -----
 onMounted(async () => {
   const tasks = [fetchLLMConfigs(), fetchStagesAndModels()]
@@ -866,8 +1053,9 @@ onMounted(async () => {
   }
   await Promise.all(tasks)
   if (isAdmin.value) {
-    fetchRunningTasks()
-    runningTasksTimer = setInterval(fetchRunningTasks, 5000)
+    fetchRunningTasks()         // 运行中任务：首次加载，手动刷新
+    fetchCotMonitor()           // 单COT监控：首次加载，手动刷新
+    fetchCotTypeDistribution()  // COT类型分布：首次加载，手动刷新
   }
   // Load prompts for the first stage
   if (activeStage.value) {
@@ -875,12 +1063,7 @@ onMounted(async () => {
   }
 })
 
-onUnmounted(() => {
-  if (runningTasksTimer) {
-    clearInterval(runningTasksTimer)
-    runningTasksTimer = null
-  }
-})
+onUnmounted(() => {})
 </script>
 
 <style scoped>
@@ -1016,5 +1199,63 @@ onUnmounted(() => {
   max-height: 300px;
   overflow-y: auto;
   margin: 0;
+}
+
+/* Monitor summary cards */
+.monitor-summary {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.summary-card {
+  width: 160px;
+  flex-shrink: 0;
+  text-align: center;
+}
+.summary-card .el-card__body {
+  padding: 16px 8px;
+}
+.summary-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #303133;
+}
+.summary-label {
+  font-size: 13px;
+  color: #909399;
+  margin-top: 4px;
+}
+.summary-success .summary-value {
+  color: #67c23a;
+}
+.summary-fail .summary-value {
+  color: #f56c6c;
+}
+
+.cot-type-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.cot-stat-card {
+  width: 210px;
+  flex-shrink: 0;
+  text-align: center;
+}
+.cot-stat-card .el-card__body {
+  padding: 12px 8px;
+}
+.cot-stat-name {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.4;
+}
+.cot-stat-count {
+  font-size: 24px;
+  font-weight: 700;
+  color: #409eff;
+  margin-top: 6px;
 }
 </style>
