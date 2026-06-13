@@ -1,45 +1,62 @@
 -- ============================================================
 -- 专业 CoT 管线：文件存储 → 数据库存储 迁移脚本
 -- 数据库: qa_gen
+-- 兼容: MySQL 5.7+ / 8.0+ / RDS
 -- 用法:   mysql -h <host> -u <user> -p qa_gen < migrate_professional_cot.sql
 -- ============================================================
 
 USE qa_gen;
 
 -- -----------------------------------------------------------
+-- 辅助：安全添加列（跳过已存在的列，不报错）
+-- -----------------------------------------------------------
+DROP PROCEDURE IF EXISTS safe_add_column;
+DELIMITER //
+CREATE PROCEDURE safe_add_column(
+    IN tbl_name VARCHAR(128),
+    IN col_name VARCHAR(128),
+    IN col_def  TEXT
+)
+BEGIN
+    DECLARE col_exists INT DEFAULT 0;
+    SELECT COUNT(*) INTO col_exists
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = 'qa_gen'
+      AND TABLE_NAME = tbl_name
+      AND COLUMN_NAME = col_name;
+    IF col_exists = 0 THEN
+        SET @ddl = CONCAT('ALTER TABLE ', tbl_name, ' ADD COLUMN ', col_name, ' ', col_def);
+        PREPARE stmt FROM @ddl;
+        EXECUTE stmt;
+        DEALLOCATE PREPARE stmt;
+    END IF;
+END //
+DELIMITER ;
+
+-- -----------------------------------------------------------
 -- 1. prompts 表：新增 template_id 和 prompt_key
 -- -----------------------------------------------------------
-ALTER TABLE prompts
-    ADD COLUMN IF NOT EXISTS template_id VARCHAR(128) NULL COMMENT '提示词模板包 ID',
-    ADD COLUMN IF NOT EXISTS prompt_key VARCHAR(128) NULL COMMENT '模板内 prompt 标识';
+CALL safe_add_column('prompts', 'template_id', "VARCHAR(128) NULL COMMENT '提示词模板包 ID'");
+CALL safe_add_column('prompts', 'prompt_key',  "VARCHAR(128) NULL COMMENT '模板内 prompt 标识'");
 
--- MySQL 5.7 不支持 IF NOT EXISTS 语法，
--- 如果上面报错，用下面两句逐个添加：
--- ALTER TABLE prompts ADD COLUMN template_id VARCHAR(128) NULL COMMENT '提示词模板包 ID';
--- ALTER TABLE prompts ADD COLUMN prompt_key VARCHAR(128) NULL COMMENT '模板内 prompt 标识';
-
-CREATE INDEX IF NOT EXISTS idx_template_prompt ON prompts (template_id, prompt_key);
+-- 索引（不存在则创建）
+SET @idx_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = 'qa_gen' AND TABLE_NAME = 'prompts' AND INDEX_NAME = 'idx_template_prompt');
+SET @sql = IF(@idx_exists = 0,
+    'CREATE INDEX idx_template_prompt ON prompts (template_id, prompt_key)',
+    'SELECT "INDEX idx_template_prompt already exists" AS msg');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- -----------------------------------------------------------
 -- 2. tasks 表：新增专业 CoT 相关字段
 -- -----------------------------------------------------------
-ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS input_count INT DEFAULT 1 COMMENT '专业 CoT：输入文献数',
-    ADD COLUMN IF NOT EXISTS success_count INT DEFAULT 0 COMMENT '专业 CoT：成功文献数',
-    ADD COLUMN IF NOT EXISTS failed_count INT DEFAULT 0 COMMENT '专业 CoT：失败文献数',
-    ADD COLUMN IF NOT EXISTS sample_count INT DEFAULT 0 COMMENT '专业 CoT：产出样本数',
-    ADD COLUMN IF NOT EXISTS run_extra JSON NULL COMMENT '专业 CoT：扩展元数据（source_input, recommended_cot_type 等）',
-    ADD COLUMN IF NOT EXISTS progress_label VARCHAR(100) NULL COMMENT '步骤进度阶段描述',
-    ADD COLUMN IF NOT EXISTS prompt_template_id VARCHAR(128) NULL COMMENT '提示词模板 ID';
-
--- 逐条备用（MySQL 5.7）：
--- ALTER TABLE tasks ADD COLUMN input_count INT DEFAULT 1 COMMENT '专业 CoT：输入文献数';
--- ALTER TABLE tasks ADD COLUMN success_count INT DEFAULT 0 COMMENT '专业 CoT：成功文献数';
--- ALTER TABLE tasks ADD COLUMN failed_count INT DEFAULT 0 COMMENT '专业 CoT：失败文献数';
--- ALTER TABLE tasks ADD COLUMN sample_count INT DEFAULT 0 COMMENT '专业 CoT：产出样本数';
--- ALTER TABLE tasks ADD COLUMN run_extra JSON NULL COMMENT '专业 CoT：扩展元数据';
--- ALTER TABLE tasks ADD COLUMN progress_label VARCHAR(100) NULL COMMENT '步骤进度阶段描述';
--- ALTER TABLE tasks ADD COLUMN prompt_template_id VARCHAR(128) NULL COMMENT '提示词模板 ID';
+CALL safe_add_column('tasks', 'input_count',         "INT DEFAULT 1 COMMENT '专业 CoT：输入文献数'");
+CALL safe_add_column('tasks', 'success_count',       "INT DEFAULT 0 COMMENT '专业 CoT：成功文献数'");
+CALL safe_add_column('tasks', 'failed_count',        "INT DEFAULT 0 COMMENT '专业 CoT：失败文献数'");
+CALL safe_add_column('tasks', 'sample_count',        "INT DEFAULT 0 COMMENT '专业 CoT：产出样本数'");
+CALL safe_add_column('tasks', 'run_extra',           "JSON NULL COMMENT '专业 CoT：扩展元数据'");
+CALL safe_add_column('tasks', 'progress_label',      "VARCHAR(100) NULL COMMENT '步骤进度阶段描述'");
+CALL safe_add_column('tasks', 'prompt_template_id',  "VARCHAR(128) NULL COMMENT '提示词模板 ID'");
 
 -- -----------------------------------------------------------
 -- 3. cot_samples 表：CoT 产出样本
@@ -93,10 +110,17 @@ CREATE TABLE IF NOT EXISTS cot_step_logs (
 
 -- -----------------------------------------------------------
 -- 5. professional_cot_type_stats 表：CoT 类型全局计数器
---    （如果还没建的话 — 优先队列均衡分配用）
 -- -----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS professional_cot_type_stats (
     cot_type_key VARCHAR(64) PRIMARY KEY,
     display_name VARCHAR(128) NOT NULL,
     count        INT DEFAULT 0 NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 清理
+DROP PROCEDURE IF EXISTS safe_add_column;
+
+-- 结果确认
+SELECT '=== 迁移完成，检查新建表 ===' AS status;
+SHOW TABLES LIKE 'cot_%';
+SHOW TABLES LIKE 'professional_cot_type_stats';
