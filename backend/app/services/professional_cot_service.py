@@ -40,6 +40,13 @@ from app.services.thread_pool import register_task, unregister_task
 logger = logging.getLogger("qa_studio.professional_cot")
 
 
+def _serialize_for_db(value: Any) -> Any:
+    """Convert list/dict values to JSON string for Text column storage."""
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
 # ---------------------------------------------------------------------------
 #  Constants & discovery
 # ---------------------------------------------------------------------------
@@ -514,6 +521,34 @@ def _log_step(
     db.commit()
 
 
+_STEP_ORDER = ["step1_3_integrated", "step4_input", "step5_chain", "step6_output"]
+
+
+def _mark_failed_step(db: Any, task_id: int, source_index: int, error: str) -> None:
+    """When a document fails mid-pipeline, mark the running step as failed
+    and subsequent steps as skipped, so the UI shows the correct culprit."""
+    existing = db.query(CotStepLog).filter(
+        CotStepLog.task_id == task_id,
+        CotStepLog.source_index == source_index,
+    ).all()
+    status_map = {log.step_key: log.status for log in existing}
+
+    failed_marked = False
+    for step_key in _STEP_ORDER:
+        current = status_map.get(step_key)
+        if current == "running":
+            _log_step(db, task_id, source_index, step_key,
+                      status="failed", error_message=error)
+            failed_marked = True
+        elif current is None and failed_marked:
+            _log_step(db, task_id, source_index, step_key,
+                      status="skipped", error_message=error)
+        elif current is None:
+            # step not yet created → also mark as skipped (prevent "pending" ghost)
+            _log_step(db, task_id, source_index, step_key,
+                      status="skipped", error_message=error)
+
+
 # ---------------------------------------------------------------------------
 #  Per-document artifact file helpers
 # ---------------------------------------------------------------------------
@@ -590,6 +625,7 @@ def create_initial_run(
                 "source_file": {"id": source_file_id, "filename": source_filename},
                 "source_input": {"text_field": text_field, "text_length": len(paper_text), "input_count": input_count},
                 "source_type": source_type or "unknown",
+                "llm_config_id": llm_config.id,
                 "llm_config_name": llm_config.name,
                 "cot_types": [{"key": item["key"], "display_name": item["display_name"]} for item in COT_TYPES],
             },
@@ -906,8 +942,7 @@ def process_one_document(
         }
     except (LLMCallError, FileNotFoundError, ValueError) as exc:
         logger.error("文献 %s (#%d) 处理失败: %s", source_label, source_index + 1, exc)
-        _log_step(db, task_id, source_index, "step6_output",
-                  status="failed", progress_current=0, error_message=str(exc)[:500])
+        _mark_failed_step(db, task_id, source_index, str(exc)[:500])
         return {
             "source_index": source_index,
             "source": source_label,
@@ -916,8 +951,7 @@ def process_one_document(
         }
     except Exception as exc:  # noqa: BLE001
         logger.exception("文献 %s (#%d) 处理意外失败", source_label, source_index + 1)
-        _log_step(db, task_id, source_index, "step6_output",
-                  status="failed", progress_current=0, error_message=str(exc)[:500])
+        _mark_failed_step(db, task_id, source_index, str(exc)[:500])
         return {
             "source_index": source_index,
             "source": source_label,
@@ -1025,10 +1059,10 @@ def run_pipeline_sync(task_id: int, llm: Dict[str, Any], username: str) -> None:
                     source_type=(task.run_extra or {}).get("source_type", "unknown"),
                     cot_type=doc_result.get("cot_type"),
                     cot_type_key=doc_result.get("cot_type_key"),
-                    input=doc_result["final_sample"].get("input"),
-                    chainofThought=doc_result["final_sample"].get("chainofThought"),
-                    output=doc_result["final_sample"].get("output"),
-                    evidence_trace=doc_result["final_sample"].get("evidence_trace"),
+                    input=_serialize_for_db(doc_result["final_sample"].get("input")),
+                    chainofThought=_serialize_for_db(doc_result["final_sample"].get("chainofThought")),
+                    output=_serialize_for_db(doc_result["final_sample"].get("output")),
+                    evidence_trace=_serialize_for_db(doc_result["final_sample"].get("evidence_trace")),
                     step_results=doc_result.get("step_results"),
                 )
                 db.add(sample)
@@ -1042,7 +1076,6 @@ def run_pipeline_sync(task_id: int, llm: Dict[str, Any], username: str) -> None:
                 )
 
             # Progress update
-            task.progress_percentage = int((idx + 1) / input_count * 100)
             task.progress_total = input_count
             task.progress_current = idx + 1
             db.commit()
@@ -1054,7 +1087,6 @@ def run_pipeline_sync(task_id: int, llm: Dict[str, Any], username: str) -> None:
         # Finished
         if task.success_count > 0:
             task.status = TaskStatusEnum.COMPLETED
-            task.progress_percentage = 100
             if task.failed_count > 0:
                 task.progress_label = f"完成：{task.success_count} 篇成功，{task.failed_count} 篇失败"
             else:
@@ -1500,6 +1532,14 @@ def resume_paused_run(run_id: str, user_id: int) -> Dict[str, Any]:
                 base_url = cfg.base_url or ""
                 api_key = cfg.api_key or ""
                 model = model or cfg.default_model or ""
+        elif llm_config_name:
+            # Fallback: lookup by name for tasks created before llm_config_id was saved
+            cfg = db.query(LLMConfig).filter(LLMConfig.name == llm_config_name).first()
+            if cfg:
+                llm_config_id = cfg.id
+                base_url = cfg.base_url or ""
+                api_key = cfg.api_key or ""
+                model = model or cfg.default_model or ""
 
         llm_info = {
             "llm_config_id": llm_config_id,
@@ -1528,7 +1568,7 @@ def _task_to_monitor_item(task: Task) -> Dict[str, Any]:
         "pipeline_name": task.pipeline_name,
         "pipeline_type": PIPELINE_TYPE,
         "status": task.status.value if hasattr(task.status, "value") else str(task.status),
-        "progress_percentage": task.progress_percentage or 0,
+        "progress_percentage": int(task.progress_current / task.progress_total * 100) if task.progress_total else 0,
         "completed_steps": task.success_count or 0,
         "skipped_steps": task.failed_count or 0,
         "failed_steps": 0,
@@ -1970,7 +2010,7 @@ def get_run_detail_for_user(run_id: str, user_id: int) -> Optional[Dict[str, Any
             "success_count": task.success_count or 0,
             "failed_count": task.failed_count or 0,
             "sample_count": task.sample_count or 0,
-            "progress_percentage": task.progress_percentage or 0,
+            "progress_percentage": int(task.progress_current / task.progress_total * 100) if task.progress_total else 0,
             "progress_label": task.progress_label,
             "error_message": run_extra.get("error_message"),
             "llm": {
