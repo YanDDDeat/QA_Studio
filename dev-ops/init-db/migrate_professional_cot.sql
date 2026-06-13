@@ -16,15 +16,25 @@ ALTER TABLE prompts ADD COLUMN prompt_key  VARCHAR(128) NULL COMMENT '模板内 
 CREATE INDEX idx_template_prompt ON prompts (template_id, prompt_key);
 
 -- -----------------------------------------------------------
--- 2. tasks 表：新增专业 CoT 相关字段
+-- 2. tasks 表：新增 CoT/H-CoT Pipeline 字段 + 专业 CoT 字段
 -- -----------------------------------------------------------
-ALTER TABLE tasks ADD COLUMN input_count        INT DEFAULT 1 COMMENT '专业 CoT：输入文献数';
-ALTER TABLE tasks ADD COLUMN success_count      INT DEFAULT 0 COMMENT '专业 CoT：成功文献数';
-ALTER TABLE tasks ADD COLUMN failed_count       INT DEFAULT 0 COMMENT '专业 CoT：失败文献数';
-ALTER TABLE tasks ADD COLUMN sample_count       INT DEFAULT 0 COMMENT '专业 CoT：产出样本数';
-ALTER TABLE tasks ADD COLUMN run_extra          JSON NULL COMMENT '专业 CoT：扩展元数据';
-ALTER TABLE tasks ADD COLUMN progress_label     VARCHAR(100) NULL COMMENT '步骤进度阶段描述';
-ALTER TABLE tasks ADD COLUMN prompt_template_id VARCHAR(128) NULL COMMENT '提示词模板 ID';
+-- BIT/wj 分支字段（CoT/H-CoT 流水线）
+ALTER TABLE tasks ADD COLUMN parent_task_id        INT NULL COMMENT '子步骤链接到父流水线';
+ALTER TABLE tasks ADD COLUMN pipeline_mode         VARCHAR(16) NULL COMMENT 'hcot or cot';
+ALTER TABLE tasks ADD COLUMN pipeline_name         VARCHAR(128) NULL COMMENT '流水线名称';
+ALTER TABLE tasks ADD COLUMN step_name             VARCHAR(64) NULL COMMENT '步骤标识';
+ALTER TABLE tasks ADD COLUMN chunk_index           INT NULL COMMENT 'chunk 序号';
+ALTER TABLE tasks ADD COLUMN l0_question_index     INT NULL COMMENT 'L0 总问题序号';
+ALTER TABLE tasks ADD COLUMN total_chunks          INT NULL COMMENT '流水线总 chunk 数';
+-- 专业 CoT 字段
+ALTER TABLE tasks ADD COLUMN input_count           INT DEFAULT 1 COMMENT '专业 CoT：输入文献数';
+ALTER TABLE tasks ADD COLUMN success_count         INT DEFAULT 0 COMMENT '专业 CoT：成功文献数';
+ALTER TABLE tasks ADD COLUMN failed_count          INT DEFAULT 0 COMMENT '专业 CoT：失败文献数';
+ALTER TABLE tasks ADD COLUMN sample_count          INT DEFAULT 0 COMMENT '专业 CoT：产出样本数';
+ALTER TABLE tasks ADD COLUMN run_extra             JSON NULL COMMENT '专业 CoT：扩展元数据';
+ALTER TABLE tasks ADD COLUMN progress_label        VARCHAR(100) NULL COMMENT '步骤进度阶段描述';
+ALTER TABLE tasks ADD COLUMN prompt_template_id    VARCHAR(128) NULL COMMENT '提示词模板 ID';
+CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks (parent_task_id);
 
 -- -----------------------------------------------------------
 -- 3. cot_samples 表：CoT 产出样本
