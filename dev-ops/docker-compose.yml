@@ -13,7 +13,7 @@ services:
       - mysql_data:/var/lib/mysql
       - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
       # 数据库初始化脚本（首次启动自动执行）
-      # - ./init-db:/docker-entrypoint-initdb.d:ro
+      - ./init-db:/docker-entrypoint-initdb.d:ro
     ports:
       - "13306:3306"
     healthcheck:
