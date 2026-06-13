@@ -53,6 +53,12 @@ class PromptContentRequest(BaseModel):
     content: str
 
 
+class PromptItemUpdateRequest(BaseModel):
+    template_id: str
+    prompt_key: str
+    content: str
+
+
 def _prompt_error(exc: PromptTemplateError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
@@ -197,6 +203,18 @@ async def update_prompt_template_item(
 ):
     try:
         return update_prompt_item(template_id, current_user.id, prompt_key, payload.content)
+    except PromptTemplateError as exc:
+        raise _prompt_error(exc)
+
+
+@router.post("/prompts/update-item")
+async def update_prompt_item_v2(
+    payload: PromptItemUpdateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """简化版保存接口：POST body 传 template_id + prompt_key + content，避免 URL 中文编码问题"""
+    try:
+        return update_prompt_item(payload.template_id, current_user.id, payload.prompt_key, payload.content)
     except PromptTemplateError as exc:
         raise _prompt_error(exc)
 
