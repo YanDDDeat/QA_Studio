@@ -501,7 +501,7 @@ async function handleCreate() {
     createDialogVisible.value = false
     pagination.value.page = 1
     await fetchRuns()
-    router.push(`/professional-cot-runs/${res.run_id}`)
+    router.push(`/app/professional-cot-runs/${res.run_id}`)
   } catch (err) {
     const detail = err.response?.data?.detail || '创建失败'
     ElMessage.error(detail)
@@ -511,7 +511,7 @@ async function handleCreate() {
 }
 
 function goToDetail(id) {
-  router.push(`/professional-cot-runs/${id}`)
+  router.push(`/app/professional-cot-runs/${id}`)
 }
 
 async function handlePauseRun(row) {

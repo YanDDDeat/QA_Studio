@@ -147,7 +147,7 @@
             v-if="taskInfo.status === 'completed' && taskInfo.file_id"
             type="success"
             size="small"
-            @click="router.push('/data-manage?file_id=' + taskInfo.file_id)"
+            @click="router.push('/app/data-manage?file_id=' + taskInfo.file_id)"
           >
             查看数据
           </el-button>

@@ -290,7 +290,7 @@ async function handleCreate() {
     ElMessage.success(`流水线已创建并启动 (ID: ${res.parent_task_id})`)
     createDialogVisible.value = false
     await fetchWorkflows()
-    router.push(`/cot-hcot-workflows/${res.parent_task_id}`)
+    router.push(`/app/cot-hcot-workflows/${res.parent_task_id}`)
   } catch (err) {
     const detail = err.response?.data?.detail || '创建失败'
     ElMessage.error(detail)
@@ -314,7 +314,7 @@ async function handleCreateAuto() {
     ElMessage.success(`一键运行已启动 (ID: ${res.parent_task_id})，共 ${res.total_steps} 步`)
     createDialogVisible.value = false
     await fetchWorkflows()
-    router.push(`/cot-hcot-workflows/${res.parent_task_id}`)
+    router.push(`/app/cot-hcot-workflows/${res.parent_task_id}`)
   } catch (err) {
     const detail = err.response?.data?.detail || '一键运行创建失败'
     ElMessage.error(detail)
@@ -325,7 +325,7 @@ async function handleCreateAuto() {
 
 // --- 辅助函数 ---
 function goToDetail(id) {
-  router.push(`/cot-hcot-workflows/${id}`)
+  router.push(`/app/cot-hcot-workflows/${id}`)
 }
 
 function statusTagType(s) {

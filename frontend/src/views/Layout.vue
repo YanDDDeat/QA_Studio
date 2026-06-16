@@ -14,19 +14,19 @@
             <el-icon><EditPen /></el-icon>
             <span>问题生成</span>
           </template>
-          <el-menu-item index="/text-preprocess">
+          <el-menu-item index="/app/text-preprocess">
             <el-icon><Operation /></el-icon>
             <span>文本预处理</span>
           </el-menu-item>
-          <el-menu-item index="/question-generate">
+          <el-menu-item index="/app/question-generate">
             <el-icon><EditPen /></el-icon>
             <span>问题生成</span>
           </el-menu-item>
-          <el-menu-item index="/knowledge-generate">
+          <el-menu-item index="/app/knowledge-generate">
             <el-icon><Share /></el-icon>
             <span>知识体系生成</span>
           </el-menu-item>
-          <el-menu-item index="/question-validate">
+          <el-menu-item index="/app/question-validate">
             <el-icon><Checked /></el-icon>
             <span>问题校验</span>
           </el-menu-item>
@@ -37,11 +37,11 @@
             <el-icon><Document /></el-icon>
             <span>答案生成</span>
           </template>
-          <el-menu-item index="/answer-generate">
+          <el-menu-item index="/app/answer-generate">
             <el-icon><Document /></el-icon>
             <span>答案生成</span>
           </el-menu-item>
-          <el-menu-item index="/answer-validate">
+          <el-menu-item index="/app/answer-validate">
             <el-icon><Select /></el-icon>
             <span>答案校验</span>
           </el-menu-item>
@@ -52,7 +52,7 @@
             <el-icon><DataAnalysis /></el-icon>
             <span>数据评分</span>
           </template>
-          <el-menu-item index="/data-evaluate">
+          <el-menu-item index="/app/data-evaluate">
             <el-icon><DataAnalysis /></el-icon>
             <span>数据评分</span>
           </el-menu-item>
@@ -63,7 +63,7 @@
             <el-icon><CircleCheck /></el-icon>
             <span>数据质检</span>
           </template>
-          <el-menu-item index="/quality-check">
+          <el-menu-item index="/app/quality-check">
             <el-icon><CircleCheck /></el-icon>
             <span>质检</span>
           </el-menu-item>
@@ -74,11 +74,11 @@
             <el-icon><Operation /></el-icon>
             <span>数据后处理</span>
           </template>
-          <el-menu-item index="/cot-filter">
+          <el-menu-item index="/app/cot-filter">
             <el-icon><Filter /></el-icon>
             <span>COT过滤</span>
           </el-menu-item>
-          <el-menu-item index="/dataset-processing">
+          <el-menu-item index="/app/dataset-processing">
             <el-icon><Grid /></el-icon>
             <span>测试集切分</span>
           </el-menu-item>
@@ -89,27 +89,27 @@
             <el-icon><Tickets /></el-icon>
             <span>CoT/H-CoT 标注</span>
           </template>
-          <el-menu-item index="/cot-hcot-text-preprocess">
+          <el-menu-item index="/app/cot-hcot-text-preprocess">
             <el-icon><Operation /></el-icon>
             <span>文本预处理</span>
           </el-menu-item>
-          <el-menu-item index="/cot-hcot-workflows">
+          <el-menu-item index="/app/cot-hcot-workflows">
             <el-icon><Tickets /></el-icon>
             <span>多COT生成</span>
           </el-menu-item>
-          <el-menu-item index="/hcot-prompts">
+          <el-menu-item index="/app/hcot-prompts">
             <el-icon><Document /></el-icon>
             <span>多COT提示词</span>
           </el-menu-item>
-          <el-menu-item index="/professional-cot-runs">
+          <el-menu-item index="/app/professional-cot-runs">
             <el-icon><Tickets /></el-icon>
             <span>单COT生成</span>
           </el-menu-item>
-          <el-menu-item index="/professional-cot-prompts">
+          <el-menu-item index="/app/professional-cot-prompts">
             <el-icon><Document /></el-icon>
             <span>单COT提示词</span>
           </el-menu-item>
-          <el-menu-item index="/cot-quality-check">
+          <el-menu-item index="/app/cot-quality-check">
             <el-icon><CircleCheck /></el-icon>
             <span>CoT质检</span>
           </el-menu-item>
@@ -120,15 +120,15 @@
             <el-icon><Tools /></el-icon>
             <span>工具</span>
           </template>
-          <el-menu-item index="/json-merge-tool">
+          <el-menu-item index="/app/json-merge-tool">
             <el-icon><Connection /></el-icon>
             <span>JSON 文件合并</span>
           </el-menu-item>
-          <el-menu-item index="/gzip-upload-test">
+          <el-menu-item index="/app/gzip-upload-test">
             <el-icon><Upload /></el-icon>
             <span>Gzip 压缩上传</span>
           </el-menu-item>
-          <el-menu-item index="/generic-generate">
+          <el-menu-item index="/app/generic-generate">
             <el-icon><MagicStick /></el-icon>
             <span>通用生成</span>
           </el-menu-item>
@@ -139,19 +139,19 @@
             <el-icon><Setting /></el-icon>
             <span>管理中心</span>
           </template>
-          <el-menu-item index="/my-tasks">
+          <el-menu-item index="/app/my-tasks">
             <el-icon><List /></el-icon>
             <span>我的任务</span>
           </el-menu-item>
-          <el-menu-item index="/config-center">
+          <el-menu-item index="/app/config-center">
             <el-icon><Setting /></el-icon>
             <span>配置中心</span>
           </el-menu-item>
-          <el-menu-item index="/user-manage">
+          <el-menu-item index="/app/user-manage">
             <el-icon><UserFilled /></el-icon>
             <span>用户管理</span>
           </el-menu-item>
-          <el-menu-item index="/data-manage">
+          <el-menu-item index="/app/data-manage">
             <el-icon><Folder /></el-icon>
             <span>数据中心</span>
           </el-menu-item>

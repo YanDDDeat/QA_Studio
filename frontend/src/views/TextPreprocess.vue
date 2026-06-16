@@ -282,7 +282,7 @@ async function handleRun() {
 
 function goDataCenter(file) {
   if (file?.id) {
-    router.push('/data-manage?file_id=' + file.id)
+    router.push('/app/data-manage?file_id=' + file.id)
   }
 }
 

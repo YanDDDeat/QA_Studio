@@ -591,7 +591,7 @@ async function downloadExportZip() {
 }
 
 function goBack() {
-  router.push('/professional-cot-runs')
+  router.push('/app/professional-cot-runs')
 }
 
 async function handleResume() {

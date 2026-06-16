@@ -590,7 +590,7 @@ async function downloadPreviewFile() {
 
 // --- 辅助函数 ---
 function goBack() {
-  router.push('/cot-hcot-workflows')
+  router.push('/app/cot-hcot-workflows')
 }
 
 function statusTagType(s) {

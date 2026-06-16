@@ -85,7 +85,7 @@ async function handleLogin() {
     localStorage.setItem('username', res.username)
     localStorage.setItem('user_id', res.user_id)
     ElMessage.success('登录成功')
-    router.push('/question-generate')
+    router.push('/app/question-generate')
   } catch (err) {
     const detail = err.response?.data?.detail || '登录失败，请检查用户名和密码'
     ElMessage.error(detail)

@@ -1,15 +1,24 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 const routes = [
+  // 首页（对外展示，无需登录）
+  {
+    path: '/',
+    name: 'Home',
+    component: () => import('../views/HomePage.vue'),
+    meta: { title: 'QA Studio' },
+  },
+  // 登录页
   {
     path: '/login',
     name: 'Login',
     component: () => import('../views/Login.vue'),
     meta: { title: '登录' },
   },
+  // 业务页面（需登录，Layout 包裹）
   {
-    path: '/',
-    redirect: '/question-generate',
+    path: '/app',
+    redirect: '/app/question-generate',
     component: () => import('../views/Layout.vue'),
     children: [
       {
@@ -177,10 +186,21 @@ const router = createRouter({
   routes,
 })
 
-// Navigation guard - redirect to login if not authenticated
+// Navigation guard
 router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('token')
-  if (to.name !== 'Login' && !token) {
+  // 首页和登录页无需登录
+  if (to.path === '/' || to.name === 'Login') {
+    next()
+    return
+  }
+  // 已登录用户访问 /login → 跳到业务首页
+  if (to.name === 'Login' && token) {
+    next('/app/question-generate')
+    return
+  }
+  // 业务页面需要登录
+  if (!token) {
     next({ name: 'Login' })
   } else {
     next()
