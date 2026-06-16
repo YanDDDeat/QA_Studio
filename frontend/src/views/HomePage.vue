@@ -247,27 +247,40 @@ html, body {
 
 .hero-title {
   font-size: 4.5rem;
-  font-weight: 800;
+  font-weight: 600;
   margin: 0;
   letter-spacing: -0.03em;
-  line-height: 1.15;
+  line-height: 1;
   opacity: 0;
   animation: fadeInUp 0.8s ease forwards;
 }
 
 .hero-tagline {
-  font-size: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
   color: #c4b5fd;
-  margin: 1.25rem 0 0.5rem;
+  margin: 1rem 0 0.5rem;
   font-weight: 500;
   opacity: 0;
   animation: fadeInUp 0.8s ease 0.15s forwards;
+}
+
+.hero-tagline::before {
+  content: '';
+  display: inline-block;
+  width: 60px;
+  height: 0;
+  margin-right: 1rem;
+  border-top: solid 1px #c4b5fd;
 }
 
 .hero-subtitle {
   font-size: 1rem;
   color: #94a3b8;
   margin: 0 0 2.5rem;
+  font-weight: 500;
   opacity: 0;
   animation: fadeInUp 0.8s ease 0.3s forwards;
 }
@@ -284,9 +297,10 @@ html, body {
   background: linear-gradient(135deg, #6366f1, #818cf8);
   color: #fff;
   border: none;
-  padding: 0.8rem 2.5rem;
-  border-radius: 10px;
-  font-size: 1.05rem;
+  padding: 0 20px;
+  line-height: 38px;
+  border-radius: 20px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s;
@@ -301,9 +315,10 @@ html, body {
   background: rgba(255, 255, 255, 0.06);
   color: #c4b5fd;
   border: 1px solid rgba(139, 92, 246, 0.25);
-  padding: 0.8rem 2rem;
-  border-radius: 10px;
-  font-size: 1.05rem;
+  padding: 0 20px;
+  line-height: 38px;
+  border-radius: 20px;
+  font-size: 14px;
   font-weight: 500;
   text-decoration: none;
   transition: all 0.3s;
